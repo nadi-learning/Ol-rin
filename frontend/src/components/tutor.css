@@ -1,0 +1,1874 @@
+/* Slice T — Tutor read surface. All classes `.tut-`-scoped (landmine-safe,
+   same discipline as .qc-/.rev-/.prac-). TAITOR tokens from theme/tokens.css. */
+
+.tut-root {
+  min-height: 100vh;
+  padding: 28px clamp(20px, 5vw, 56px) 64px;
+  background: var(--page, #eef0f3);
+  font-family: var(--font-body, Inter, system-ui, sans-serif);
+  color: var(--ink, #15162b);
+}
+
+.tut-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+.tut-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+  font-weight: 600;
+}
+.tut-title {
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-size: 30px;
+  margin: 2px 0 0;
+}
+.tut-signout {
+  border: 1px solid var(--line, #d9dbe4);
+  background: #fff;
+  color: var(--ink, #15162b);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tut-signout:hover { background: #f6f7fa; }
+
+.tut-section { margin-top: 26px; }
+.tut-section-title {
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-size: 19px;
+  margin: 0 0 14px;
+}
+.tut-hint {
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted, #6b6f80);
+}
+
+.tut-muted { color: var(--muted, #6b6f80); font-size: 14.5px; }
+.tut-error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+/* --- student list --- */
+.tut-student-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 14px;
+}
+.tut-student-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 14px;
+  padding: 16px 18px;
+  cursor: pointer;
+  font: inherit;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.tut-student-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(21, 22, 43, 0.07);
+}
+.tut-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--sage, #cfe3d0);
+  color: #15162b;
+  font-weight: 700;
+  font-size: 17px;
+  flex: none;
+}
+.tut-student-meta { display: flex; flex-direction: column; min-width: 0; }
+.tut-student-name { font-weight: 650; font-size: 15.5px; }
+.tut-student-email {
+  font-size: 12.5px;
+  color: var(--muted, #6b6f80);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- student detail --- */
+.tut-back {
+  border: none;
+  background: none;
+  color: var(--muted, #6b6f80);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.tut-back:hover { color: var(--ink, #15162b); }
+.tut-student-heading {
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-size: 25px;
+  margin: 6px 0 4px;
+}
+
+/* --- pending worklist --- */
+.tut-pending-list { display: flex; flex-direction: column; gap: 10px; }
+.tut-pending {
+  background: #fff;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.tut-pending-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 14px 18px;
+  cursor: pointer;
+  font: inherit;
+}
+.tut-pending-head:hover { background: #f6f7fa; }
+.tut-pending-name { display: flex; flex-direction: column; }
+.tut-crumb {
+  font-size: 12px;
+  color: var(--muted, #6b6f80);
+  font-weight: 500;
+}
+.tut-pending-st { font-weight: 650; font-size: 15px; }
+.tut-badge {
+  background: var(--lilac, #e3def7);
+  color: #4b3da8;
+  font-weight: 700;
+  font-size: 12.5px;
+  border-radius: 999px;
+  padding: 4px 11px;
+  flex: none;
+}
+
+/* --- observations --- */
+.tut-obs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--line, #d9dbe4);
+  background: #fafbfc;
+}
+.tut-obs { padding: 13px 18px; border-bottom: 1px solid #eceef3; }
+.tut-obs:last-child { border-bottom: none; }
+.tut-obs-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 5px;
+}
+.tut-axis {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.tut-axis--conceptual { background: #dbe7ff; color: #1b47b8; }
+.tut-axis--procedural { background: #d8efe0; color: #1d7a4d; }
+.tut-level {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink, #15162b);
+}
+.tut-calib {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #9a5b00;
+  background: #fdf0d8;
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+.tut-obs-date {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted, #6b6f80);
+}
+.tut-obs-reasoning { margin: 0; font-size: 14px; line-height: 1.5; }
+.tut-obs-loading { padding: 12px 18px; }
+
+/* --- certified mastery --- */
+.tut-mastery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.tut-mastery-card {
+  background: #fff;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.tut-mastery-st { font-weight: 650; font-size: 16px; margin: 2px 0 12px; }
+.tut-levels { display: flex; gap: 10px; margin-bottom: 12px; }
+.tut-axislevel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: #f6f7fa;
+  border-radius: 10px;
+  padding: 10px 8px;
+}
+.tut-axislabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted, #6b6f80);
+  font-weight: 600;
+}
+.tut-axisnum {
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+}
+.tut-desc { margin: 0; font-size: 13.5px; line-height: 1.55; color: #33364a; }
+
+/* ── Slice S2: the draft-then-form review screen (.tut-s2-, landmine-safe) ── */
+.tut-pending-body { padding: 0 14px 14px; }
+.tut-s2-cta { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.tut-assess-btn {
+  border: none;
+  background: var(--primary, #2f63ff);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: filter 0.15s ease-out, transform 0.15s ease-out;
+}
+.tut-assess-btn:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+.tut-assess-btn:disabled { opacity: 0.6; cursor: default; }
+.tut-s2-drafting { margin-top: 12px; }
+.tut-s2-done {
+  margin: 12px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1f7a4d;
+  background: #e8f6ee;
+  border-radius: 9px;
+  padding: 10px 14px;
+}
+.tut-s2 {
+  margin-top: 14px;
+  background: #fbfbfd;
+  border: 1px solid var(--line, #e4e6ee);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tut-s2-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tut-s2-field { display: flex; flex-direction: column; gap: 6px; }
+.tut-s2-label { font-size: 12px; font-weight: 600; color: #33364a; }
+.tut-s2-was { color: var(--muted, #6b6f80); font-weight: 500; }
+.tut-s2-proposed { color: var(--primary, #2f63ff); font-weight: 500; }
+.tut-s2-select, .tut-s2-textarea {
+  border: 1px solid var(--line, #d9dbe6);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13.5px;
+  background: #fff;
+  color: #1c1e2a;
+}
+.tut-s2-textarea { resize: vertical; line-height: 1.5; }
+.tut-s2-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f6f7fa;
+  border-radius: 9px;
+  padding: 12px;
+}
+.tut-s2-ro-row { display: flex; gap: 10px; font-size: 12.5px; }
+.tut-s2-ro-key {
+  flex: 0 0 96px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--muted, #6b6f80);
+  padding-top: 2px;
+}
+.tut-s2-ro-val { flex: 1; color: #33364a; line-height: 1.5; }
+.tut-s2-flag {
+  display: inline-block;
+  background: #fff3e0;
+  color: #9a5b00;
+  border-radius: 6px;
+  padding: 2px 7px;
+  margin: 0 5px 5px 0;
+  font-size: 11.5px;
+}
+.tut-s2-log { font-size: 12.5px; }
+.tut-s2-log summary { cursor: pointer; color: var(--muted, #6b6f80); font-weight: 600; }
+.tut-s2-actions { display: flex; gap: 10px; align-items: center; }
+.tut-s2-cancel {
+  border: 1px solid var(--line, #d9dbe6);
+  background: #fff;
+  color: #33364a;
+  font-size: 13px;
+  padding: 9px 14px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.tut-s2-cancel:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Slice SCH — spiral due-queue (.tut-sch-, landmine-safe) ── */
+.tut-sch-groups { display: flex; flex-direction: column; gap: 16px; }
+.tut-sch-group {
+  border: 1px solid var(--line, #d9dbe6);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px;
+}
+.tut-sch-subject {
+  font-weight: 700;
+  font-size: 14px;
+  color: #2a2d3d;
+  margin-bottom: 10px;
+}
+.tut-sch-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  background: #eef4ff;
+  border: 1px solid #d4e2ff;
+  border-radius: 9px;
+  padding: 8px 11px;
+  margin-bottom: 8px;
+}
+.tut-sch-suggest-blocked { background: #f4f5f8; border-color: #e2e4ee; }
+.tut-sch-suggest-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #3a63c0;
+}
+.tut-sch-suggest-blocked .tut-sch-suggest-label { color: #6b6f80; }
+.tut-sch-suggest-list { font-size: 12.5px; color: #33364a; font-weight: 600; }
+.tut-sch-items { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.tut-sch-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line, #d9dbe6);
+  border-radius: 9px;
+  padding: 8px 11px;
+}
+.tut-sch-overdue { border-color: #f0b4ad; background: #fff6f4; }
+.tut-sch-due-badge {
+  flex: 0 0 auto;
+  min-width: 78px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: #eef0f3;
+  color: #5a5e70;
+}
+.tut-sch-due-badge-loud { background: #e5484d; color: #fff; }
+.tut-sch-item-name { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tut-sch-st { font-weight: 600; font-size: 13.5px; color: #2a2d3d; }
+.tut-sch-levels {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4a4e63;
+  font-variant-numeric: tabular-nums;
+}
+.tut-sch-serve {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 7px;
+  padding: 3px 8px;
+}
+.tut-sch-serve-mix { background: #e7f3ec; color: #1f7a44; }
+.tut-sch-serve-block { background: #f4f5f8; color: #6b6f80; }
+
+/* ── Slice ASG — compose→assign controls + assigned-work list ────────────── */
+.tut-asg-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-asg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tut-asg-chip {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--page-bg);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 150ms ease-out, background 150ms ease-out;
+}
+.tut-asg-chip.is-on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+.tut-asg-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* 2A — a sub_topic with outstanding assigned work: can't be re-added until done. */
+.tut-asg-chip.is-assigned {
+  opacity: 1;
+  border-style: dashed;
+  border-color: var(--sage);
+  background: var(--sage-soft);
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tut-asg-chip-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sage);
+  background: var(--surface);
+  border-radius: var(--r-pill);
+  padding: 1px 6px;
+}
+.tut-asg-btn {
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: var(--r-md);
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+.tut-asg-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.tut-asg-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tut-asg-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-asg-select {
+  align-self: flex-start;
+  font-size: 14px;
+  font-family: inherit;
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+}
+.tut-asg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-asg-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+.tut-asg-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.tut-asg-mode {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+.tut-asg-mode--blocked {
+  background: var(--sage-soft);
+  color: var(--ink-soft);
+}
+.tut-asg-scope {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tut-asg-progress {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.tut-asg-progress.is-done {
+  color: var(--sage);
+  font-weight: 600;
+}
+.tut-asg-card-sts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tut-asg-sttag {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+}
+.tut-asg-sttag--completed {
+  border-color: var(--sage);
+  color: var(--sage);
+}
+.tut-asg-sttag--active {
+  border-color: var(--primary);
+  color: var(--primary-hover);
+}
+
+/* ── Slice Report-Signoff — tutor sign-off surface (.tut-rpt-, landmine-safe) ── */
+.tut-rpt-list { display: flex; flex-direction: column; gap: 12px; }
+.tut-rpt-assemble {
+  align-self: flex-start;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--primary, #2f63ff);
+  background: var(--primary, #2f63ff);
+  color: #fff;
+  cursor: pointer;
+}
+.tut-rpt-assemble:hover { filter: brightness(1.05); }
+.tut-rpt-assemble:disabled { opacity: 0.55; cursor: default; }
+
+.tut-rpt-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tut-rpt-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line, #d9dbe4);
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+.tut-rpt-row:hover { border-color: var(--primary, #2f63ff); }
+.tut-rpt-rowdate { flex: 1; color: var(--ink, #15162b); font-size: 14px; }
+.tut-rpt-rowgo { color: var(--muted, #6b6f80); }
+
+.tut-rpt-badge {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line, #d9dbe4);
+  color: var(--muted, #6b6f80);
+  background: var(--page, #eef0f3);
+}
+.tut-rpt-badge--published { border-color: var(--sage, #cfe3d0); color: #2f7a47; background: #eaf6ec; }
+.tut-rpt-badge--draft { border-color: #e6c98a; color: #9a6b1a; background: #fbf3e0; }
+
+.tut-rpt-review { display: flex; flex-direction: column; gap: 14px; }
+.tut-rpt-reviewhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tut-rpt-frozen { color: var(--muted, #6b6f80); font-size: 13px; }
+
+.tut-rpt-metrics { display: flex; gap: 10px; flex-wrap: wrap; }
+.tut-rpt-stat {
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 16px;
+  min-width: 92px;
+}
+.tut-rpt-statval { font-family: var(--font-display, Fredoka, sans-serif); font-size: 22px; color: var(--ink, #15162b); }
+.tut-rpt-statlabel { color: var(--muted, #6b6f80); font-size: 12.5px; }
+
+.tut-rpt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.tut-rpt-card {
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+}
+
+.tut-rpt-signoff {
+  border-top: 1px solid var(--line, #d9dbe4);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-rpt-notelabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--muted, #6b6f80);
+}
+.tut-rpt-note {
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  color: var(--ink, #15162b);
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 10px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.tut-rpt-publish {
+  align-self: flex-start;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14.5px;
+  font-weight: 700;
+  padding: 10px 18px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid #2f7a47;
+  background: #2f7a47;
+  color: #fff;
+  cursor: pointer;
+}
+.tut-rpt-publish:hover { filter: brightness(1.05); }
+.tut-rpt-publish:disabled { opacity: 0.55; cursor: default; }
+.tut-rpt-published { border-top: 1px solid var(--line, #d9dbe4); padding-top: 12px; }
+
+/* ── Tutor student-view tab capsule (.tut-tabs, landmine-safe) ── */
+.tut-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 14px;
+  margin-bottom: 6px;
+  background: var(--page, #eef0f3);
+}
+.tut-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  padding: 8px 16px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line, #d9dbe4);
+  background: #fff;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.tut-tab:hover { color: var(--ink, #15162b); border-color: #c3c6d4; }
+.tut-tab.is-active {
+  color: #fff;
+  background: var(--primary, #2f63ff);
+  border-color: var(--primary, #2f63ff);
+}
+.tut-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--lilac, #e3def7);
+  color: #4b3ea8;
+}
+.tut-tab.is-active .tut-tab-badge { background: rgba(255, 255, 255, 0.28); color: #fff; }
+
+/* ───────── header mode switch (Students / Author) ───────── */
+.tut-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tut-mode-switch {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 999px;
+  background: #fff;
+}
+.tut-mode-pill {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  font-family: var(--font-body, Inter, sans-serif);
+}
+.tut-mode-pill--on {
+  background: var(--primary, #2f63ff);
+  color: #fff;
+}
+
+/* ───────── Slice AUTH — Author view ───────── */
+.tut-auth { max-width: 920px; }
+.tut-auth-saved {
+  margin: 8px 0;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--sage, #cfe3d0);
+  color: #1f4d33;
+  font-weight: 600;
+  font-size: 14px;
+}
+.tut-auth-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 16px 0 10px;
+}
+.tut-auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 220px;
+  flex: 1;
+}
+.tut-auth-field--narrow { min-width: 110px; flex: 0 0 130px; }
+.tut-auth-field--wide { min-width: 100%; margin-bottom: 6px; }
+.tut-auth-field > span {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+}
+.tut-auth-num,
+.tut-auth-intent {
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14.5px;
+  font-family: var(--font-body, Inter, sans-serif);
+  color: var(--ink, #15162b);
+  background: #fff;
+}
+.tut-auth-intent { resize: vertical; }
+.tut-auth-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0 4px;
+}
+.tut-auth-draft { font-size: 15px; }
+
+.tut-auth-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* Scroll region inside the preview pane; the head + savebar are pinned around
+     it (D-AUTHUI-1). */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tut-auth-card {
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 14px;
+  background: #fff;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tut-auth-cardhead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tut-auth-num-badge {
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-weight: 600;
+  background: var(--lilac, #e3def7);
+  color: #4b3ea8;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+.tut-auth-axis { flex: 0 0 150px; }
+.tut-auth-rubric {
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  letter-spacing: 0.2px;
+}
+.tut-auth-cardfield {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.tut-auth-cardfield > span {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+}
+.tut-auth-ta {
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  font-family: var(--font-body, Inter, sans-serif);
+  color: var(--ink, #15162b);
+  background: #fff;
+  resize: vertical;
+}
+.tut-auth-intent-read,
+.tut-auth-honest {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted, #6b6f80);
+  border-top: 1px dashed var(--line, #e4e6ee);
+  padding-top: 9px;
+}
+.tut-auth-intent-label {
+  font-weight: 700;
+  color: var(--ink, #15162b);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  margin-right: 4px;
+}
+.tut-auth-savebar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+/* ───────────── Slice AUTH v2 — student-grounded conversational authoring ─────────────
+   TAITOR chat: AI bubbles (periwinkle, left) + tutor bubbles (lilac, right) on a
+   soft canvas, a floating bottom input bar, and an inline author panel. All
+   `.tut-chat-`-scoped. */
+
+.tut-chat-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  max-width: 560px;
+}
+.tut-chat-vendorpick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tut-chat-vendorlabel {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.tut-chat-vendortoggle {
+  display: inline-flex;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 3px;
+}
+.tut-chat-vendoropt {
+  border: none;
+  background: transparent;
+  border-radius: var(--r-pill);
+  padding: 7px 18px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.tut-chat-vendoropt.is-on {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 3px rgba(20, 30, 60, 0.1);
+}
+.tut-chat-vendoropt:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.tut-chat-chapterpick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tut-chat-chapterpick .tut-asg-select {
+  min-width: 280px;
+}
+.tut-chat-startbtn {
+  align-self: flex-start;
+}
+
+.tut-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Fill the bounded .tut-authwrap so the split + canvas can flex and scroll. */
+  flex: 1;
+  min-height: 0;
+}
+/* MIDDLE: two columns — LEFT preview pane, RIGHT chat-main. Only splits once
+   drafts exist (D-AUTHUI-1); otherwise chat-main is full-width. */
+.tut-chat-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 14px;
+}
+.tut-chat-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tut-chat-canvas {
+  position: relative;
+  /* Own scroll container: the input bar is a sibling below, so the newest bubble
+     never hides behind it (D-AUTHUI-2). */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 18px;
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 22px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tut-chat-vendorchip {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--primary);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 3px 11px;
+}
+.tut-chat-hint {
+  margin: auto;
+  max-width: 420px;
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+.tut-chat-row {
+  display: flex;
+}
+.tut-chat-row--tutor {
+  justify-content: flex-end;
+}
+.tut-chat-row--ai {
+  justify-content: flex-start;
+}
+.tut-chat-bubble {
+  max-width: 76%;
+  padding: 11px 15px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tut-chat-bubble--ai {
+  background: var(--periwinkle);
+  color: #1f2545;
+  border-bottom-left-radius: 5px;
+}
+.tut-chat-bubble--tutor {
+  background: var(--lilac);
+  color: #2c2640;
+  border-bottom-right-radius: 5px;
+}
+.tut-chat-typing {
+  color: #4a4a6a;
+  font-style: italic;
+}
+
+.tut-chat-inputbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: 0 2px 10px rgba(20, 30, 60, 0.05);
+  /* A flex-none sibling below the scrolling canvas — always visible, no overlap
+     with the messages (D-AUTHUI-2). */
+  flex: none;
+}
+.tut-chat-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  max-height: 140px;
+  color: var(--ink);
+  padding: 6px 4px;
+}
+.tut-chat-send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.tut-chat-send:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.tut-chat-send:disabled {
+  background: var(--border);
+  cursor: default;
+}
+
+/* AUTH v2.1 — chat-ONLY authoring. The v1/S26 picker bar is gone; authoring runs
+   through the conversation (consent-in-chat). A slim top strip carries the scope. */
+.tut-chat-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tut-chat-scope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.tut-chat-scopechap {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tut-chat-newbtn {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-pill);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.tut-chat-newbtn:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.tut-chat-newbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tut-chat-authmeta {
+  font-size: 13px;
+}
+
+/* Consent card — the AI's proposed target, awaiting the tutor's go-ahead. Sits
+   inline in the canvas, visually distinct (accent-tinted) from chat bubbles. */
+.tut-chat-consent {
+  align-self: stretch;
+  border: 1px solid var(--primary);
+  background: var(--surface);
+  border-radius: var(--r-card);
+  padding: 14px 16px;
+  box-shadow: 0 2px 12px rgba(37, 99, 235, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-chat-consent-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.tut-chat-consent-target {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.tut-chat-consent-why {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.tut-chat-consent-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tut-chat-consent-count {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.tut-chat-consent-count input {
+  width: 72px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.tut-chat-consent-dismiss {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 8px 4px;
+}
+.tut-chat-consent-dismiss:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+/* The consent trigger, sitting in the input bar beside Send. */
+.tut-chat-suggest {
+  flex: none;
+  border: 1px solid var(--primary);
+  background: var(--surface);
+  color: var(--primary);
+  border-radius: var(--r-pill);
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tut-chat-suggest:hover:not(:disabled) {
+  background: var(--primary);
+  color: #fff;
+}
+.tut-chat-suggest:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Per-question mini-chat — a compact revise row under each draft card. */
+.tut-auth-minichat {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.tut-auth-minichat-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--surface-sunk);
+}
+.tut-auth-minichat-btn {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.tut-auth-minichat-btn:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.tut-auth-minichat-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* LEFT preview pane (D-AUTHUI-1): the authored-question review, side-by-side with
+   the chat, minimizeable back to full-width chat. `.tut-chat-*` scoped (S23). */
+.tut-chat-preview {
+  flex: 0 0 44%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+/* Minimized: hidden but still MOUNTED (keeps an in-flight figure poll + edits
+   alive); removed from the flex row so the chat goes full-width (D-AUTHUI-1). */
+.tut-chat-preview.is-hidden {
+  display: none;
+}
+.tut-chat-preview-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.tut-chat-preview-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+.tut-chat-preview-min {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface-sunk);
+  color: var(--ink-soft);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tut-chat-preview-min:hover {
+  background: var(--border);
+}
+.tut-auth-savebar {
+  flex: none;
+}
+/* Re-open chip in the topbar when the preview is minimized. */
+.tut-chat-preview-chip {
+  border: 1px solid var(--primary);
+  background: var(--surface);
+  color: var(--primary);
+  border-radius: var(--r-pill);
+  padding: 4px 13px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tut-chat-preview-chip:hover {
+  background: var(--surface-sunk);
+}
+/* Floating input feel — stronger lift so it reads as pinned below the canvas. */
+.tut-chat-inputbar {
+  box-shadow: 0 6px 22px rgba(20, 30, 60, 0.12);
+}
+/* Narrow widths: stack the split to one column (tutor tool is desktop-first, but
+   don't break narrow). */
+@media (max-width: 880px) {
+  .tut-chat-split.is-split {
+    flex-direction: column;
+  }
+  .tut-chat-preview {
+    flex: 0 0 auto;
+    max-height: 46vh;
+  }
+}
+
+/* ── Slice AUTH-v2.1 item #2: the "Saved questions" review view ──────────────
+   Reached via a "Chat | Saved (N)" segmented toggle at the top of the Author
+   tab. `.tut-auth-`/`.tut-saved-` scoped (landmine-safe). Tutor-only surface →
+   reference answer is shown. */
+.tut-authwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Bound the whole Author area to the viewport so the chat input pins to the
+     bottom (the segmented control sits inside, above the chat). */
+  height: calc(100vh - 200px);
+  min-height: 520px;
+}
+.tut-auth-modes {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: #e8eaef;
+  border-radius: 10px;
+  align-self: flex-start;
+}
+.tut-auth-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-soft, #45485c);
+}
+.tut-auth-mode:hover { color: var(--ink, #15162b); }
+.tut-auth-mode.is-on {
+  background: #fff;
+  color: var(--ink, #15162b);
+  box-shadow: 0 1px 3px rgba(20, 30, 60, 0.1);
+}
+.tut-auth-mode-count {
+  min-width: 20px;
+  text-align: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #dfe3ea;
+  color: var(--ink-soft, #45485c);
+  font-size: 12px;
+  font-weight: 700;
+}
+.tut-auth-mode.is-on .tut-auth-mode-count { background: #eef2ff; color: var(--primary, #2f63ff); }
+.tut-saved { }
+.tut-saved-lede { font-size: 13px; color: var(--muted, #6b6f80); margin: 0 0 12px; }
+
+/* ── Authored-questions view (D-AUTHUI-3): per-student, chapter-wise. LEFT a
+   vertical chapter nav, RIGHT the chosen chapter's collapsible topic tree.
+   `.tut-authored-` scoped (landmine-safe, S23). ─────────────────────────────── */
+/* Fill the bounded .tut-authwrap so the nav stays put and only the detail
+   scrolls (D-AUTHUI-3 eyeball). */
+.tut-authored {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tut-authored .tut-saved-lede {
+  flex: none;
+}
+.tut-authored-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+.tut-authored-nav {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Fixed column; scrolls only itself if the chapter list is long. */
+  overflow-y: auto;
+}
+.tut-authored-navitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-soft, #45485c);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tut-authored-navitem:hover {
+  background: var(--surface-sunk, #f0f1f6);
+}
+.tut-authored-navitem.is-on {
+  background: var(--surface, #fff);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+.tut-authored-navname {
+  flex: 1;
+  min-width: 0;
+}
+.tut-authored-navcount {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted, #6b6f80);
+  background: var(--surface-sunk, #f0f1f6);
+  border-radius: var(--r-pill, 999px);
+  padding: 1px 8px;
+}
+.tut-authored-navitem.is-on .tut-authored-navcount {
+  color: var(--primary);
+  background: var(--lilac, #e3def7);
+}
+.tut-authored-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* The ONLY scrolling region — the fixed nav + page chrome stay put. */
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tut-authored-chaptitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink, #23252f);
+  margin: 2px 0 12px;
+}
+.tut-authored-topic {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.tut-authored-topichead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.tut-authored-topichead::-webkit-details-marker { display: none; }
+.tut-authored-topichead::before {
+  content: "▸";
+  color: var(--muted, #6b6f80);
+  font-size: 12px;
+  transition: transform 150ms ease-out;
+}
+.tut-authored-topic[open] > .tut-authored-topichead::before {
+  transform: rotate(90deg);
+}
+.tut-authored-topicname {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink, #23252f);
+}
+.tut-authored-topiccount {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted, #6b6f80);
+}
+.tut-authored-topicbody {
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--border);
+}
+.tut-authored-sub {
+  margin-top: 12px;
+}
+.tut-authored-subhead {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #6b6f80);
+  margin: 0 0 8px;
+}
+@media (max-width: 880px) {
+  .tut-authored-split { flex-direction: column; }
+  .tut-authored-nav { flex: 0 0 auto; width: 100%; overflow-y: visible; }
+  .tut-authored-detail { overflow-y: visible; }
+}
+.tut-saved-body { padding: 2px 2px; }
+.tut-saved-empty { padding: 6px 8px; }
+.tut-saved-group { margin-bottom: 14px; }
+.tut-saved-grouphead {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #6b6f80);
+  margin: 6px 0 8px;
+}
+.tut-saved-q {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.tut-saved-qhead { display: flex; gap: 8px; margin-bottom: 6px; }
+.tut-saved-axis {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--primary, #2f63ff);
+  background: #eef2ff;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.tut-saved-fig {
+  font-size: 11px;
+  color: var(--ink-soft, #45485c);
+  background: #f2ecff;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.tut-saved-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.tut-saved-badge--pass { color: #146c43; background: #d1f0dd; }
+.tut-saved-badge--fail { color: #b02a37; background: #f9d7db; }
+.tut-saved-badge--error { color: #9a6700; background: #fdefc7; }
+.tut-saved-badge--pending { color: #45485c; background: #ececf2; }
+.tut-saved-thumb {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  width: auto;
+  height: auto;
+  margin: 0 0 8px;
+  border: 1px solid var(--border, #e3e3ee);
+  border-radius: 8px;
+  background: #fff;
+}
+.tut-saved-stem {
+  font-size: 14px;
+  color: var(--ink, #15162b);
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+.tut-saved-ref { font-size: 13.5px; }
+.tut-saved-ref summary {
+  cursor: pointer;
+  color: var(--ink-soft, #45485c);
+  font-weight: 500;
+}
+.tut-saved-ref p { margin: 8px 0 0; color: var(--ink-soft, #45485c); line-height: 1.5; }
+.tut-saved-expl { border-top: 1px dashed var(--border); padding-top: 8px; font-style: italic; }
+
+/* Markdown rendering inside AI chat bubbles (react-markdown) — tidy spacing so
+   **bold**, lists, and paragraphs read cleanly instead of raw syntax. */
+.tut-chat-md > :first-child { margin-top: 0; }
+.tut-chat-md > :last-child { margin-bottom: 0; }
+.tut-chat-md p { margin: 0 0 8px; line-height: 1.55; }
+.tut-chat-md strong { font-weight: 700; }
+.tut-chat-md em { font-style: italic; }
+.tut-chat-md ul,
+.tut-chat-md ol { margin: 4px 0 10px; padding-left: 20px; }
+.tut-chat-md li { margin: 2px 0; line-height: 1.5; }
+.tut-chat-md h1,
+.tut-chat-md h2,
+.tut-chat-md h3 { font-size: 14.5px; font-weight: 700; margin: 10px 0 6px; }
+.tut-chat-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: rgba(20, 30, 60, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.tut-chat-md a { color: var(--primary, #2f63ff); text-decoration: underline; }
+
+/* ── Eyeball-#2 item #3: past-chats history picker (.tut-hist-, landmine-safe) ── */
+.tut-chat-actions { display: flex; align-items: center; gap: 8px; }
+.tut-chat-start-hist { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.tut-hist { position: relative; }
+.tut-hist-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink-soft, #45485c);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.tut-hist-btn:hover { background: #f6f7fa; color: var(--ink, #15162b); }
+.tut-hist-icon { font-size: 12px; }
+.tut-hist-scrim { position: fixed; inset: 0; z-index: 20; }
+.tut-hist-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 21;
+  width: 320px;
+  max-height: 380px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(20, 30, 60, 0.14);
+  padding: 6px;
+}
+.tut-hist-empty { padding: 14px; margin: 0; color: var(--muted, #6b6f80); font-size: 13.5px; }
+.tut-hist-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 10px 11px;
+  border-radius: 9px;
+  font: inherit;
+}
+.tut-hist-row:hover { background: #f6f7fa; }
+.tut-hist-row.is-active { background: #eef2ff; cursor: default; }
+.tut-hist-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.tut-hist-vendor {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--primary, #2f63ff);
+  background: #eef2ff;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.tut-hist-chap {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink, #15162b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tut-hist-current {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #1d7a4d;
+  background: #d8efe0;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.tut-hist-row-meta { font-size: 12px; color: var(--muted, #6b6f80); margin-bottom: 3px; }
+.tut-hist-preview {
+  font-size: 12.5px;
+  color: var(--ink-soft, #45485c);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ───────────── Slice FIG-AUTH Stage-2 — figure spec + render preview in the draft
+   card. `.tut-auth-fig-` scoped (revision-shell.css global landmine, S23). Reuses
+   `.tut-auth-ta` (textareas) + `.tut-saved-badge` (the verifier chip). ───────────── */
+.tut-auth-fig {
+  border-top: 1px dashed var(--line, #e4e6ee);
+  padding-top: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.tut-auth-fig-add {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--line, #cfd2df);
+  border-radius: 9px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  cursor: pointer;
+}
+.tut-auth-fig-add:hover:not(:disabled) {
+  color: var(--ink, #15162b);
+  border-color: var(--muted, #9a9db0);
+}
+.tut-auth-fig-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tut-auth-fig-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted, #6b6f80);
+}
+.tut-auth-fig-gen {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--muted, #6b6f80);
+}
+.tut-auth-fig-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-auth-fig-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tut-auth-fig-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tut-auth-fig-field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+}
+.tut-auth-fig-preview {
+  background: #fff;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 10px;
+  padding: 8px;
+}
+.tut-auth-fig-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+}
+.tut-auth-fig-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.tut-auth-fig-btn {
+  background: var(--lilac, #e3def7);
+  color: #4b3ea8;
+  border: none;
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tut-auth-fig-btn:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+.tut-auth-fig-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tut-auth-fig-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  cursor: pointer;
+}
+.tut-auth-fig-link:hover:not(:disabled) {
+  color: var(--ink, #15162b);
+}
+.tut-auth-fig-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tut-auth-fig-regen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-auth-fig-err {
+  margin: 0;
+}
+.tut-auth-discard {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #b02a37;
+  cursor: pointer;
+}
+.tut-auth-discard:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.tut-auth-discard:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

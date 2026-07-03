@@ -1,0 +1,214 @@
+/* QuickCheck (Slice A) — TAITOR-themed, fully scoped under .qc-root so none of
+   these names can leak into / collide with the verbatim Starkhorn revision-shell
+   globals. Local green/red since the theme has no success/error tokens yet. */
+
+.qc-root {
+  --qc-correct: #2f9e44;
+  --qc-correct-bg: #ebfbee;
+  --qc-incorrect: #e03131;
+  --qc-incorrect-bg: #fff5f5;
+  /* No top margin: the Quick Check now lives inside the slide grid's right
+     column (.revision-questions-wrap), where the grid row-gap supplies the
+     separation from the interactive panel above it. */
+}
+
+.qc-loading {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.qc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: 24px;
+}
+
+.qc-progress {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+}
+.qc-seg {
+  flex: 1;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--border);
+  transition: background 0.2s ease;
+}
+.qc-seg--current {
+  background: var(--primary);
+}
+.qc-seg--correct {
+  background: var(--qc-correct);
+}
+.qc-seg--incorrect {
+  background: var(--qc-incorrect);
+}
+
+.qc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.qc-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--primary);
+}
+.qc-count {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.qc-question {
+  margin: 0 0 18px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.qc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.qc-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 13px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--page-bg);
+  color: var(--ink-soft);
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.qc-option:hover:not(:disabled) {
+  border-color: var(--primary-soft);
+  color: var(--ink);
+}
+.qc-option:disabled {
+  cursor: default;
+}
+.qc-option-letter {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.qc-option.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--ink);
+}
+.qc-option.is-selected .qc-option-letter {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.qc-option.is-correct {
+  border-color: var(--qc-correct);
+  background: var(--qc-correct-bg);
+  color: var(--ink);
+}
+.qc-option.is-correct .qc-option-letter {
+  border-color: var(--qc-correct);
+  background: var(--qc-correct);
+  color: #fff;
+}
+.qc-option.is-incorrect {
+  border-color: var(--qc-incorrect);
+  background: var(--qc-incorrect-bg);
+  color: var(--ink);
+}
+.qc-option.is-incorrect .qc-option-letter {
+  border-color: var(--qc-incorrect);
+  background: var(--qc-incorrect);
+  color: #fff;
+}
+
+.qc-check-btn {
+  margin-top: 18px;
+  padding: 11px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  border: 1.5px solid var(--primary);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.qc-check-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.qc-check-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.qc-feedback {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+}
+.qc-feedback--correct {
+  background: var(--qc-correct-bg);
+  border-color: var(--qc-correct);
+}
+.qc-feedback--incorrect {
+  background: var(--qc-incorrect-bg);
+  border-color: var(--qc-incorrect);
+}
+.qc-feedback-title {
+  margin: 0 0 6px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink);
+}
+.qc-feedback-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.qc-feedback-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.qc-next-btn {
+  padding: 9px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  border: 1.5px solid var(--primary);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.qc-next-btn:hover {
+  background: var(--primary-hover);
+}
+.qc-done {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qc-correct);
+}

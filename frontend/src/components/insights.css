@@ -1,0 +1,230 @@
+/* Slice INS — the student progress surface. All selectors `.ins-`-scoped
+   (revision-shell.css global-leak hygiene). TAITOR tokens from theme/tokens.css. */
+
+.ins {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 920px;
+}
+
+/* --- heading --- */
+.ins-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ins-hello {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.ins-title {
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.05;
+}
+
+/* --- effort metrics strip --- */
+.ins-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.ins-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 16px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+.ins-metric-num {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+}
+.ins-metric-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+/* --- topic list --- */
+.ins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ins-section-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 4px 0;
+}
+.ins-muted {
+  margin: 4px 0;
+  color: var(--ink-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.ins-error {
+  margin: 4px 0;
+  color: #c0362c;
+  font-size: 14px;
+}
+
+.ins-empty {
+  padding: 26px 24px;
+  background: var(--surface-sunk);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-card);
+}
+.ins-empty-title {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ins-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+.ins-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ins-card-titles {
+  min-width: 0;
+}
+.ins-card-crumb {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.ins-card-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* bucket chips — two axes, soft labels (never raw numbers) */
+.ins-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ins-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+}
+.ins-chip-axis {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.ins-chip-level {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ins-chip--getting-started {
+  background: var(--surface-sunk);
+  border-color: var(--border);
+}
+.ins-chip--practising {
+  background: color-mix(in srgb, var(--yellow) 38%, white);
+  border-color: color-mix(in srgb, var(--yellow) 60%, white);
+}
+.ins-chip--strong {
+  background: color-mix(in srgb, var(--periwinkle) 45%, white);
+  border-color: color-mix(in srgb, var(--periwinkle) 70%, white);
+}
+.ins-chip--mastered {
+  background: var(--sage-soft);
+  border-color: var(--sage);
+}
+
+.ins-card-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+/* trend pill */
+.ins-trend {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ins-trend--up {
+  background: var(--sage-soft);
+  color: #356b1f;
+}
+.ins-trend--down {
+  background: #fbe3e0;
+  color: #c0362c;
+}
+.ins-trend--flat {
+  background: var(--surface-sunk);
+  color: var(--ink-muted);
+}
+.ins-trend--new {
+  background: var(--lilac);
+  color: #5a40a8;
+}
+
+.ins-revisit {
+  align-self: flex-start;
+  padding: 9px 16px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.ins-revisit:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft);
+}
+
+@media (max-width: 720px) {
+  .ins-metrics {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,228 @@
+/* Feature B — prod-style Revision nav (content-index sidebar + top bar).
+   Fully scoped under .rev-layout / .rev-nav / .rev-topbar so none of these names
+   collide with the verbatim Starkhorn revision-shell globals. */
+
+.rev-layout {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.rev-layout.is-collapsed {
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+
+/* ── Sidebar ── */
+.rev-nav {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
+.is-collapsed .rev-nav {
+  padding: 8px;
+}
+
+.rev-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.rev-nav-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.rev-nav-collapse,
+.rev-nav-expand {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--page-bg);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.rev-nav-collapse:hover,
+.rev-nav-expand:hover {
+  border-color: var(--primary-soft);
+  color: var(--primary);
+}
+.rev-nav-expand {
+  width: 100%;
+  height: 36px;
+}
+
+.rev-nav-tree {
+  padding: 8px;
+}
+
+.rev-nav-section + .rev-nav-section {
+  margin-top: 2px;
+}
+.rev-nav-section-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.rev-nav-section-btn:hover {
+  background: var(--page-bg);
+}
+.rev-nav-section-num {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--sage-soft);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+.rev-nav-section-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+.rev-nav-section-btn.is-open .rev-nav-section-title {
+  color: var(--ink);
+}
+.rev-nav-chevron {
+  flex-shrink: 0;
+  color: var(--ink-muted);
+  display: grid;
+  place-items: center;
+}
+
+.rev-nav-slides {
+  padding: 2px 0 6px 16px;
+}
+.rev-nav-slide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.rev-nav-slide:hover {
+  background: var(--page-bg);
+}
+.rev-nav-slide.is-active {
+  background: var(--primary-soft);
+}
+.rev-nav-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--border);
+}
+.rev-nav-dot.is-active {
+  background: var(--primary);
+}
+.rev-nav-slide-title {
+  font-size: 13px;
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+.rev-nav-slide.is-active .rev-nav-slide-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ── Main column ── */
+.rev-main {
+  min-width: 0;
+}
+
+.rev-topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.rev-topbar-eyebrow {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.rev-topbar-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.rev-topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rev-topbar-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  min-width: 56px;
+  text-align: center;
+}
+.rev-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.rev-nav-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+.rev-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

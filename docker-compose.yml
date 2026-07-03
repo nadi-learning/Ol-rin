@@ -1,0 +1,39 @@
+# b2c-rewrite local infra. Ports offset (5435/6381) so this stack coexists
+# with Starkhorn (5433/6379) AND kinnectfi (5434/6380). Container names b2c-.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: b2c-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: b2c
+      POSTGRES_PASSWORD: b2c
+      POSTGRES_DB: b2c
+    ports:
+      - "5435:5432"
+    volumes:
+      - b2c_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U b2c -d b2c"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: b2c-redis
+    restart: unless-stopped
+    ports:
+      - "6381:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - b2c_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  b2c_pg_data:
+  b2c_redis_data:

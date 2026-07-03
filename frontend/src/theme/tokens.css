@@ -1,0 +1,93 @@
+/* ============================================================================
+   TAITOR theme — the b2c rewrite design language (locked 2026-06-29).
+   Cool grey-lavender page · sage decorative panels · blue primary · yellow
+   action · periwinkle/lilac chat bubbles · soft near-borderless rounded cards ·
+   chunky rounded display headings + clean sans body.
+   Reference: rewrite/design/{dashboard,tutor-canvas}.png.
+   ========================================================================== */
+
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  /* surfaces */
+  --page-bg: #eef0f3; /* cool grey-lavender */
+  --surface: #ffffff;
+  --surface-sunk: #f5f6f8;
+
+  /* sage / pistachio — decorative panels + accents */
+  --sage: #cfe1bf;
+  --sage-soft: #dcebcf;
+
+  /* primary blue — buttons, active nav */
+  --primary: #2f63ff;
+  --primary-hover: #1f4fe0;
+  --primary-soft: #e2e9ff;
+
+  /* secondary accents */
+  --yellow: #f5d94f; /* action buttons */
+  --yellow-hover: #eccb2e;
+  --periwinkle: #c9cdf7; /* AI chat bubbles */
+  --lilac: #dcd2f0; /* user bubbles / tags */
+
+  /* ink */
+  --ink: #15162b;
+  --ink-soft: #4a4c66;
+  --ink-muted: #8b8da3;
+
+  /* lines */
+  --border: #e4e6ec;
+  --grid-line: rgba(120, 140, 200, 0.1); /* graph-paper */
+
+  /* shape */
+  --r-card: 20px;
+  --r-md: 14px;
+  --r-pill: 999px;
+
+  /* elevation — soft, low-contrast */
+  --shadow-card: 0 1px 2px rgba(20, 22, 43, 0.04), 0 8px 24px rgba(20, 22, 43, 0.06);
+  --shadow-rail: 0 6px 24px rgba(20, 22, 43, 0.08);
+
+  /* type */
+  --font-display: "Fredoka", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--page-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+button {
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+/* graph-paper backdrop — subtle blue grid, the tutor-canvas signature */
+.graph-paper {
+  background-color: var(--page-bg);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 26px 26px;
+}

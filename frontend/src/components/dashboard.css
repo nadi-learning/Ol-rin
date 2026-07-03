@@ -1,0 +1,317 @@
+/* Slice DASH — the student home/dashboard. All selectors `.dash-`-scoped
+   (revision-shell.css global-leak hygiene). TAITOR tokens from theme/tokens.css. */
+
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 1040px;
+}
+
+/* --- heading --- */
+.dash-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dash-hello {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.dash-title {
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.05;
+}
+
+/* --- stat cards --- */
+.dash-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.dash-stat {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+.dash-burst {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  color: var(--ink);
+  /* a soft 12-point starburst, the reference badge signature */
+  clip-path: polygon(
+    50% 0%, 60% 12%, 75% 6%, 78% 23%, 94% 25%, 86% 40%, 100% 50%,
+    86% 60%, 94% 75%, 78% 77%, 75% 94%, 60% 88%, 50% 100%, 40% 88%,
+    25% 94%, 22% 77%, 6% 75%, 14% 60%, 0% 50%, 14% 40%, 6% 25%,
+    22% 23%, 25% 6%, 40% 12%
+  );
+}
+.dash-burst--lilac {
+  background: var(--lilac);
+}
+.dash-burst--yellow {
+  background: var(--yellow);
+}
+.dash-burst--pink {
+  background: #f6c0cb;
+}
+.dash-stat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dash-stat-num {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+}
+.dash-stat-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+/* --- lesson list --- */
+.dash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+.dash-muted {
+  margin: 6px 4px;
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+.dash-error {
+  margin: 6px 4px;
+  color: #c0362c;
+  font-size: 14px;
+}
+
+.dash-lesson {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.dash-lesson:hover {
+  border-color: var(--primary);
+  box-shadow: var(--shadow-card);
+}
+.dash-lesson--open {
+  border-color: var(--primary);
+}
+.dash-lesson-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px 6px 6px;
+}
+.dash-lesson-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 12px 10px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  border-radius: var(--r-md);
+  transition: background 120ms ease;
+}
+.dash-lesson-main:hover {
+  background: var(--surface-sunk);
+}
+.dash-chevron {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface-sunk);
+  color: var(--ink-soft);
+  transition: transform 150ms ease, background 120ms ease, color 120ms ease;
+  flex: 0 0 auto;
+}
+.dash-lesson-main:hover .dash-chevron {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.dash-chevron--open {
+  transform: rotate(180deg);
+}
+.dash-lesson-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dash-lesson-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-lesson-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+.dash-lesson-cue {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.dash-continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  background: var(--yellow);
+  color: var(--ink);
+  border: 0;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 120ms ease, transform 120ms ease;
+}
+.dash-continue:hover:not(:disabled) {
+  background: var(--yellow-hover);
+  transform: translateX(1px);
+}
+.dash-continue:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* expanded sub-topics */
+.dash-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 16px 16px 40px;
+  border-top: 1px solid var(--border);
+}
+.dash-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dash-section-name {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.dash-slide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  transition: background 120ms ease, color 120ms ease;
+}
+.dash-slide:hover {
+  background: var(--primary-soft);
+  color: var(--ink);
+}
+.dash-slide-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  flex: 0 0 auto;
+}
+
+/* Pace Plan entry card (Slice PACE-1) */
+.dash-pace-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  margin: 0 0 22px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.dash-pace-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-rail);
+}
+.dash-pace-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--sage-soft);
+  color: var(--ink);
+}
+.dash-pace-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+.dash-pace-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--ink);
+}
+.dash-pace-sub {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+.dash-pace-arrow {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+}
+
+@media (max-width: 720px) {
+  .dash-stats {
+    grid-template-columns: 1fr;
+  }
+  .dash-lesson-row {
+    flex-wrap: wrap;
+  }
+}

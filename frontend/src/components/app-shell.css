@@ -1,0 +1,190 @@
+/* TAITOR app shell — floating nav rail + graph-paper canvas. */
+
+.app-shell {
+  display: flex;
+  height: 100%;
+  gap: 14px;
+  padding: 14px;
+  background: var(--page-bg);
+}
+
+/* --- left nav rail --- */
+.nav-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 68px;
+  flex-shrink: 0;
+  padding: 16px 0;
+  background: var(--surface);
+  border-radius: 28px;
+  box-shadow: var(--shadow-rail);
+}
+
+.nav-logo {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 6px;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-spacer {
+  flex: 1;
+}
+
+.nav-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-item:hover {
+  background: var(--surface-sunk);
+  color: var(--ink-soft);
+}
+.nav-item--active,
+.nav-item--active:hover {
+  background: var(--primary);
+  color: #fff;
+}
+/* not-yet-wired destinations — visible but clearly inert */
+.nav-item--soon {
+  color: var(--ink-faint, #b6b6c6);
+  cursor: default;
+}
+.nav-item--soon:hover {
+  background: transparent;
+  color: var(--ink-faint, #b6b6c6);
+}
+
+/* instant hover flyout label — the native title tooltip is too slow to feel
+   like navigation, so each rail item names itself on hover/focus. */
+.nav-tip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 5px 10px;
+  background: var(--ink, #15162b);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 50;
+}
+.nav-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: var(--ink, #15162b);
+}
+.nav-item:hover .nav-tip,
+.nav-item:focus-visible .nav-tip,
+.nav-avatar:hover .nav-tip,
+.nav-avatar:focus-visible .nav-tip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+.nav-tip-soon {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  font-style: normal;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.nav-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  margin-top: 4px;
+  border: none;
+  border-radius: 50%;
+  background: var(--lilac);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+}
+.nav-avatar:hover {
+  filter: brightness(0.97);
+}
+
+/* --- canvas --- */
+.canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border-radius: 24px;
+  overflow: auto;
+  box-shadow: var(--shadow-card);
+}
+
+/* sage decorative corner accents (behind content) */
+.canvas-accent {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  background: var(--sage-soft);
+  border-radius: 40px;
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+}
+.canvas-accent--tl {
+  top: -120px;
+  left: -120px;
+}
+.canvas-accent--br {
+  bottom: -140px;
+  right: -120px;
+  background: var(--sage);
+  opacity: 0.4;
+}
+
+.canvas-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 32px 56px;
+}
+
+/* Wide surfaces (Revision slide) break out of the 920px reading cap and use
+   the full canvas width. The dashboard keeps the readable default. */
+.canvas-inner--wide {
+  max-width: none;
+}

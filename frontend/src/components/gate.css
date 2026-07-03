@@ -1,0 +1,91 @@
+/* Auth gate (sign-in / not-invited / loading) — a centered TAITOR card. */
+
+.gate {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px;
+}
+
+.gate-card {
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: 40px 36px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+.gate-card h2 {
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.gate-sub {
+  color: var(--ink-soft);
+  font-size: 15px;
+  margin: 0 0 24px;
+}
+.gate-error {
+  color: #b42318;
+  font-size: 14px;
+}
+
+/* .btn-solid (not .btn-primary): revision-shell.css defines a GLOBAL
+   .btn-primary, so the rewrite's own button must use a non-colliding name. */
+.btn-solid {
+  width: 100%;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+  padding: 12px 18px;
+  border-radius: var(--r-md);
+  transition: background 0.15s ease;
+}
+.btn-solid:hover {
+  background: var(--primary-hover);
+}
+
+.btn-ghost {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-weight: 500;
+  font-size: 14px;
+  padding: 10px 16px;
+  border-radius: var(--r-md);
+}
+.btn-ghost:hover {
+  background: var(--surface-sunk);
+}
+
+/* dev login bypass */
+.dev-login {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--border);
+}
+.dev-login > p {
+  color: var(--ink-muted);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+.dev-login-row {
+  display: flex;
+  gap: 8px;
+}
+.dev-login-row input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: var(--font-body);
+}
+.dev-login-row input:focus {
+  outline: none;
+  border-color: var(--primary);
+}

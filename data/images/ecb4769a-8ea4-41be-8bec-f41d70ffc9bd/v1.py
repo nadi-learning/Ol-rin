@@ -1,0 +1,15 @@
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+fig, ax = plt.subplots(figsize=(5, 4))
+ax.set_aspect("equal")
+ax.axis("off")
+poly = patches.Polygon([[0, 0], [4, 0], [0, 3]], closed=True, facecolor="#eaf2fb", edgecolor="#1a1a1a", linewidth=2)
+ax.add_patch(poly)
+ax.plot([0.4, 0.4, 0], [0, 0.4, 0.4], color="#1a1a1a", linewidth=1.5)
+ax.text(2, -0.2, "4", ha="center", va="top", fontsize=12)
+ax.text(-0.2, 1.5, "3", ha="right", va="center", fontsize=12)
+ax.text(2, 1.55, "5", ha="center", va="bottom", rotation=-36.87, fontsize=12)
+ax.set_xlim(-0.8, 4.8)
+ax.set_ylim(-0.8, 3.8)
+plt.savefig("out.png", dpi=150)

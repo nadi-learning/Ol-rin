@@ -1,0 +1,70 @@
+/* Revision surface — header, sub-topic chips, slide stage. */
+
+.revision-head {
+  margin-bottom: 22px;
+}
+.revision-eyebrow {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.revision-head h1 {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.subtopic-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.subtopic-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 9px 16px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+.subtopic-chip:hover {
+  border-color: var(--primary-soft);
+  color: var(--ink);
+}
+.subtopic-chip.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.revision-stage {
+  position: relative;
+}
+.version-badge {
+  position: absolute;
+  top: -12px;
+  right: 4px;
+  z-index: 2;
+  background: var(--yellow);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+}
+
+.revision-muted {
+  color: var(--ink-muted);
+  font-size: 15px;
+}
+.revision-error {
+  color: #b42318;
+  font-size: 14px;
+}

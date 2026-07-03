@@ -1,0 +1,340 @@
+/* VoicePanel (Slice VOICE-3) — the floating voice companion. All classes
+   `.voice-`-scoped so they can't collide with the verbatim Starkhorn
+   revision-shell.css globals (S23). Uses the shared TAITOR tokens (tokens.css).
+
+   Layout: a fixed, bottom-left flex column anchored to its base — the avatar is
+   always the bottom child; the hub + drawer stack UPWARD above it and are hidden
+   with `display:none` when closed (a CSS hide, so the always-mounted component's
+   WS/mic state is never torn down — M31). */
+
+.voice-fab {
+  position: fixed;
+  left: 88px; /* clears the 68px nav rail + 14px shell padding */
+  bottom: 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ---------------- the character ---------------- */
+
+.voice-avatar {
+  position: relative;
+  display: block;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.voice-avatar-img {
+  position: relative;
+  z-index: 1;
+  width: 138px;
+  height: auto;
+  transform-origin: bottom center; /* squash/bounce onto its base */
+  filter: drop-shadow(0 6px 10px rgba(21, 22, 43, 0.16));
+  animation: voice-bob 2.8s ease-in-out infinite; /* idle */
+  transition: filter 150ms ease-out;
+}
+.voice-avatar:hover .voice-avatar-img {
+  filter: drop-shadow(0 9px 14px rgba(21, 22, 43, 0.24));
+}
+
+/* soft grounded ellipse under the character (adds a floating-3D read) */
+.voice-avatar-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 96px;
+  height: 14px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(21, 22, 43, 0.18), rgba(21, 22, 43, 0) 70%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* state dot on the character's shoulder */
+.voice-avatar-dot {
+  position: absolute;
+  top: 4px;
+  right: 10px;
+  z-index: 2;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  border: 2px solid #fff;
+  opacity: 0;
+  transition: opacity 150ms ease-out, background 150ms ease-out;
+}
+.voice-avatar-dot.is-live {
+  opacity: 1;
+  background: #34c759; /* listening = green */
+  animation: voice-dot-pulse 1.6s ease-in-out infinite;
+}
+.voice-avatar-dot.is-live.is-speaking {
+  background: var(--primary); /* speaking = blue */
+}
+
+/* --- animation states, driven by data-attrs on .voice-fab --- */
+.voice-fab[data-phase="connecting"] .voice-avatar-img {
+  animation: voice-bob 1.1s ease-in-out infinite;
+}
+.voice-fab[data-phase="live"][data-speaking="0"] .voice-avatar-img {
+  animation: voice-listen 2.2s ease-in-out infinite;
+}
+.voice-fab[data-speaking="1"] .voice-avatar-img {
+  animation: voice-talk 0.52s ease-in-out infinite; /* the "talking" bounce */
+}
+
+@keyframes voice-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes voice-listen {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-4px) scale(1.015); }
+}
+@keyframes voice-talk {
+  0%   { transform: translateY(0)    scaleX(1)    scaleY(1); }
+  35%  { transform: translateY(-7px) scaleX(0.97) scaleY(1.06); }
+  70%  { transform: translateY(1px)  scaleX(1.05) scaleY(0.95); }
+  100% { transform: translateY(0)    scaleX(1)    scaleY(1); }
+}
+@keyframes voice-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(52, 199, 89, 0); }
+}
+
+/* ---------------- the hub (compact action menu) ---------------- */
+
+.voice-hub {
+  display: none;
+}
+.voice-hub.is-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  animation: voice-pop 160ms ease-out;
+}
+
+/* tiny status chip (no big card) */
+.voice-hub-caption {
+  align-self: flex-start;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 12px rgba(21, 22, 43, 0.1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.voice-hub-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.voice-btn {
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 8px 15px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(21, 22, 43, 0.14); /* floats off the canvas, no card */
+  transition: transform 150ms ease-out, background 150ms ease-out, border-color 150ms ease-out;
+}
+.voice-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.voice-btn:disabled { opacity: 0.55; cursor: default; }
+
+.voice-btn--start { background: var(--primary); color: #fff; }
+.voice-btn--start:hover:not(:disabled) { background: var(--primary-hover); }
+
+.voice-btn--end { background: #fff; color: var(--ink-soft); border-color: var(--border); }
+.voice-btn--end:hover:not(:disabled) { border-color: var(--ink-muted); }
+
+.voice-btn--ghost {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink-soft);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.voice-btn--ghost:hover:not(:disabled) { color: var(--ink); background: #fff; }
+
+/* Ambient live signal — a small frosted "wave" chip floating above the
+   character while a call runs. Replaces the heavy status card (VOICE-3 eyeball:
+   "a wave signal, just that, would suffice"). Grey/still while connecting, green
+   + gentle while listening, blue + livelier while the tutor speaks. */
+.voice-signal {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 16px rgba(21, 22, 43, 0.12);
+  animation: voice-pop 160ms ease-out;
+}
+.voice-signal span {
+  width: 4px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--ink-muted);
+  opacity: 0.5;
+}
+.voice-signal.is-live span {
+  background: #34c759;
+  opacity: 1;
+  animation: voice-bar 1200ms ease-in-out infinite;
+}
+.voice-signal.is-speaking span {
+  background: var(--primary);
+  animation-duration: 780ms;
+}
+.voice-signal span:nth-child(2) { animation-delay: 110ms; }
+.voice-signal span:nth-child(3) { animation-delay: 220ms; }
+.voice-signal span:nth-child(4) { animation-delay: 330ms; }
+.voice-signal span:nth-child(5) { animation-delay: 440ms; }
+@keyframes voice-bar {
+  0%, 100% { height: 6px; }
+  50% { height: 22px; }
+}
+
+.voice-error {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--error-soft, #fdecec);
+  color: var(--error-text, #b3261e);
+  font-size: 12.5px;
+}
+
+/* ---------------- the transcript drawer ---------------- */
+
+.voice-drawer {
+  display: none;
+  flex-direction: column;
+  width: 340px;
+  max-height: min(56vh, 440px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 34px rgba(21, 22, 43, 0.16);
+  overflow: hidden;
+  animation: voice-pop 160ms ease-out;
+}
+.voice-drawer.is-open { display: flex; }
+
+.voice-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  background: #fafafb;
+}
+.voice-drawer-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-drawer-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: background 150ms ease-out, color 150ms ease-out;
+}
+.voice-drawer-close:hover { background: #eceef3; color: var(--ink-soft); }
+
+.voice-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.voice-transcript-hint {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.voice-turn {
+  max-width: 86%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.voice-turn-role {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  opacity: 0.7;
+}
+.voice-turn-text { margin: 0; }
+
+.voice-turn--student {
+  align-self: flex-end;
+  background: var(--primary-soft);
+  color: var(--ink);
+  border-bottom-right-radius: 4px;
+}
+.voice-turn--tutor {
+  align-self: flex-start;
+  background: #f4f4f8;
+  color: var(--ink);
+  border-bottom-left-radius: 4px;
+}
+.voice-turn.is-partial { opacity: 0.72; }
+
+@keyframes voice-pop {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* respect reduced-motion — kill the idle/talk loops, keep the character visible */
+@media (prefers-reduced-motion: reduce) {
+  .voice-avatar-img,
+  .voice-fab[data-phase] .voice-avatar-img,
+  .voice-avatar-dot.is-live,
+  .voice-signal span,
+  .voice-hub,
+  .voice-drawer {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "question" ADD COLUMN "status" text DEFAULT 'approved' NOT NULL;

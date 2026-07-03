@@ -1,0 +1,692 @@
+{
+  "module_id": "ch4_motion",
+  "sections": [
+    {
+      "id": "t1",
+      "title": "Position, Distance, Displacement",
+      "topics": [
+        {
+          "id": "t1-1",
+          "title": "Position and the reference frame",
+          "voice_context": {
+            "context": "This slide teaches that a position is only meaningful inside a reference frame — you must agree on TWO things before any spot on a line gets a number: a reference point (the origin, where 0 sits) and a positive direction (which way along the line counts as +). Once both are fixed, every location becomes a signed number: position = how many steps from the origin, with a sign telling you which side. The one idea to leave with is that position describes a spot relative to a chosen frame; it is not a property the object owns by itself. The hook makes this concrete: a friend texts 'I'm at 7 — come meet me' and you can't find them, because '7' alone points nowhere until you both agree on a zero and a forward direction. Two named misconceptions are corrected. First, the 'numbers live on the road' misconception — students think a marker like '7' or '+5' is an absolute fact; the slide shows the lampposts carry NO numbers until you place a zero and pick a direction. Second, the 'changing the number moves the object' misconception — students think a different coordinate means different physics; the slide stresses that the bike never moves while its number changes, so only the description changed, not reality. The interactive 'The road' lets you drag a 🚩 flag onto any lamppost to set the origin, then tap a button to choose + leftward or + rightward; a fixed cyclist 🚲 then shows a live signed readout (like +2 or −2) computed as direction times steps-from-origin. Manipulating it reveals that moving the flag or flipping the arrow renumbers every marker while the bike sits perfectly still — same bike, different frame, different number. Probing questions: If you slide the origin two lampposts to the right, does the cyclist's number get bigger or smaller, and did the bike move? If you flip the positive direction, what happens to the sign of the cyclist's position? Why does 'at marker 7' tell a physicist nothing on its own? This is the foundation for distance, displacement, and motion that follow, where signs and a chosen frame decide whether displacement is positive or negative.",
+            "keywords": [
+              "position",
+              "reference frame",
+              "frame of reference",
+              "reference point",
+              "origin",
+              "zero",
+              "the origin is where zero sits",
+              "positive direction",
+              "forward direction",
+              "which way is plus",
+              "sign",
+              "signed number",
+              "positive",
+              "negative",
+              "plus",
+              "minus",
+              "plus five",
+              "+5",
+              "minus two",
+              "−2",
+              "+2",
+              "plus two",
+              "coordinate",
+              "coordinates",
+              "number line",
+              "axis",
+              "marker",
+              "lamppost",
+              "steps from the origin",
+              "relative",
+              "relative to",
+              "absolute",
+              "describes the spot",
+              "the bike never moves",
+              "same bike different number",
+              "renumber",
+              "drag the flag",
+              "flag",
+              "origin flag",
+              "pick a direction",
+              "cyclist",
+              "at marker 7",
+              "position equals steps times direction",
+              "left is positive",
+              "right is positive",
+              "direction times steps",
+              "distance",
+              "displacement",
+              "motion",
+              "one dimension",
+              "along the line",
+              "zero point",
+              "choosing a frame"
+            ]
+          }
+        },
+        {
+          "id": "t1-1_invariant",
+          "title": "The gap that won't budge",
+          "voice_context": {
+            "context": "This slide teaches that the distance — the gap — between two real points is invariant: it does not depend on where you put zero or which way you call positive, even though the individual position coordinates change with every choice. On screen a tree at marker 2 and a bike at marker 6 sit on a road of lampposts; the coordinate of a point is computed as direction times (index minus origin), so each marker renumbers when you slide the origin flag, yet the gap stays |6 minus 2| = 4. The one idea to leave with: positions are opinions, but the distance between things is a fact everyone agrees on. The slide first asks you to PREDICT whether dragging the zero will make the gap get bigger, get smaller, or stay 4 — committing a guess unlocks the explore phase. Then you drag the red origin flag along the road and flip the plus direction; the blue coordinate pills over the tree and bike both change sign and value (the tree might read minus one while the bike reads plus three, etc.), but the orange gap bracket up top is glued at 4. Two named misconceptions this corrects. First, the 'bigger numbers mean farther apart' error: students think a point labelled plus six is 'more' than a point near zero, so moving the zero should change how far apart things are — the slide shows both numbers shift together so their difference is preserved. Second, the 'reference frame changes reality' error: students think picking a different origin or flipping direction physically moves or rescales the objects — but the tree and bike glyphs never move; only the labels do. Distance is built from the gap, not the raw coordinate. Probing questions to ask yourself: If the tree reads minus two and the bike reads plus two, what is the gap, and does it match when the tree reads plus five and the bike reads plus nine? Why does flipping the plus direction swap the sign of every coordinate but leave the gap untouched? Could two people ever disagree about how far apart the tree and bike are — and if not, why do they disagree about the numbers? This builds directly on 'Position and the reference frame', where the coordinate and the origin were introduced, and it sets up distance and displacement as quantities made from gaps — real facts about a journey that survive any choice of zero.",
+            "keywords": [
+              "distance",
+              "gap",
+              "invariant",
+              "invariance",
+              "reference frame",
+              "origin",
+              "zero",
+              "pick a zero",
+              "coordinate",
+              "position",
+              "position number",
+              "positions are opinions",
+              "distance is a fact",
+              "marker",
+              "lamppost",
+              "road",
+              "tree",
+              "bike",
+              "cyclist",
+              "plus direction",
+              "forward direction",
+              "flip direction",
+              "direction",
+              "signed coordinate",
+              "negative coordinate",
+              "plus six",
+              "minus two",
+              "plus two",
+              "minus one",
+              "gap equals 4",
+              "gap = 4",
+              "stay 4",
+              "gap stays the same",
+              "four",
+              "difference",
+              "subtraction",
+              "absolute value",
+              "mod six minus two",
+              "six minus two",
+              "drag the zero",
+              "drag the flag",
+              "move the origin",
+              "renumber",
+              "relabel",
+              "coordinate changes",
+              "numbers change",
+              "gap won't budge",
+              "predict",
+              "get bigger",
+              "get smaller",
+              "stay the same",
+              "displacement",
+              "real point",
+              "frame of reference",
+              "measured from zero",
+              "everyone agrees",
+              "two observers",
+              "you vs your friend"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "question_pools": {
+    "t1-1": [
+      {
+        "slot_id": "slot_1",
+        "questions": [
+          {
+            "id": "q_position_calc_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "6",
+                "label": "A"
+              },
+              {
+                "text": "+2",
+                "label": "B"
+              },
+              {
+                "text": "−2",
+                "label": "C"
+              },
+              {
+                "text": "+10",
+                "label": "D"
+              }
+            ],
+            "question": "Lampposts stand at markers 0–8. You drag the flag (zero) onto marker 4 and pick rightward (toward higher markers) as +. A cyclist sits at marker 6. What is the cyclist's position?",
+            "evaluation": {
+              "explanation": "Position = steps from the origin with a sign: 6 − 4 = 2, and the + direction points that way, so it is +2. '6' is just the bare marker before a zero is chosen, and −2 would be the value only if + pointed the other way.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "signed_position",
+              "origin_offset"
+            ]
+          },
+          {
+            "id": "q_position_calc_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "+4",
+                "label": "A"
+              },
+              {
+                "text": "−4",
+                "label": "B"
+              },
+              {
+                "text": "+2",
+                "label": "C"
+              },
+              {
+                "text": "8",
+                "label": "D"
+              }
+            ],
+            "question": "You set the zero on marker 6 and choose leftward (toward lower markers) as +. The cyclist is at marker 2. What is its position?",
+            "evaluation": {
+              "explanation": "It is 4 steps from the origin (6 − 2 = 4), and because + was chosen toward the lower markers, that side counts as positive: +4. −4 would be right only if + pointed toward higher markers.",
+              "correct_answer": "A"
+            },
+            "topic_keys": [
+              "signed_position",
+              "direction_sign"
+            ]
+          }
+        ]
+      },
+      {
+        "slot_id": "slot_2",
+        "questions": [
+          {
+            "id": "q_ingredients_concept_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "A reference point (origin) and a positive direction",
+                "label": "A"
+              },
+              {
+                "text": "The cyclist's speed and the time",
+                "label": "B"
+              },
+              {
+                "text": "The number of lampposts and their spacing",
+                "label": "C"
+              },
+              {
+                "text": "A starting marker and the cyclist's mass",
+                "label": "D"
+              }
+            ],
+            "question": "According to the sandbox, what two things must you fix before a spot on the road can be given a position number?",
+            "evaluation": {
+              "explanation": "Position needs a zero (origin) AND which way counts as + — that is the reference frame. Speed, time, spacing and mass are not needed to label a single spot; the slide only unlocks a number once both an origin and a direction are set.",
+              "correct_answer": "A"
+            },
+            "topic_keys": [
+              "reference_frame",
+              "two_ingredients"
+            ]
+          },
+          {
+            "id": "q_ingredients_concept_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "The cyclist has not started moving yet",
+                "label": "A"
+              },
+              {
+                "text": "No zero and no + direction have been chosen, so there is nothing to measure from",
+                "label": "B"
+              },
+              {
+                "text": "The lampposts have no numbers printed on them",
+                "label": "C"
+              },
+              {
+                "text": "The SVG has not finished loading",
+                "label": "D"
+              }
+            ],
+            "question": "In the sandbox, why does the road show only '?' for the cyclist until you act?",
+            "evaluation": {
+              "explanation": "A bare spot can't become a signed number without an origin to measure from and a direction for the sign. It isn't about motion — the bike sits still the whole time; the missing pieces are the reference point and the positive direction.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "reference_frame",
+              "origin_meaning"
+            ]
+          }
+        ]
+      },
+      {
+        "slot_id": "slot_3",
+        "questions": [
+          {
+            "id": "q_relativity_misconception_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "The bike physically moved 3 markers to the left",
+                "label": "A"
+              },
+              {
+                "text": "Only the description changed — the bike is in the same spot; a new origin gives a new number",
+                "label": "B"
+              },
+              {
+                "text": "The bike's speed increased",
+                "label": "C"
+              },
+              {
+                "text": "The first number must have been measured wrong",
+                "label": "D"
+              }
+            ],
+            "question": "With the bike untouched, you move the flag to a new lamppost and the readout changes from +2 to −1. What actually happened?",
+            "evaluation": {
+              "explanation": "Position is a description relative to your chosen frame, not the object itself — moving the origin renumbers every spot while the 🚲 sits still. The bike didn't move and nothing was mis-measured; you simply changed where 0 is.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "frame_dependence",
+              "description_vs_reality"
+            ]
+          },
+          {
+            "id": "q_relativity_misconception_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "+5 is too far to reach by bike",
+                "label": "A"
+              },
+              {
+                "text": "'+5' has no meaning until you both agree where 0 is and which way is +",
+                "label": "B"
+              },
+              {
+                "text": "The sign should always be written as −5",
+                "label": "C"
+              },
+              {
+                "text": "Positions can never be shared between two people",
+                "label": "D"
+              }
+            ],
+            "question": "A friend texts 'I'm at +5'. Why can't you ride straight to them, even though it sounds exact?",
+            "evaluation": {
+              "explanation": "A number like +5 only points to a real spot once the origin and positive direction are stated — that's the exact text-that-didn't-help trap. It's not about distance or a fixed sign rule, and positions CAN be shared once you agree on the frame.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "frame_dependence",
+              "ambiguous_position"
+            ]
+          }
+        ]
+      },
+      {
+        "slot_id": "slot_4",
+        "questions": [
+          {
+            "id": "q_flip_direction_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "+3 (unchanged)",
+                "label": "A"
+              },
+              {
+                "text": "−3",
+                "label": "B"
+              },
+              {
+                "text": "0",
+                "label": "C"
+              },
+              {
+                "text": "+6",
+                "label": "D"
+              }
+            ],
+            "question": "The cyclist reads +3 with your current setup. Without moving the flag, you flip the chosen + direction to the opposite way. What does the readout become?",
+            "evaluation": {
+              "explanation": "Flipping the positive direction keeps the distance from the origin (3 steps) but reverses the sign, giving −3. The magnitude doesn't change and the origin stayed put, so it can't become 0 or +6.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "direction_sign",
+              "sign_flip"
+            ]
+          },
+          {
+            "id": "q_flip_direction_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "The marker is 4 steps from the origin, on the side opposite to the chosen + direction",
+                "label": "A"
+              },
+              {
+                "text": "The cyclist is moving backwards",
+                "label": "B"
+              },
+              {
+                "text": "The position is below the road",
+                "label": "C"
+              },
+              {
+                "text": "An error was made; positions can't be negative",
+                "label": "D"
+              }
+            ],
+            "question": "After choosing a zero and a + direction, a marker shows the position −4. What does the negative sign tell you?",
+            "evaluation": {
+              "explanation": "The sign just labels which side of the origin you're on: −4 means 4 steps on the non-+ side. It says nothing about motion (the bike is still), it isn't a vertical position, and negative positions are perfectly valid.",
+              "correct_answer": "A"
+            },
+            "topic_keys": [
+              "direction_sign",
+              "negative_meaning"
+            ]
+          }
+        ]
+      }
+    ],
+    "t1-1_invariant": [
+      {
+        "slot_id": "slot_1",
+        "questions": [
+          {
+            "id": "q_gap_calc_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "2",
+                "label": "A"
+              },
+              {
+                "text": "3",
+                "label": "B"
+              },
+              {
+                "text": "4",
+                "label": "C"
+              },
+              {
+                "text": "-1",
+                "label": "D"
+              }
+            ],
+            "question": "After you drag the zero, the tree's pill reads -1 and the bike's pill reads +3. How far apart are the tree and bike?",
+            "evaluation": {
+              "explanation": "The gap is the size of the difference: |(+3) - (-1)| = |4| = 4. Picking 2 (just adding the magnitudes wrong) or 3 (only reading the bike's number) ignores that distance is the difference between the two coordinates, not either single coordinate.",
+              "correct_answer": "C"
+            },
+            "topic_keys": [
+              "distance_as_difference"
+            ]
+          },
+          {
+            "id": "q_gap_calc_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "9",
+                "label": "A"
+              },
+              {
+                "text": "4",
+                "label": "B"
+              },
+              {
+                "text": "14",
+                "label": "C"
+              },
+              {
+                "text": "5",
+                "label": "D"
+              }
+            ],
+            "question": "You slide the zero so the tree now reads +5 and the bike reads +9. What is the gap between them?",
+            "evaluation": {
+              "explanation": "Gap = |9 - 5| = 4 — the same value every other arrangement gave. Choosing 14 (adding the two coordinates) or 9 (the bike's raw number) treats a position as a distance; only the difference between the two positions is the real gap.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "distance_as_difference"
+            ]
+          }
+        ]
+      },
+      {
+        "slot_id": "slot_2",
+        "questions": [
+          {
+            "id": "q_invariant_concept_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "A coordinate is a description tied to where you put zero, while the distance between two real points is a fact independent of that choice",
+                "label": "A"
+              },
+              {
+                "text": "The tree and bike are slowly moving along the road",
+                "label": "B"
+              },
+              {
+                "text": "Distance and position are really the same quantity",
+                "label": "C"
+              },
+              {
+                "text": "The gap only stays fixed because the zero happens to be between the two objects",
+                "label": "D"
+              }
+            ],
+            "question": "As you drag the 🚩 zero all over the road, both number-pills keep changing but 'gap = 4' never moves. What does this demonstrate?",
+            "evaluation": {
+              "explanation": "Moving the zero renumbers every coordinate, yet the separation between two fixed objects can't depend on where you scribbled zero, so it stays 4. The objects never move (B), position ≠ distance since positions disagree while the gap doesn't (C), and the gap holds even when you drag zero outside the two objects (D).",
+              "correct_answer": "A"
+            },
+            "topic_keys": [
+              "origin_invariance"
+            ]
+          },
+          {
+            "id": "q_invariant_concept_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "You will read different position numbers for the tree, but you'll both agree on how far the tree is from the bike",
+                "label": "A"
+              },
+              {
+                "text": "You'll agree on the position numbers but disagree on the distance",
+                "label": "B"
+              },
+              {
+                "text": "You'll disagree on both the positions and the distance",
+                "label": "C"
+              },
+              {
+                "text": "Whoever puts zero closer to the tree measures a shorter distance to the bike",
+                "label": "D"
+              }
+            ],
+            "question": "You and a friend pick different spots for zero on the same road. Which statement is correct?",
+            "evaluation": {
+              "explanation": "Positions are opinions set by your chosen zero, so the numbers differ; the gap is built from the difference of those numbers, so it survives the change and you both agree. B reverses which quantity is shared, and C/D wrongly assume the distance depends on the zero — the whole point is that it doesn't.",
+              "correct_answer": "A"
+            },
+            "topic_keys": [
+              "origin_invariance"
+            ]
+          }
+        ]
+      },
+      {
+        "slot_id": "slot_3",
+        "questions": [
+          {
+            "id": "q_misconception_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "Nothing — making the tree's number smaller does move it nearer the bike",
+                "label": "A"
+              },
+              {
+                "text": "Moving the zero only renumbers the tree; the tree and bike haven't moved, so the gap is still 4",
+                "label": "B"
+              },
+              {
+                "text": "The gap shrinks, but only by the amount the zero moved",
+                "label": "C"
+              },
+              {
+                "text": "The tree got closer but the bike got farther, so it cancels out",
+                "label": "D"
+              }
+            ],
+            "question": "A student drags the zero right up next to the tree so the tree now reads 0 instead of +2. They say 'now the tree is closer to the bike.' What's wrong with this?",
+            "evaluation": {
+              "explanation": "Dragging the zero changes the label on the tree, not the tree's real location — both objects stay put, so the gap is still 4. The trap (A, C, D) is treating a smaller coordinate as a smaller distance; the coordinate is just a description measured from your chosen zero.",
+              "correct_answer": "B"
+            },
+            "topic_keys": [
+              "origin_invariance",
+              "distance_as_difference"
+            ]
+          },
+          {
+            "id": "q_misconception_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "Different starting numbers mean their distances really are different",
+                "label": "A"
+              },
+              {
+                "text": "A bigger position number always means a bigger distance",
+                "label": "B"
+              },
+              {
+                "text": "Each computes the gap as the difference of their own two numbers, and both differences come out to 4",
+                "label": "C"
+              },
+              {
+                "text": "Only the friend who used zero correctly gets the true distance",
+                "label": "D"
+              }
+            ],
+            "question": "Two friends measure the same tree-to-bike gap. One reads the tree at +2, the other at +5. One concludes 'we measured different distances.' Why is that conclusion wrong?",
+            "evaluation": {
+              "explanation": "Each friend subtracts their own tree-number from their own bike-number, and the offset between their zeros cancels in that subtraction, so both get 4. A and B confuse a raw position with a distance, and D assumes there's a single 'correct' zero — any zero gives the same gap.",
+              "correct_answer": "C"
+            },
+            "topic_keys": [
+              "origin_invariance",
+              "distance_as_difference"
+            ]
+          }
+        ]
+      },
+      {
+        "slot_id": "slot_4",
+        "questions": [
+          {
+            "id": "q_direction_flip_v1",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "It stays 4 — only the signs of the coordinates flip",
+                "label": "A"
+              },
+              {
+                "text": "It becomes -4",
+                "label": "B"
+              },
+              {
+                "text": "It doubles to 8",
+                "label": "C"
+              },
+              {
+                "text": "It becomes 0 because the directions cancel",
+                "label": "D"
+              }
+            ],
+            "question": "With + pointing right, the tree reads -1 and the bike reads +3. You flip + to point left (everything else unchanged). What happens to the gap of 4?",
+            "evaluation": {
+              "explanation": "Flipping the + direction flips each coordinate's sign (tree → +1, bike → -3), but the gap is the size of their difference, |(-3)-(+1)| = 4, so it's unchanged. A distance is never negative (B) and direction choice doesn't stretch or cancel the separation (C, D).",
+              "correct_answer": "A"
+            },
+            "topic_keys": [
+              "direction_sign"
+            ]
+          },
+          {
+            "id": "q_direction_flip_v2",
+            "type": "mcq",
+            "marks": 1,
+            "options": [
+              {
+                "text": "Dragging the zero to a new marker",
+                "label": "A"
+              },
+              {
+                "text": "Flipping which way + points",
+                "label": "B"
+              },
+              {
+                "text": "Physically moving the bike to a different marker on the road",
+                "label": "C"
+              },
+              {
+                "text": "Reading the tree's coordinate before the bike's",
+                "label": "D"
+              }
+            ],
+            "question": "Which single change to the sandbox would actually make the gap read something other than 4?",
+            "evaluation": {
+              "explanation": "The gap only changes if a real object actually moves, changing the true separation. Sliding the zero (A) and flipping + (B) just relabel the coordinates, and the order you read the two numbers (D) doesn't affect the size of their difference.",
+              "correct_answer": "C"
+            },
+            "topic_keys": [
+              "direction_sign"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

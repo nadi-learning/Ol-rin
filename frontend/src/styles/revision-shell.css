@@ -1,0 +1,2855 @@
+/* ===== B2C Design System — "Soft Glass" (slide-render design context) ===== */
+/* FULLY SCOPED under `.revision-shell-host`: every selector in this sheet is
+   prefixed with `.revision-shell-host ` so NOTHING here leaks into the TAITOR
+   app shell. The slide bundle injects zero CSS of its own and renders inside
+   PreviewShell's `.revision-shell-host` wrapper, so it still gets the full
+   design context as a descendant.
+
+   WHY: this sheet is ported verbatim from Starkhorn (`nadi-frontend/src/styles/
+   revision-shell.css`) and carries ~270 generic component classes (.card,
+   .btn-primary, .chip, .option, .page, .voice-*, .rev-sidebar-*, …). Unscoped,
+   those collided with the rewrite's own classes (the giant-chip bug) and forced
+   every surface to defensively prefix (.qc-/.rev-/.prac-/.tut-/.par-).
+
+   ON A FUTURE STARKHORN RE-PULL (the verbatim source is unscoped): re-run the
+   idempotent scoper — `bun scripts/scope_revision_sheet.ts frontend/src/styles/
+   revision-shell.css` — to re-apply the `.revision-shell-host` prefix. It skips
+   @keyframes/@font-face bodies and won't double-prefix already-scoped rules.
+   To re-diff against Starkhorn, strip the prefix first. */
+
+/* --- Fonts --- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=DM+Serif+Display&display=swap');
+
+.revision-shell-host {
+  /* --- Primary (Indigo) ~60% of UI --- */
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-soft: #e0e7ff;
+  --primary-softer: #eef2ff;
+  --primary-text: #4338ca;
+
+  /* --- Accent (Warm Amber) ~10% of UI --- */
+  --accent: #f59e0b;
+  --accent-hover: #d97706;
+  --accent-soft: #fef3c7;
+  --accent-text: #92400e;
+
+  /* --- Neutral (Warm Stone) --- */
+  --page-bg: #f5f2ed;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --border: #d6d3d1;
+  --border-light: #e7e5e4;
+  --border-glass: rgba(255, 255, 255, 0.7);
+  --text-primary: #1c1917;
+  --text-secondary: #44403c;
+  --text-muted: #78716c;
+
+  /* --- Hook (Teal — curiosity) + Surprise (Violet) — slides reference these --- */
+  --hook: #0891b2;
+  --hook-soft: rgba(8, 145, 178, 0.12);
+  --hook-text: #155e75;
+  --surprise: #7c3aed;
+  --surprise-soft: rgba(124, 58, 237, 0.07);
+  --surprise-text: #5b21b6;
+
+  /* --- Semantic --- */
+  --success: #22c55e;
+  --success-soft: #dcfce7;
+  --success-text: #15803d;
+  --error: #ef4444;
+  --error-soft: #fee2e2;
+  --error-text: #dc2626;
+  --warning: #f59e0b;
+  --warning-soft: #fef3c7;
+  --warning-text: #92400e;
+
+  /* --- Typography --- */
+  --font-main: 'Outfit', 'Inter', -apple-system, system-ui, sans-serif;
+  --font-display: 'DM Serif Display', Georgia, serif;
+
+  /* --- Border Radius --- */
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-pill: 100px;
+
+  /* --- Shadows --- */
+  --shadow-card: 0 2px 8px -2px rgba(0, 0, 0, 0.06);
+  --shadow-hover: 0 8px 24px -8px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 8px 32px -8px rgba(99, 102, 241, 0.35);
+  --shadow-glow-success: 0 8px 24px -8px rgba(34, 197, 94, 0.3);
+  --shadow-glow-error: 0 8px 24px -8px rgba(239, 68, 68, 0.3);
+  --shadow-glow-accent: 0 8px 24px -8px rgba(245, 158, 11, 0.3);
+
+  /* --- Transitions --- */
+  --transition: 200ms ease-out;
+  --transition-bounce: 200ms cubic-bezier(0.34, 1.4, 0.64, 1);
+  --hover-lift: translateY(-2px);
+}
+
+/* --- Reset & Base (scoped to host) --- */
+.revision-shell-host *,
+.revision-shell-host *::before,
+.revision-shell-host *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.revision-shell-host {
+  font-family: var(--font-main);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--page-bg);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100%;
+}
+
+.revision-shell-host h1,
+.revision-shell-host h2,
+.revision-shell-host h3 {
+  font-family: var(--font-main);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.revision-shell-host a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+/* --- Component: Card (Glass) --- */
+.revision-shell-host .card {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.revision-shell-host .card:hover {
+  transform: var(--hover-lift);
+  box-shadow: var(--shadow-hover);
+}
+
+/* --- Component: Buttons --- */
+.revision-shell-host .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+  color: white;
+  padding: 14px 28px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-main);
+  font-weight: 600;
+  font-size: 15px;
+  border: none;
+  cursor: pointer;
+  box-shadow: var(--shadow-glow);
+  transition: all var(--transition-bounce);
+}
+
+.revision-shell-host .btn-primary:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 12px 40px -8px rgba(99, 102, 241, 0.5);
+}
+
+.revision-shell-host .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.revision-shell-host .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: white;
+  color: var(--primary-hover);
+  border: 2px solid var(--primary-soft);
+  padding: 14px 28px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-main);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: all var(--transition-bounce);
+}
+
+.revision-shell-host .btn-secondary:hover {
+  border-color: var(--primary);
+  background: var(--primary-softer);
+  transform: translateY(-1px);
+}
+
+/* --- Component: Inputs --- */
+.revision-shell-host .text-input,
+.revision-shell-host .text-area {
+  padding: 11px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font-family: var(--font-main);
+  font-size: 14px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.revision-shell-host .text-input:focus,
+.revision-shell-host .text-area:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.revision-shell-host .text-input::placeholder,
+.revision-shell-host .text-area::placeholder {
+  color: var(--text-muted);
+}
+
+/* --- Component: Chips --- */
+.revision-shell-host .chip {
+  padding: 8px 16px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--border);
+  background: white;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.revision-shell-host .chip:hover {
+  border-color: #a5b4fc;
+  color: var(--primary-hover);
+}
+
+.revision-shell-host .chip.active {
+  border-color: var(--primary);
+  color: white;
+  background: var(--primary);
+  box-shadow: var(--shadow-glow);
+}
+
+/* --- Component: Badges --- */
+.revision-shell-host .badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.revision-shell-host .badge-primary {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+
+.revision-shell-host .badge-success {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.revision-shell-host .badge-error {
+  background: var(--error-soft);
+  color: var(--error-text);
+}
+
+.revision-shell-host .badge-warning {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.revision-shell-host .badge-muted {
+  background: var(--border-light);
+  color: var(--text-secondary);
+}
+
+/* --- Component: Feedback Panels --- */
+.revision-shell-host .feedback {
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  animation: slideUp 0.35s ease-out;
+}
+
+.revision-shell-host .feedback.correct {
+  background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+  border: 1.5px solid var(--success);
+}
+
+.revision-shell-host .feedback.incorrect {
+  background: linear-gradient(135deg, #fee2e2, #fecaca);
+  border: 1.5px solid var(--error);
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Component: MCQ Options --- */
+.revision-shell-host .option {
+  padding: 16px 18px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: white;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.revision-shell-host .option:hover {
+  border-color: #a5b4fc;
+  transform: translateX(4px);
+  background: var(--primary-softer);
+}
+
+.revision-shell-host .option.selected {
+  border-color: var(--primary);
+  background: var(--primary-softer);
+  box-shadow: var(--shadow-glow);
+}
+
+.revision-shell-host .option.correct {
+  border-color: var(--success);
+  background: var(--success-soft);
+  box-shadow: var(--shadow-glow-success);
+}
+
+.revision-shell-host .option.incorrect {
+  border-color: var(--error);
+  background: var(--error-soft);
+  box-shadow: var(--shadow-glow-error);
+}
+
+/* --- Component: Progress Bar --- */
+.revision-shell-host .progress-track {
+  height: 6px;
+  background: var(--border-light);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.revision-shell-host .progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #818cf8, var(--primary));
+  border-radius: var(--radius-pill);
+  transition: width 0.6s ease-out;
+}
+
+/* --- Layout: Page --- */
+.revision-shell-host .page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+@media (min-width: 640px) {
+  .revision-shell-host .page {
+    max-width: 800px;
+    padding: 28px 20px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .revision-shell-host .page {
+    max-width: 1080px;
+    padding: 32px 24px;
+  }
+}
+
+/* --- Revision Theme System --- */
+
+/* Light theme (default) — clean glass, layered */
+.revision-shell-host .revision-page {
+  --page-bg: #f8f7f4;
+  --surface: rgba(255, 255, 255, 0.65);
+  --surface-raised: #ffffff;
+  --border: #d6d3d1;
+  --border-light: #e7e5e4;
+  --border-glass: rgba(255, 255, 255, 0.8);
+  --text-primary: #1c1917;
+  --text-secondary: #44403c;
+  --text-muted: #78716c;
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-soft: #e0e7ff;
+  --primary-softer: #eef2ff;
+  --primary-text: #4338ca;
+  --accent: #f59e0b;
+  --accent-soft: #fef3c7;
+  --accent-text: #92400e;
+  --hook: #0891b2;
+  --hook-soft: rgba(8, 145, 178, 0.12);
+  --hook-text: #155e75;
+  --surprise: #7c3aed;
+  --surprise-soft: rgba(124, 58, 237, 0.07);
+  --surprise-text: #5b21b6;
+  --success: #22c55e;
+  --success-soft: #dcfce7;
+  --success-text: #15803d;
+  --error: #ef4444;
+  --error-soft: #fee2e2;
+  --error-text: #dc2626;
+  --shadow-card: 0 2px 8px -2px rgba(0, 0, 0, 0.06);
+  --shadow-hover: 0 8px 24px -8px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 8px 32px -8px rgba(99, 102, 241, 0.35);
+}
+
+/* Dark theme — neutral dark, high contrast between layers */
+.revision-shell-host .revision-page[data-rev-theme="dark"] {
+  --page-bg: #0e0e0e;
+  --surface: #1a1a1a;
+  --surface-raised: #262626;
+  --border: #333333;
+  --border-light: #3a3a3a;
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --text-primary: #e4e4e4;
+  --text-secondary: #a8a8a8;
+  --text-muted: #707070;
+  --primary: #818cf8;
+  --primary-hover: #6366f1;
+  --primary-soft: rgba(129, 140, 248, 0.22);
+  --primary-softer: rgba(129, 140, 248, 0.10);
+  --primary-text: #a5b4fc;
+  --accent: #fbbf24;
+  --accent-soft: rgba(251, 191, 36, 0.12);
+  --accent-text: #fcd34d;
+  --hook: #22d3ee;
+  --hook-soft: rgba(34, 211, 238, 0.16);
+  --hook-text: #67e8f9;
+  --surprise: #a78bfa;
+  --surprise-soft: rgba(167, 139, 250, 0.12);
+  --surprise-text: #c4b5fd;
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.10);
+  --success-text: #6ee7a0;
+  --error: #f87171;
+  --error-soft: rgba(248, 113, 113, 0.10);
+  --error-text: #fca5a5;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 8px 32px -8px rgba(129, 140, 248, 0.3);
+}
+
+/* Dark theme for the PreviewShell host itself. PreviewShell renders
+ * `.revision-shell-host` directly (in-app Stage 5/6 panes + the /preview
+ * route), and that element re-declares the light tokens — so it must carry
+ * its OWN dark override, otherwise an outer `.revision-page[data-rev-theme]`
+ * is shadowed and the slide stays light. PreviewShell sets data-rev-theme
+ * from the app's resolved theme. Token values mirror
+ * `.revision-page[data-rev-theme="dark"]` above (single source of dark truth). */
+.revision-shell-host[data-rev-theme="dark"] {
+  --page-bg: #0e0e0e;
+  --surface: #1a1a1a;
+  --surface-raised: #262626;
+  --border: #333333;
+  --border-light: #3a3a3a;
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --text-primary: #e4e4e4;
+  --text-secondary: #a8a8a8;
+  --text-muted: #707070;
+  --primary: #818cf8;
+  --primary-hover: #6366f1;
+  --primary-soft: rgba(129, 140, 248, 0.22);
+  --primary-softer: rgba(129, 140, 248, 0.10);
+  --primary-text: #a5b4fc;
+  --accent: #fbbf24;
+  --accent-hover: #d97706;
+  --accent-soft: rgba(251, 191, 36, 0.12);
+  --accent-text: #fcd34d;
+  --hook: #22d3ee;
+  --hook-soft: rgba(34, 211, 238, 0.16);
+  --hook-text: #67e8f9;
+  --surprise: #a78bfa;
+  --surprise-soft: rgba(167, 139, 250, 0.12);
+  --surprise-text: #c4b5fd;
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.10);
+  --success-text: #6ee7a0;
+  --error: #f87171;
+  --error-soft: rgba(248, 113, 113, 0.10);
+  --error-text: #fca5a5;
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --warning-text: #fcd34d;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 8px 32px -8px rgba(129, 140, 248, 0.3);
+}
+
+/* --- Layout: Revision Slide-Based with Sidebar --- */
+.revision-shell-host .revision-page {
+  display: flex;
+  min-height: 100vh;
+  background: var(--page-bg);
+}
+
+/* Main content (everything right of sidebar) */
+.revision-shell-host .revision-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+/* ---- Sidebar ---- */
+.revision-shell-host .rev-sidebar {
+  flex-shrink: 0;
+  background: var(--page-bg);
+  border-right: 1px solid var(--border-light);
+  z-index: 100;
+  transition: width 150ms ease-out;
+  display: flex;
+  flex-direction: column;
+}
+
+.revision-shell-host .rev-sidebar-collapsed {
+  width: 56px;
+  cursor: pointer;
+  align-items: center;
+  padding: 16px 0;
+}
+
+.revision-shell-host .rev-sidebar-collapsed:hover {
+  background: var(--surface);
+}
+
+.revision-shell-host .rev-sidebar-collapsed-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.revision-shell-host .rev-sidebar-pill {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-main);
+  color: var(--text-muted);
+  background: var(--border-light);
+  transition: all 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-pill.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.revision-shell-host .rev-sidebar-expand-hint {
+  color: var(--text-muted);
+  margin-top: 12px;
+  opacity: 0.5;
+}
+
+/* Expanded sidebar — overlays content */
+.revision-shell-host .rev-sidebar-expanded {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: min(240px, 80vw);
+  height: 100vh;
+  z-index: 210;
+  background: var(--surface);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.08);
+  overflow-y: auto;
+}
+
+.revision-shell-host .rev-sidebar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 205;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* Sidebar header */
+.revision-shell-host .rev-sidebar-header {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.revision-shell-host .rev-sidebar-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.revision-shell-host .rev-sidebar-home {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.revision-shell-host .rev-sidebar-collapse-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: border-color 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-collapse-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* "All chapters" back button — visible in topics view when multiple chapters exist */
+.revision-shell-host .rev-sidebar-back-chapters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: var(--primary-softer);
+  border: 1px solid var(--primary-soft);
+  border-radius: var(--radius-md);
+  color: var(--primary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-back-chapters:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.revision-shell-host .rev-sidebar-module-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.revision-shell-host .rev-sidebar-chapter-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.revision-shell-host .rev-sidebar-module-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+  margin: 0;
+}
+
+/* --- Chapter list view --- */
+.revision-shell-host .rev-sidebar-chapters-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.revision-shell-host .rev-sidebar-chapter-list {
+  flex: 1;
+  padding: 8px 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  background: var(--page-bg);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: var(--font-main);
+  text-align: left;
+  transition: all 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card:hover {
+  background: var(--primary-softer);
+  border-color: var(--primary-soft);
+  transform: translateX(2px);
+}
+
+.revision-shell-host .rev-sidebar-chapter-card.active {
+  background: var(--primary-softer);
+  border-color: var(--primary);
+}
+
+.revision-shell-host .rev-sidebar-chapter-card.locked {
+  opacity: 0.6;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card.locked:hover {
+  opacity: 0.8;
+  background: var(--page-bg);
+  border-color: var(--border);
+  transform: none;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card .rev-sidebar-chapter-num {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--border-light);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card.active .rev-sidebar-chapter-num {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+
+.revision-shell-host .rev-sidebar-chapter-card.locked .rev-sidebar-chapter-num {
+  background: var(--border-light);
+  color: var(--text-muted);
+}
+
+.revision-shell-host .rev-sidebar-chapter-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.revision-shell-host .rev-sidebar-chapter-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card.active .rev-sidebar-chapter-name {
+  color: var(--primary);
+}
+
+.revision-shell-host .rev-sidebar-chapter-meta {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.revision-shell-host .rev-sidebar-chapter-meta.locked {
+  font-style: italic;
+}
+
+.revision-shell-host .rev-sidebar-chapter-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-chapter-card:hover .rev-sidebar-chapter-arrow {
+  transform: translateX(2px);
+  color: var(--primary);
+}
+
+/* Sidebar tree */
+.revision-shell-host .rev-sidebar-tree {
+  flex: 1;
+  padding: 8px 0 24px;
+}
+
+.revision-shell-host .rev-sidebar-section {
+  margin-bottom: 2px;
+}
+
+.revision-shell-host .rev-sidebar-section-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-main);
+  text-align: left;
+  transition: background 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-section-btn:hover {
+  background: var(--border-light);
+}
+
+.revision-shell-host .rev-sidebar-section-num {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--border-light);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.revision-shell-host .rev-sidebar-section-btn.expanded .rev-sidebar-section-num {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+
+.revision-shell-host .rev-sidebar-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.revision-shell-host .rev-sidebar-section-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-section-btn.expanded .rev-sidebar-section-chevron {
+  transform: rotate(180deg);
+}
+
+/* Topics list */
+.revision-shell-host .rev-sidebar-topics {
+  padding: 2px 0 4px 0;
+}
+
+.revision-shell-host .rev-sidebar-topic {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px 7px 44px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  font-family: var(--font-main);
+  text-align: left;
+  transition: all 150ms ease-out;
+}
+
+.revision-shell-host .rev-sidebar-topic:hover {
+  background: var(--border-light);
+}
+
+.revision-shell-host .rev-sidebar-topic.active {
+  border-left-color: var(--primary);
+  background: var(--primary-softer);
+}
+
+.revision-shell-host .rev-sidebar-topic.flat {
+  padding-left: 16px;
+}
+
+.revision-shell-host .rev-sidebar-topic-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.revision-shell-host .rev-sidebar-topic-dot.active {
+  background: var(--primary);
+}
+
+.revision-shell-host .rev-sidebar-topic-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+}
+
+.revision-shell-host .rev-sidebar-topic.active .rev-sidebar-topic-title {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* ---- Top bar ---- */
+.revision-shell-host .revision-top-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 20px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.revision-shell-host .revision-hamburger {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  width: 30px;
+  height: 30px;
+  display: none; /* hidden on desktop, shown on mobile */
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+  font-family: var(--font-main);
+}
+
+.revision-shell-host .revision-top-bar-info {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.revision-shell-host .revision-top-bar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.revision-shell-host .revision-top-bar-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+
+/* Slide nav (prev, dots, next) — truly centered in top bar */
+.revision-shell-host .revision-slide-nav {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.revision-shell-host .revision-nav-btn {
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-main);
+  cursor: pointer;
+  transition: all 150ms ease-out;
+  border: none;
+  white-space: nowrap;
+}
+
+.revision-shell-host .revision-nav-prev {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.revision-shell-host .revision-nav-prev:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.revision-shell-host .revision-nav-prev:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.revision-shell-host .revision-nav-next {
+  background: var(--primary);
+  color: white;
+}
+
+.revision-shell-host .revision-nav-next:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.revision-shell-host .revision-nav-next:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.revision-shell-host .revision-nav-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.revision-shell-host .revision-nav-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.revision-shell-host .revision-nav-dot.active {
+  background: var(--primary);
+  width: 20px;
+  border-radius: 4px;
+}
+
+/* ---- Slide area ---- */
+.revision-shell-host .revision-slide {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  /* Rows size to their content. The slide GROWS with its content and the shell
+     host (.revision-shell-host, overflow-auto) scrolls — so every panel,
+     including a Quick Check below the interactive, stays reachable at any
+     screen size / zoom instead of being clipped under a fixed-height frame. */
+  grid-template-rows: auto auto;
+  /* Fluid gutter between the two columns — proportionate across screen sizes. */
+  column-gap: clamp(14px, 2vmin, 28px);
+  /* Vertical breathing room between stacked tracks — the right column's
+     interactive and its Quick Check read as two separate cards (gold layout),
+     and the title gets space above the panels. The left column spans both
+     tracks so it stays one continuous card across this gap. Fluid, bounded. */
+  row-gap: clamp(12px, 1.6vmin, 22px);
+  width: 90%;
+  min-height: 100%; /* fill tall screens; grow past them on short ones */
+  margin: 0 auto;
+  padding: 20px 0;
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+
+/* With a Quick Check, the right column stacks interactive + questions — give it
+   a third content-sized row so both size to their content (no starvation). */
+.revision-shell-host .revision-slide:has(.revision-questions-wrap) {
+  grid-template-rows: auto auto auto;
+}
+
+/* Panels size to their content; the slide as a whole scrolls in the host.
+   min-height:0 keeps grid children from forcing the track taller than needed. */
+.revision-shell-host .revision-slide .slide-left,
+.revision-shell-host .revision-slide .slide-right,
+.revision-shell-host .revision-slide .revision-questions-wrap {
+  min-height: 0;
+}
+
+.revision-shell-host .revision-slide.slide-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.revision-shell-host .revision-slide.slide-hidden {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+/* Slide title — spans above both panels */
+.revision-shell-host .revision-slide:has(.slide-title) {
+  padding-top: 6px;
+}
+.revision-shell-host .revision-slide .slide-title {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  text-align: center;
+  padding: 0 0 6px;
+}
+
+/* When title present: shift panels down one row */
+.revision-shell-host .revision-slide:has(.slide-title) .slide-left {
+  grid-row: 2 / 4;
+}
+.revision-shell-host .revision-slide:has(.slide-title) .slide-right {
+  grid-row: 2;
+}
+.revision-shell-host .revision-slide:has(.slide-title) .revision-questions-wrap {
+  grid-row: 3;
+}
+
+/* Section boxes — gray bg containers for content */
+.revision-shell-host .revision-slide .slide-left {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  /* Roomier, fluid panel padding — bigger, calmer boxes that scale with the
+     screen (was a flat 22px). */
+  padding: clamp(20px, 2.6vmin, 32px);
+  /* Stack the left-column section boxes with a CONSISTENT rhythm — even gap,
+     packed from the top — the clean, calm look of the gold reference. (An
+     earlier `space-between` stretched the gaps apart whenever the left content
+     was shorter than the column, which read as odd/uneven; a fixed gap with any
+     slack sitting at the bottom looks far cleaner.) */
+  display: flex;
+  flex-direction: column;
+  /* Fluid card gap — scales with the viewport (vmin = the smaller of vw/vh) so
+     the rhythm stays proportionate on a 13" laptop and a 27" monitor alike,
+     bounded so it never collapses or yawns: 12px floor, 20px ceiling. */
+  gap: clamp(12px, 1.6vmin, 20px);
+}
+
+.revision-shell-host .revision-slide .slide-right {
+  grid-column: 2;
+  grid-row: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  /* Roomier, fluid panel padding — bigger, calmer boxes that scale with the
+     screen (was a flat 22px). */
+  padding: clamp(20px, 2.6vmin, 32px);
+}
+
+/* Illustration sizing — host owns layout (S77 contract). A slide's right-column
+   visual (canvas/img/svg/video) FILLS the column width with a height derived
+   from its own aspect ratio, capped so it can't dominate the viewport or push
+   the questions panel below it off-screen. This keeps the two columns visually
+   balanced (1fr / 1fr) and makes the illustration responsive to the screen
+   instead of rendering at a fixed pixel size. `width:100% !important` overrides
+   a slide that set a fixed width; `height:auto` lets the aspect ratio set the
+   height (well-authored slides set their own aspectRatio, which this respects);
+   `object-fit:contain` letterboxes rather than distorts when the cap binds.
+   Tunable: adjust the clamp() bounds to taste. (A canvas should ALSO size its bitmap from the
+   measured element + dpr — that's enforced in the authoring prompt, not here.) */
+.revision-shell-host .revision-slide .slide-right canvas,
+.revision-shell-host .revision-slide .slide-right img,
+.revision-shell-host .revision-slide .slide-right svg,
+.revision-shell-host .revision-slide .slide-right video {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  /* Fluid illustration cap — scales with viewport height but bounded so it's
+     never a sliver on a short laptop nor a wall on a tall 4K display: 220px
+     floor, ~38vh fluid, 420px ceiling. */
+  max-height: clamp(200px, 34vh, 360px) !important;
+  object-fit: contain;
+}
+
+/* Questions panel — a STANDALONE card below the interactive (the grid row-gap
+   gives the separation). The gold layout shows the interactive and the Quick
+   Check as two distinct rounded cards, not one fused panel — so the right
+   column keeps its full border/radius and the questions wrap is its own card. */
+.revision-shell-host .revision-questions-wrap {
+  grid-column: 2;
+  grid-row: 2;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 22px 22px;
+}
+
+/* Interest panel centered in slide area */
+.revision-shell-host .revision-interest-wrap {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 40px;
+}
+
+/* ---- Mobile ---- */
+@media (max-width: 768px) {
+  /* Hide collapsed sidebar on mobile */
+  .revision-shell-host .rev-sidebar-collapsed {
+    display: none;
+  }
+
+  /* Show hamburger on mobile */
+  .revision-shell-host .revision-hamburger {
+    display: flex;
+  }
+
+  .revision-shell-host .revision-top-bar {
+    padding: 6px 12px;
+  }
+
+  .revision-shell-host .revision-slide,
+  .revision-shell-host .revision-slide:has(.revision-questions-wrap) {
+    grid-template-columns: 1fr;
+    /* single column flows top-to-bottom; the page scrolls, not each panel */
+    grid-template-rows: none;
+    height: auto;
+    overflow: visible;
+    width: 100%;
+    padding: 12px;
+    gap: 16px;
+  }
+
+  /* panels grow to content and let the page scroll on mobile */
+  .revision-shell-host .revision-slide .slide-left,
+  .revision-shell-host .revision-slide .slide-right,
+  .revision-shell-host .revision-slide .revision-questions-wrap {
+    overflow: visible;
+  }
+
+  .revision-shell-host .revision-slide .slide-title {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .revision-shell-host .revision-slide:has(.slide-title) .slide-left,
+  .revision-shell-host .revision-slide:has(.slide-title) .slide-right,
+  .revision-shell-host .revision-slide:has(.slide-title) .revision-questions-wrap {
+    grid-row: auto;
+  }
+
+  .revision-shell-host .revision-slide .slide-left {
+    grid-row: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 16px;
+  }
+
+  .revision-shell-host .revision-slide .slide-right {
+    grid-row: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 16px;
+  }
+
+  .revision-shell-host .revision-questions-wrap {
+    grid-column: 1;
+    border-radius: 12px;
+    padding: 16px 16px 16px;
+  }
+
+  .revision-shell-host .revision-slide-nav {
+    gap: 8px;
+  }
+
+  .revision-shell-host .revision-nav-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .revision-shell-host .revision-nav-dots {
+    display: none;
+  }
+}
+
+/* Question card (inside slide right panel) */
+.revision-shell-host .revision-question-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--primary-soft);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+}
+
+.revision-shell-host .revision-question-card + .revision-question-card {
+  margin-top: 16px;
+}
+
+.revision-shell-host .revision-question-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.revision-shell-host .revision-question-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.revision-shell-host .revision-question-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.revision-shell-host .revision-question-text {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.55;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.revision-shell-host .revision-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.revision-shell-host .revision-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 150ms ease-out;
+  font-size: 13px;
+  font-family: var(--font-main);
+  color: var(--text-primary);
+  line-height: 1.45;
+  width: 100%;
+  text-align: left;
+}
+
+.revision-shell-host .revision-question-option:hover:not(.correct):not(.incorrect):not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-softer);
+}
+
+.revision-shell-host .revision-question-option.selected {
+  border-color: var(--primary);
+  background: var(--primary-softer);
+}
+
+.revision-shell-host .revision-question-option.correct {
+  border-color: var(--success);
+  background: var(--success-soft);
+  cursor: default;
+}
+
+.revision-shell-host .revision-question-option.incorrect {
+  border-color: var(--error);
+  background: var(--error-soft);
+  cursor: default;
+}
+
+.revision-shell-host .revision-question-option-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--border-light);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.revision-shell-host .revision-question-option.correct .revision-question-option-letter {
+  background: var(--success);
+  color: white;
+}
+
+.revision-shell-host .revision-question-option.incorrect .revision-question-option-letter {
+  background: var(--error);
+  color: white;
+}
+
+.revision-shell-host .revision-question-check-btn {
+  display: block;
+  width: 100%;
+  padding: 9px 16px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-main);
+  cursor: pointer;
+  transition: background 150ms ease-out;
+  margin-top: 4px;
+}
+
+.revision-shell-host .revision-question-check-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.revision-shell-host .revision-question-explanation {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--primary-softer);
+  border: 1px solid var(--primary-soft);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--primary-text);
+}
+
+.revision-shell-host .revision-question-explanation-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.revision-shell-host .revision-question-completed-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--success-text);
+  background: var(--success-soft);
+  border: 1px solid var(--success);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  line-height: 14px;
+}
+
+/* --- Animation: Spinner --- */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Animation: Recording pulse dot --- */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* --- Session Loader animations --- */
+@keyframes ctaEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes strikeThrough {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+
+@keyframes cursorBlink {
+  50% { opacity: 0; }
+}
+
+@keyframes dieShake {
+  from { transform: rotate(-7deg) scale(1.04); }
+  to   { transform: rotate(7deg) scale(0.97); }
+}
+
+@keyframes dieLand {
+  0%   { transform: scale(1.18); }
+  60%  { transform: scale(0.93); }
+  100% { transform: scale(1); }
+}
+
+/* --- Animation: Staggered card entrance --- */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.revision-shell-host .home-card-enter {
+  animation: fadeInUp 400ms ease-out both;
+}
+
+/* --- Animation: Smooth collapse/expand (height + fade) --- */
+.revision-shell-host .collapse-section {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 350ms ease-out;
+}
+
+.revision-shell-host .collapse-section.is-open {
+  grid-template-rows: 1fr;
+}
+
+.revision-shell-host .collapse-section > .collapse-content {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.revision-shell-host .collapse-section .collapse-fade {
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+}
+
+.revision-shell-host .collapse-section.is-open .collapse-fade {
+  opacity: 1;
+  transition: opacity 280ms ease-out 70ms;
+}
+
+/* --- Animation: Chapter morph container (grid <-> strip) --- */
+.revision-shell-host .chapter-morph {
+  position: relative;
+  border-radius: var(--radius-xl);
+  transition: height 420ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 300ms ease-out,
+              background-color 300ms ease-out,
+              box-shadow 300ms ease-out;
+  will-change: height;
+}
+
+/* Border visible during transitions and in collapsed strip state.
+   Also clips overflow when height is explicit. */
+.revision-shell-host .chapter-morph.morph-has-border {
+  border: 1.5px solid var(--primary);
+  background: var(--primary-softer);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* No border in expanded state */
+.revision-shell-host .chapter-morph.morph-no-border {
+  border: 1.5px solid transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* The two content layers for crossfade */
+.revision-shell-host .chapter-morph-layer {
+  width: 100%;
+  transition: opacity 380ms ease-out;
+}
+
+.revision-shell-host .chapter-morph-layer.morph-visible {
+  opacity: 1;
+}
+
+.revision-shell-host .chapter-morph-layer.morph-hidden {
+  opacity: 0;
+}
+
+/* Absolute positioning for the outgoing layer during transition */
+.revision-shell-host .chapter-morph-layer.morph-abs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+/* Invisible but measurable — used when a layer is not shown but we
+   need its DOM node for offsetHeight measurement */
+.revision-shell-host .chapter-morph-layer.morph-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+/* --- Animation: Check mark scale-in --- */
+@keyframes scaleIn {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+.revision-shell-host .scale-in {
+  animation: scaleIn 200ms ease-out both;
+}
+
+/* --- Animation: Question card entrance (deck flip) --- */
+@keyframes questionEnter {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Topic Progress Loader animations --- */
+@keyframes bounceIn {
+  0%   { opacity: 0; transform: translateY(-14px); }
+  65%  { transform: translateY(3px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes gradeSettle {
+  0%   { transform: scale(1.3); }
+  50%  { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+@keyframes thoughtPop {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes notif-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.7); }
+}
+
+.revision-shell-host .question-enter {
+  animation: questionEnter 350ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.revision-shell-host .page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.revision-shell-host .page-subtitle {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+
+/* =========================================================================
+   VOICE SESSION — Right panel layout
+   Uses revision flow theme tokens (--surface, --border, --primary, etc.)
+   Supports both light and dark themes via data-rev-theme.
+   ========================================================================= */
+
+/* --- Voice-active layout modifications --- */
+
+/* Move WhatsApp button to bottom-left when voice is active (avoids overlap with end call) */
+.revision-shell-host .revision-page.voice-active ~ a[aria-label="Chat on WhatsApp"],
+.revision-shell-host:has(.revision-page.voice-active) a[aria-label="Chat on WhatsApp"] {
+  right: auto !important;
+  left: 20px !important;
+}
+
+/* Hide sidebar when voice is active */
+.revision-shell-host .revision-page.voice-active .rev-sidebar {
+  display: none;
+}
+
+/* Slide takes full width, no extra margins */
+.revision-shell-host .revision-page.voice-active .revision-slide {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Disable prev/next nav during active call */
+.revision-shell-host .revision-page.voice-active .revision-nav-btn {
+  pointer-events: none;
+  opacity: 0.3;
+}
+
+/* Main content becomes a row: slide + voice panel, viewport-locked */
+.revision-shell-host .revision-page.voice-active .revision-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.revision-shell-host .revision-page.voice-active .voice-layout-row {
+  display: flex;
+  flex: 1;
+  min-height: 0; /* critical: allows flex children to shrink below content size */
+  overflow: hidden;
+}
+
+.revision-shell-host .revision-page.voice-active .voice-layout-row .revision-slide {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* --- Voice panel (right side) ---
+   Visual hierarchy: grey panel bg → white card → dark text
+   Matches the slide's layering: page-bg → surface cards → content
+*/
+
+.revision-shell-host .voice-panel {
+  width: 380px;
+  flex-shrink: 0;
+  border-left: 2px solid var(--primary);
+  background: var(--surface);  /* grey layer — the "section" background */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.revision-shell-host .voice-panel-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 24px;
+  flex: 1;
+}
+
+.revision-shell-host .voice-panel-muted {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.revision-shell-host .voice-panel-error {
+  font-size: 14px;
+  color: var(--error-text);
+  margin: 0;
+}
+
+.revision-shell-host .voice-panel-dismiss-btn {
+  padding: 8px 20px;
+  background: var(--surface-raised);
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-main, Inter, sans-serif);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 150ms ease-out;
+}
+
+.revision-shell-host .voice-panel-dismiss-btn:hover {
+  border-color: var(--primary);
+}
+
+/* --- Whiteboard section (top half of voice panel) --- */
+
+.revision-shell-host .voice-wb-section {
+  height: 50%;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 12px;
+  gap: 8px;
+}
+
+.revision-shell-host .voice-wb-header {
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.revision-shell-host .voice-wb-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+}
+
+.revision-shell-host .voice-wb-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.revision-shell-host .voice-wb-nav-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 150ms ease-out;
+  padding: 0;
+  line-height: 1;
+}
+
+.revision-shell-host .voice-wb-nav-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.revision-shell-host .voice-wb-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.revision-shell-host .voice-wb-nav-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: center;
+}
+
+/* White card inside the grey section — the content layer */
+.revision-shell-host .voice-wb-body {
+  flex: 1;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+}
+
+.revision-shell-host .voice-wb-body.voice-wb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.revision-shell-host .voice-wb-empty-icon {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.revision-shell-host .voice-wb-empty-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+  font-style: italic;
+}
+
+/* Whiteboard card content — sits inside the white card */
+.revision-shell-host .voice-wb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  height: 100%;
+  overflow-y: auto;
+  justify-content: center;
+  animation: wbCardIn 200ms ease-out;
+}
+
+@keyframes wbCardIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Reverse direction for navigating backwards */
+.revision-shell-host .voice-wb-card.slide-prev {
+  animation: wbCardInPrev 200ms ease-out;
+}
+
+@keyframes wbCardInPrev {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.revision-shell-host .voice-wb-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: center;
+  margin: 0;
+}
+
+.revision-shell-host .voice-wb-card-latex {
+  text-align: center;
+  padding: 8px 0;
+  overflow-x: auto;
+}
+
+/* KaTeX color adapts to theme */
+.revision-shell-host .voice-wb-card-latex .katex {
+  color: var(--primary-text);
+  font-size: 1.3em;
+}
+
+.revision-shell-host .voice-wb-card-steps {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  counter-reset: wb-step;
+}
+
+.revision-shell-host .voice-wb-card-steps li {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding-left: 24px;
+  position: relative;
+  counter-increment: wb-step;
+}
+
+.revision-shell-host .voice-wb-card-steps li::before {
+  content: counter(wb-step) ".";
+  position: absolute;
+  left: 0;
+  font-weight: 700;
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.revision-shell-host .voice-wb-card-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* --- Transcript section (bottom half of voice panel) --- */
+
+.revision-shell-host .voice-transcript-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 12px 12px;
+  gap: 8px;
+}
+
+/* Status bar — white card with clear contrast */
+.revision-shell-host .voice-transcript-header {
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
+
+.revision-shell-host .voice-transcript-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Chat area — white card */
+.revision-shell-host .voice-transcript-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+}
+
+.revision-shell-host .voice-transcript-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
+  align-self: center;
+  padding-top: 20px;
+}
+
+/* Chat bubbles — bot is white (matches card bg), user is strong contrast */
+.revision-shell-host .voice-bubble {
+  max-width: 88%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  animation: bubbleIn 150ms ease-out;
+}
+
+/* Bot: subtle background, dark text — readable and clean */
+.revision-shell-host .voice-bubble.bot {
+  align-self: flex-start;
+  background: var(--surface);
+  color: var(--text-primary);
+  border-bottom-left-radius: 4px;
+}
+
+/* User: strong primary color — unmistakable contrast */
+.revision-shell-host .voice-bubble.user {
+  align-self: flex-end;
+  background: var(--primary);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Whiteboard inline marker in transcript */
+.revision-shell-host .voice-wb-marker {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  padding: 4px 10px;
+  background: var(--primary-softer);
+  border-radius: 8px;
+  border: 1px solid var(--primary-soft);
+}
+
+.revision-shell-host .voice-wb-marker svg {
+  flex-shrink: 0;
+}
+
+/* --- Bot state indicator --- */
+
+.revision-shell-host .voice-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.revision-shell-host .voice-state-dot.listening {
+  background: var(--success);
+  animation: statePulse 2s ease-in-out infinite;
+}
+
+.revision-shell-host .voice-state-dot.speaking {
+  background: var(--primary);
+  animation: statePulse 1s ease-in-out infinite;
+}
+
+.revision-shell-host .voice-state-dot.thinking {
+  background: var(--warning);
+  animation: statePulse 0.6s ease-in-out infinite;
+}
+
+.revision-shell-host .voice-state-dot.disconnected {
+  background: var(--text-muted);
+}
+
+@keyframes statePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.revision-shell-host .voice-state-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* --- Voice controls bar --- */
+
+/* Controls bar — white card on grey, matches the layering */
+.revision-shell-host .voice-controls {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+}
+
+.revision-shell-host .voice-controls-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100px;
+}
+
+.revision-shell-host .voice-controls-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.revision-shell-host .voice-mic-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 150ms ease-out, background 150ms ease-out;
+}
+
+.revision-shell-host .voice-mic-btn:hover {
+  border-color: var(--primary);
+}
+
+.revision-shell-host .voice-mic-btn.muted {
+  border-color: var(--error);
+  background: var(--error-soft);
+  color: var(--error-text);
+}
+
+.revision-shell-host .voice-end-btn {
+  padding: 8px 18px;
+  border-radius: 20px;
+  border: none;
+  background: var(--error);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-main, Inter, sans-serif);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 150ms ease-out;
+}
+
+.revision-shell-host .voice-end-btn:hover {
+  opacity: 0.9;
+}
+
+/* --- Cold start animation --- */
+
+.revision-shell-host .voice-coldstart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 48px 24px;
+  flex: 1;
+}
+
+.revision-shell-host .voice-coldstart-anim {
+  position: relative;
+  width: 80px;
+  height: 64px;
+}
+
+/* Chalkboard */
+.revision-shell-host .voice-coldstart-board {
+  width: 80px;
+  height: 56px;
+  background: var(--surface-raised);
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Chalk lines that draw themselves */
+.revision-shell-host .voice-coldstart-chalk {
+  position: absolute;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 1px;
+  transform-origin: left;
+  animation: chalkDraw 2.4s ease-in-out infinite;
+}
+
+.revision-shell-host .voice-coldstart-chalk.chalk-1 {
+  top: 14px;
+  left: 10px;
+  width: 50px;
+  animation-delay: 0s;
+}
+
+.revision-shell-host .voice-coldstart-chalk.chalk-2 {
+  top: 26px;
+  left: 10px;
+  width: 38px;
+  animation-delay: 0.4s;
+}
+
+.revision-shell-host .voice-coldstart-chalk.chalk-3 {
+  top: 38px;
+  left: 10px;
+  width: 55px;
+  animation-delay: 0.8s;
+}
+
+@keyframes chalkDraw {
+  0% { transform: scaleX(0); opacity: 0; }
+  10% { opacity: 0.6; }
+  40% { transform: scaleX(1); opacity: 0.6; }
+  70% { transform: scaleX(1); opacity: 0; }
+  100% { transform: scaleX(0); opacity: 0; }
+}
+
+/* Floating chalk dust */
+.revision-shell-host .voice-coldstart-dust {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary);
+  opacity: 0;
+  animation: dustFloat 2.4s ease-out infinite;
+}
+
+.revision-shell-host .voice-coldstart-dust.dust-1 {
+  bottom: 12px;
+  right: 8px;
+  animation-delay: 0.2s;
+}
+
+.revision-shell-host .voice-coldstart-dust.dust-2 {
+  bottom: 16px;
+  right: 20px;
+  animation-delay: 0.8s;
+}
+
+.revision-shell-host .voice-coldstart-dust.dust-3 {
+  bottom: 10px;
+  right: 32px;
+  animation-delay: 1.4s;
+}
+
+@keyframes dustFloat {
+  0% { opacity: 0; transform: translateY(0); }
+  20% { opacity: 0.5; }
+  100% { opacity: 0; transform: translateY(-18px); }
+}
+
+.revision-shell-host .voice-coldstart-line {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin: 0;
+  animation: fadeRotate 2.2s ease-in-out infinite;
+}
+
+@keyframes fadeRotate {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.revision-shell-host .voice-coldstart-error {
+  font-size: 15px;
+  color: var(--error-text);
+  margin: 0;
+}
+
+.revision-shell-host .voice-coldstart-dismiss {
+  padding: 8px 20px;
+  background: var(--surface-raised);
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-main, Inter, sans-serif);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* --- ModePicker --- */
+
+.revision-shell-host .voice-mode-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 24px;
+  flex: 1;
+  justify-content: center;
+}
+
+.revision-shell-host .voice-mode-picker-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.revision-shell-host .voice-mode-picker-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.revision-shell-host .voice-mode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  background: var(--surface-raised);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-main, Inter, sans-serif);
+  transition: border-color 150ms ease-out;
+}
+
+.revision-shell-host .voice-mode-card:hover {
+  border-color: var(--primary);
+}
+
+.revision-shell-host .voice-mode-card-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.revision-shell-host .voice-mode-card-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.revision-shell-host .voice-mode-cancel {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-main, Inter, sans-serif);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.revision-shell-host .voice-mode-cancel:hover {
+  color: var(--text-secondary);
+}
+
+/* Mode card disabled (daily limit reached) */
+.revision-shell-host .voice-mode-card.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.revision-shell-host .voice-mode-card.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Mode card note (e.g. "1 attempt per day") */
+.revision-shell-host .voice-mode-card-note {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* --- Post-call results (test mode) --- */
+
+.revision-shell-host .voice-postcall {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px 16px 16px;
+}
+
+.revision-shell-host .voice-postcall-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.revision-shell-host .voice-postcall-score-section {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.revision-shell-host .voice-postcall-score {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.revision-shell-host .voice-postcall-score.low { color: var(--error); }
+.revision-shell-host .voice-postcall-score.mid { color: var(--warning); }
+.revision-shell-host .voice-postcall-score.high { color: var(--success); }
+
+.revision-shell-host .voice-postcall-score-label {
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.revision-shell-host .voice-postcall-explanation {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin: 0 0 16px;
+}
+
+.revision-shell-host .voice-postcall-list {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+}
+.revision-shell-host .voice-postcall-list.understood {
+  background: var(--success-soft);
+}
+.revision-shell-host .voice-postcall-list.gaps {
+  background: var(--warning-soft);
+}
+.revision-shell-host .voice-postcall-list h4 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.revision-shell-host .voice-postcall-list.understood h4 { color: var(--success-text); }
+.revision-shell-host .voice-postcall-list.gaps h4 { color: var(--warning-text); }
+
+.revision-shell-host .voice-postcall-list ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.revision-shell-host .voice-postcall-list li {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.revision-shell-host .voice-postcall-summary {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+
+.revision-shell-host .voice-postcall-done {
+  margin-top: 12px;
+  padding: 10px 0;
+  width: 100%;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+.revision-shell-host .voice-postcall-done:hover {
+  background: var(--primary-hover);
+}
+
+/* Polling spinner */
+.revision-shell-host .voice-polling-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: voice-spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+@keyframes voice-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Mobile: voice panel becomes bottom drawer --- */
+@media (max-width: 768px) {
+  .revision-shell-host .voice-panel {
+    width: 100%;
+    height: 55vh;
+    border-left: none;
+    border-top: 2px solid var(--primary);
+  }
+
+  .revision-shell-host .revision-page.voice-active .voice-layout-row {
+    flex-direction: column;
+  }
+
+  .revision-shell-host .revision-page.voice-active .voice-layout-row .revision-slide {
+    flex: 1;
+    max-height: 45vh;
+  }
+}
+
+/* --- Voice top bar group (mic button + history link) --- */
+.revision-shell-host .voice-topbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.revision-shell-host .voice-topbar-btn {
+  background: var(--primary);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  font-size: 15px;
+  flex-shrink: 0;
+  transition: background 150ms ease-out;
+}
+
+.revision-shell-host .voice-history-link {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-main);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 150ms ease-out, color 150ms ease-out;
+  white-space: nowrap;
+}
+.revision-shell-host .voice-history-link:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* --- Voice history dropdown --- */
+.revision-shell-host .voice-history-dropdown {
+  position: absolute;
+  right: 16px;
+  top: 52px;
+  z-index: 100;
+  width: 320px;
+  max-height: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.revision-shell-host .voice-history-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.revision-shell-host .voice-history-dropdown-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.revision-shell-host .voice-history-dropdown-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.revision-shell-host .voice-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-light, var(--border));
+  cursor: pointer;
+  font-family: var(--font-main);
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+  transition: background 150ms ease-out;
+}
+.revision-shell-host .voice-history-item:last-child {
+  border-bottom: none;
+}
+.revision-shell-host .voice-history-item:hover {
+  background: var(--primary-soft, rgba(37, 99, 235, 0.06));
+}
+
+.revision-shell-host .voice-history-mode-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+.revision-shell-host .voice-history-mode-badge.overview { background: var(--primary-soft, #e0ecff); color: var(--primary); }
+.revision-shell-host .voice-history-mode-badge.test { background: #fef3c7; color: #92400e; }
+.revision-shell-host .voice-history-mode-badge.doubt { background: #f0fdf4; color: #166534; }
+
+.revision-shell-host .voice-history-item-date {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.revision-shell-host .voice-history-item-duration {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.revision-shell-host .voice-history-item-score {
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.revision-shell-host .voice-history-item-score.high { color: var(--success, #16a34a); }
+.revision-shell-host .voice-history-item-score.mid { color: var(--warning, #d97706); }
+.revision-shell-host .voice-history-item-score.low { color: var(--error, #dc2626); }
+
+/* --- Voice session review --- */
+.revision-shell-host .voice-review {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.revision-shell-host .voice-review-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.revision-shell-host .voice-review-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-main);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.revision-shell-host .voice-review-back:hover {
+  text-decoration: underline;
+}
+
+.revision-shell-host .voice-review-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.revision-shell-host .voice-review-mode-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.revision-shell-host .voice-review-mode-badge.overview { background: var(--primary-soft, #e0ecff); color: var(--primary); }
+.revision-shell-host .voice-review-mode-badge.test { background: #fef3c7; color: #92400e; }
+.revision-shell-host .voice-review-mode-badge.doubt { background: #f0fdf4; color: #166534; }
+
+.revision-shell-host .voice-review-date,
+.revision-shell-host .voice-review-duration {
+  color: var(--text-muted);
+}
+
+.revision-shell-host .voice-review-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Score card (test mode) */
+.revision-shell-host .voice-review-score-card {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.revision-shell-host .voice-review-score {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+}
+.revision-shell-host .voice-review-score.high { color: var(--success, #16a34a); }
+.revision-shell-host .voice-review-score.mid { color: var(--warning, #d97706); }
+.revision-shell-host .voice-review-score.low { color: var(--error, #dc2626); }
+
+.revision-shell-host .voice-review-score-label {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.revision-shell-host .voice-review-score-explanation {
+  width: 100%;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+/* Analysis lists */
+.revision-shell-host .voice-review-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.revision-shell-host .voice-review-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.revision-shell-host .voice-review-list h4 {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.revision-shell-host .voice-review-list ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.revision-shell-host .voice-review-list.understood { color: var(--success-text, #166534); }
+.revision-shell-host .voice-review-list.understood h4 { color: var(--success, #16a34a); }
+.revision-shell-host .voice-review-list.gaps { color: var(--error-text, #991b1b); }
+.revision-shell-host .voice-review-list.gaps h4 { color: var(--error, #dc2626); }
+.revision-shell-host .voice-review-list.covered { color: var(--text-primary); }
+.revision-shell-host .voice-review-list.covered h4 { color: var(--primary); }
+.revision-shell-host .voice-review-list.questions { color: var(--text-primary); }
+.revision-shell-host .voice-review-list.questions h4 { color: var(--text-secondary); }
+
+/* Audio player */
+.revision-shell-host .voice-review-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.revision-shell-host .voice-review-audio h4 {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-secondary);
+}
+.revision-shell-host .voice-review-audio audio {
+  width: 100%;
+  height: 36px;
+  border-radius: 6px;
+}
+
+/* Transcript replay */
+.revision-shell-host .voice-review-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.revision-shell-host .voice-review-transcript h4 {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-secondary);
+}
+
+.revision-shell-host .voice-review-transcript-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Inline whiteboard card in review transcript */
+.revision-shell-host .voice-review-wb-card {
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 2px 0;
+}
+
+.revision-shell-host .voice-review-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px 0;
+}
+
+/* Mobile: history dropdown full width */
+@media (max-width: 768px) {
+  .revision-shell-host .voice-history-dropdown {
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+}

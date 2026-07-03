@@ -1,0 +1,16 @@
+{
+  "name": "@b2c/kernel",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Shared spine: Drizzle schema + zod contracts. Consumed by b2c (and, later, git-linked into Starkhorn). The one-way-door schema from rewrite/spine-schema.md.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./contracts": "./src/contracts.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.0",
+    "zod": "^3.23.8"
+  }
+}

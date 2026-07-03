@@ -1,0 +1,341 @@
+/* @nadi/interactive-frame — design tokens.
+ *
+ * One source of truth for colors / type / spacing inside an interactive slide.
+ * Scoped to .nadi-iframe so we never bleed into the host app's CSS.
+ *
+ * Authors override individual tokens by setting custom properties on a child
+ * element — e.g. `<div style={{ '--nadi-accent': '#ff6b6b' }}>`.
+ */
+
+.nadi-iframe {
+  /* Color */
+  --nadi-bg: #ffffff;
+  --nadi-fg: #1a1a1a;
+  --nadi-muted: #6b7280;
+  --nadi-border: #e5e7eb;
+  --nadi-accent: #2563eb;
+  --nadi-accent-fg: #ffffff;
+  --nadi-surface: #f9fafb;
+
+  /* Type */
+  --nadi-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --nadi-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --nadi-text-sm: 0.875rem;
+  --nadi-text-base: 1rem;
+  --nadi-text-lg: 1.125rem;
+  --nadi-text-xl: 1.5rem;
+
+  /* Space */
+  --nadi-space-1: 0.25rem;
+  --nadi-space-2: 0.5rem;
+  --nadi-space-3: 0.75rem;
+  --nadi-space-4: 1rem;
+  --nadi-space-6: 1.5rem;
+  --nadi-space-8: 2rem;
+
+  /* Radius + shadow */
+  --nadi-radius: 8px;
+  --nadi-radius-lg: 12px;
+  --nadi-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --nadi-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+
+  /* Z-index (chrome above content, dialogs above chrome) */
+  --nadi-z-chrome: 10;
+  --nadi-z-overlay: 20;
+
+  /* Wiring */
+  font-family: var(--nadi-font);
+  color: var(--nadi-fg);
+  background: var(--nadi-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .nadi-iframe {
+    --nadi-bg: #0f172a;
+    --nadi-fg: #f1f5f9;
+    --nadi-muted: #94a3b8;
+    --nadi-border: #1e293b;
+    --nadi-surface: #1e293b;
+  }
+}
+
+/* Outer container — fills its parent. No fixed dimensions (design §3.6). */
+.nadi-iframe {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--nadi-radius-lg);
+}
+
+/* Fullscreen-mode wrapper switches to viewport-anchored. */
+.nadi-iframe[data-fullscreen="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: var(--nadi-z-overlay);
+  border-radius: 0;
+}
+
+.nadi-iframe__chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nadi-space-3);
+  padding: var(--nadi-space-2) var(--nadi-space-3);
+  background: var(--nadi-surface);
+  border-bottom: 1px solid var(--nadi-border);
+  z-index: var(--nadi-z-chrome);
+  flex: 0 0 auto;
+}
+
+.nadi-iframe__title {
+  font-size: var(--nadi-text-sm);
+  font-weight: 600;
+  color: var(--nadi-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nadi-iframe__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--nadi-space-1);
+}
+
+.nadi-iframe__btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--nadi-radius);
+  color: var(--nadi-fg);
+  cursor: pointer;
+  padding: var(--nadi-space-1) var(--nadi-space-2);
+  font: inherit;
+  font-size: var(--nadi-text-sm);
+  line-height: 1;
+}
+
+.nadi-iframe__btn:hover {
+  background: var(--nadi-border);
+}
+
+.nadi-iframe__btn:focus-visible {
+  outline: 2px solid var(--nadi-accent);
+  outline-offset: 1px;
+}
+
+.nadi-iframe__btn[aria-pressed="true"] {
+  background: var(--nadi-accent);
+  color: var(--nadi-accent-fg);
+}
+
+.nadi-iframe__viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+/* Zoom wrapper — transform-scaled by the chrome's zoom controls. */
+.nadi-iframe__zoom {
+  transform-origin: top left;
+  transition: transform 150ms ease-out;
+  width: 100%;
+  height: 100%;
+}
+
+.nadi-iframe__error {
+  padding: var(--nadi-space-6);
+  color: var(--nadi-fg);
+  background: var(--nadi-surface);
+  border: 1px solid var(--nadi-border);
+  border-radius: var(--nadi-radius);
+  margin: var(--nadi-space-4);
+  font-family: var(--nadi-font-mono);
+  font-size: var(--nadi-text-sm);
+  white-space: pre-wrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * StageRenderer — declarative-content blocks (Fix B). All scoped under
+ * .nadi-iframe so they never leak into the host app.
+ * ------------------------------------------------------------------------- */
+
+.nadi-iframe .nadi-stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: var(--nadi-space-8);
+  gap: var(--nadi-space-4);
+  font-size: var(--nadi-text-base);
+  line-height: 1.6;
+}
+
+.nadi-iframe .nadi-stage__blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nadi-space-4);
+}
+
+.nadi-iframe .nadi-block {
+  margin: 0;
+}
+
+.nadi-iframe .nadi-heading {
+  font-weight: 700;
+  line-height: 1.25;
+}
+.nadi-iframe .nadi-heading--1 {
+  font-size: var(--nadi-text-xl);
+}
+.nadi-iframe .nadi-heading--2 {
+  font-size: var(--nadi-text-lg);
+}
+.nadi-iframe .nadi-heading--3 {
+  font-size: var(--nadi-text-base);
+  color: var(--nadi-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.nadi-iframe .nadi-prose {
+  color: var(--nadi-fg);
+}
+
+.nadi-iframe .nadi-math-block {
+  margin: var(--nadi-space-2) 0;
+  text-align: center;
+}
+.nadi-iframe .nadi-math-display {
+  font-size: var(--nadi-text-lg);
+  overflow-x: auto;
+}
+.nadi-iframe .nadi-math-caption {
+  margin-top: var(--nadi-space-1);
+  font-size: var(--nadi-text-sm);
+  color: var(--nadi-muted);
+}
+.nadi-iframe .nadi-math-inline math {
+  font-size: 1.05em;
+}
+
+.nadi-iframe .nadi-image {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--nadi-space-2);
+}
+.nadi-iframe .nadi-image__img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--nadi-radius);
+}
+.nadi-iframe .nadi-image__caption {
+  font-size: var(--nadi-text-sm);
+  color: var(--nadi-muted);
+}
+
+.nadi-iframe .nadi-callout {
+  border: 1px solid var(--nadi-border);
+  border-left-width: 4px;
+  border-radius: var(--nadi-radius);
+  padding: var(--nadi-space-3) var(--nadi-space-4);
+  background: var(--nadi-surface);
+}
+.nadi-iframe .nadi-callout__title {
+  font-weight: 600;
+  margin-bottom: var(--nadi-space-1);
+}
+.nadi-iframe .nadi-callout--note {
+  border-left-color: var(--nadi-accent);
+}
+.nadi-iframe .nadi-callout--tip {
+  border-left-color: #16a34a;
+}
+.nadi-iframe .nadi-callout--warning {
+  border-left-color: #d97706;
+}
+.nadi-iframe .nadi-callout--key {
+  border-left-color: #9333ea;
+}
+
+.nadi-iframe .nadi-list {
+  padding-left: var(--nadi-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--nadi-space-1);
+}
+.nadi-iframe .nadi-list--bullet {
+  list-style: disc;
+}
+.nadi-iframe .nadi-list--number {
+  list-style: decimal;
+}
+
+.nadi-iframe .nadi-step-reveal {
+  border: 1px solid var(--nadi-border);
+  border-radius: var(--nadi-radius);
+  padding: var(--nadi-space-4);
+  background: var(--nadi-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--nadi-space-2);
+}
+.nadi-iframe .nadi-step-reveal__steps {
+  margin: 0;
+  padding-left: var(--nadi-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--nadi-space-2);
+}
+.nadi-iframe .nadi-step-reveal__label {
+  font-weight: 600;
+}
+.nadi-iframe .nadi-step-reveal__done {
+  font-size: var(--nadi-text-sm);
+  color: var(--nadi-muted);
+}
+
+.nadi-iframe .nadi-stage__footer {
+  margin-top: auto;
+  padding-top: var(--nadi-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--nadi-space-3);
+}
+.nadi-iframe .nadi-stage__hint {
+  font-size: var(--nadi-text-sm);
+  color: var(--nadi-muted);
+}
+
+.nadi-iframe .nadi-btn {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  padding: var(--nadi-space-2) var(--nadi-space-4);
+  border: 1px solid var(--nadi-border);
+  border-radius: var(--nadi-radius);
+  background: var(--nadi-bg);
+  color: var(--nadi-fg);
+}
+.nadi-iframe .nadi-btn:hover {
+  background: var(--nadi-surface);
+}
+.nadi-iframe .nadi-btn--primary {
+  background: var(--nadi-accent);
+  color: var(--nadi-accent-fg);
+  border-color: var(--nadi-accent);
+}
+.nadi-iframe .nadi-btn--primary:hover {
+  filter: brightness(1.05);
+  background: var(--nadi-accent);
+}
+.nadi-iframe .nadi-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
