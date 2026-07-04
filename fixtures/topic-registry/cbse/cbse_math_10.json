@@ -1,0 +1,1294 @@
+{
+  "subject": "Mathematics Class 10",
+  "board": "CBSE",
+  "sessions_per_week": 1.5,
+  "chapters": [
+    {
+      "id": "ch0_basics",
+      "name": "Basics",
+      "sequence": 0,
+      "pace_tracked": false,
+      "topics": [
+        {
+          "id": "ch0_basics_common_factor_extraction",
+          "name": "Common Factor Extraction",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [
+            "0.1.1",
+            "0.1.2",
+            "0.1.3",
+            "0.1.4",
+            "0.1.5",
+            "0.1.6"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch0_basics_common_factor_extraction__unit_coeff",
+              "name": "Variable extraction (unit coefficient)",
+              "type": "procedural",
+              "lo_codes": [
+                "0.1.1"
+              ]
+            },
+            {
+              "id": "ch0_basics_common_factor_extraction__coprime_coeff",
+              "name": "Variable extraction (coprime coefficients)",
+              "type": "procedural",
+              "lo_codes": [
+                "0.1.2"
+              ]
+            },
+            {
+              "id": "ch0_basics_common_factor_extraction__combined",
+              "name": "Combined numeric + variable extraction",
+              "type": "procedural",
+              "lo_codes": [
+                "0.1.3"
+              ]
+            },
+            {
+              "id": "ch0_basics_common_factor_extraction__higher_powers",
+              "name": "Higher power extraction",
+              "type": "procedural",
+              "lo_codes": [
+                "0.1.4"
+              ]
+            },
+            {
+              "id": "ch0_basics_common_factor_extraction__multi_term",
+              "name": "Multi-term extraction",
+              "type": "procedural",
+              "lo_codes": [
+                "0.1.5"
+              ]
+            },
+            {
+              "id": "ch0_basics_common_factor_extraction__roots",
+              "name": "Factor to find roots",
+              "type": "procedural",
+              "lo_codes": [
+                "0.1.6"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch1_real_numbers",
+      "name": "Real Numbers",
+      "sequence": 1,
+      "session_estimate": {
+        "min": 1,
+        "max": 1
+      },
+      "topics": []
+    },
+    {
+      "id": "ch2_polynomials",
+      "name": "Polynomials",
+      "sequence": 2,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Mathematics/ch2_polynomials/topics.md",
+      "session_estimate": {
+        "min": 1.5,
+        "max": 2.5
+      },
+      "topics": [
+        {
+          "id": "ch2_polynomials_geometry_of_zeroes",
+          "name": "The Geometry of Zeroes",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [
+            "2.1.1",
+            "2.1.2",
+            "2.1.3",
+            "2.1.4"
+          ],
+          "voice_context": {
+            "core_concept": "A 'zero' of a polynomial p(x) is a value k where p(k) = 0. Geometrically, zeroes are the x-coordinates where the graph of y = p(x) crosses the x-axis. A polynomial of degree n has at most n zeroes. This topic builds the visual intuition for WHY that's true — through end behavior, direction changes, and the relationship between the polynomial's shape and its coefficients.",
+            "prerequisites": [
+              "Plotting ordered pairs (x, y) on a Cartesian plane",
+              "Evaluating a polynomial at a given value",
+              "Definition of a polynomial, its terms, coefficients, and degree"
+            ],
+            "connections": {
+              "within_chapter": "Provides the visual 'why' for zeroes. Topic 2 (Algebra of Zeroes) provides the algebraic tools. The graphical intuition here makes the formulas in Topic 2 feel meaningful, not arbitrary.",
+              "cross_chapter": "The 3 cases for quadratics (2, 1, 0 zeroes) correspond exactly to the discriminant D = b²-4ac being positive, zero, or negative (Ch 4 Quadratic Equations). Also reinforces coordinate geometry (Ch 7).",
+              "prior_grade": "Activates Grade 9 algebraic definition of a zero (p(k) = 0) and gives it geometric meaning. Builds on Grade 9 coordinate geometry."
+            },
+            "misconceptions": [
+              "Confusing x-intercepts with y-intercepts when counting zeroes from a graph",
+              "Believing degree n means EXACTLY n zeroes (it's 'at most n' — x² + 2 has degree 2 but 0 zeroes)",
+              "Thinking the 'zero' is the point (2, 0) rather than just the x-coordinate 2",
+              "Thinking the 3 cases for quadratics are equally likely — 2 zeroes is the common case"
+            ],
+            "deep_understanding": "Given p(x) = (x-5)² + 3, student predicts it has NO real zeroes without plotting — reasoning that the smallest value of (x-5)² is 0 (at x = 5), so p(x) is at least 3, and the graph never reaches the x-axis. This is prediction from structure, not computation.",
+            "keywords": [
+              "zero",
+              "intercept",
+              "parabola",
+              "degree",
+              "polynomial",
+              "x-axis",
+              "quadratic"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__polynomial_recap",
+              "name": "Polynomial Recap (Degree, Types)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__zeroes_as_x_intercepts",
+              "name": "Zeroes as X-Intercepts",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__quadratic_graph_cases",
+              "name": "Three Cases for Quadratic Graphs (2, 1, 0 zeroes)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "2.1.4"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__end_behavior",
+              "name": "End Behavior (Higher Power Wins)",
+              "type": "transfer",
+              "lo_codes": [
+                "2.1.1"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__guaranteed_root",
+              "name": "Guaranteed Root (Odd Degree Must Cross)",
+              "type": "transfer",
+              "lo_codes": [
+                "2.1.2"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__turns_and_crossings",
+              "name": "Turns and Crossings (At Most n Zeroes)",
+              "type": "transfer",
+              "lo_codes": [
+                "2.1.3"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_geometry_of_zeroes__intercept_direction",
+              "name": "Intercept x Direction (Predicting Crossings from Signs)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "2.1.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch2_polynomials_algebra_of_zeroes",
+          "name": "The Algebra of Zeroes",
+          "sequence": 2,
+          "session_estimate": 1,
+          "lo_codes": [
+            "2.2.1",
+            "2.2.2",
+            "2.2.3"
+          ],
+          "voice_context": {
+            "core_concept": "For a quadratic ax² + bx + c with zeroes α and β: sum of zeroes α + β = -b/a, product of zeroes αβ = c/a. These formulas let you find unknown zeroes or coefficients without factoring. The key shift: from 'find zeroes by solving' to 'reason about zeroes through their relationships'.",
+            "prerequisites": [
+              "Factorizing quadratics to find zeroes",
+              "The Geometry of Zeroes (Topic 1) — visual meaning of zeroes",
+              "Algebraic manipulation with fractions and negative signs"
+            ],
+            "connections": {
+              "within_chapter": "Topic 1 gave the visual meaning of zeroes. This topic gives the algebraic tools. Together they form a complete picture: you can reason about zeroes graphically OR algebraically.",
+              "cross_chapter": "Ch 4 (Quadratic Equations) uses these same zeroes but via the quadratic formula. The sum/product approach is often faster for relationship questions. Ch 3 (Linear Equations) — similar idea of using relationships between unknowns.",
+              "prior_grade": "Builds on Grade 9 factorization methods. The formulas provide a shortcut that bypasses factorization entirely."
+            },
+            "misconceptions": [
+              "Forgetting the negative sign in -b/a (the most common error — students write b/a instead)",
+              "Confusing sum and product formulas (mixing up which is -b/a vs c/a)",
+              "Treating the formulas as things to memorize rather than consequences of factored form a(x-α)(x-β)",
+              "Not checking: students find zeroes by factoring, then verify sum/product, but don't understand the formulas work even when you CAN'T factor"
+            ],
+            "deep_understanding": "Student can explain WHY α + β = -b/a by expanding a(x-α)(x-β) = ax² - a(α+β)x + aαβ and matching coefficients. They see the formulas as consequences of structure, not arbitrary rules to memorize.",
+            "keywords": [
+              "zero",
+              "sum",
+              "product",
+              "coefficient",
+              "quadratic",
+              "alpha",
+              "beta",
+              "factoring"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch2_polynomials_algebra_of_zeroes__sum_product_formulas",
+              "name": "Sum and Product of Zeroes Formulas",
+              "type": "transfer",
+              "lo_codes": [
+                "2.2.1"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_algebra_of_zeroes__verify_relationships",
+              "name": "Find Zeroes and Verify Relationships",
+              "type": "procedural",
+              "lo_codes": [
+                "2.2.2"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_algebra_of_zeroes__construction_formula",
+              "name": "Construction Formula",
+              "type": "procedural",
+              "lo_codes": [
+                "2.2.3"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_algebra_of_zeroes__sign_discipline",
+              "name": "Sign Discipline in -b/a",
+              "type": "procedural",
+              "lo_codes": [
+                "2.2.1"
+              ]
+            },
+            {
+              "id": "ch2_polynomials_algebra_of_zeroes__formulas_as_reasoning",
+              "name": "Formulas as Reasoning Tools",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "2.2.2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch3_pair_of_linear_equations",
+      "name": "Pair of Linear Equations in Two Variables",
+      "sequence": 3,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Mathematics/ch3_pair_of_linear_equations/topics.md",
+      "session_estimate": {
+        "min": 2,
+        "max": 2
+      },
+      "topics": [
+        {
+          "id": "ch3_pair_of_linear_equations_when_two_lines_meet",
+          "name": "When Two Lines Meet (and When They Don't)",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [
+            "3.1.1",
+            "3.1.2",
+            "3.1.3",
+            "3.1.4"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch3_pair_of_linear_equations_when_two_lines_meet__one_eq_infinite_solutions",
+              "name": "One Equation, Two Unknowns — Infinite Solutions",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "3.1.1"
+              ]
+            },
+            {
+              "id": "ch3_pair_of_linear_equations_when_two_lines_meet__three_outcomes",
+              "name": "Two Equations — Three Possible Outcomes (Intersect / Parallel / Coincident)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "3.1.2"
+              ]
+            },
+            {
+              "id": "ch3_pair_of_linear_equations_when_two_lines_meet__ratio_test",
+              "name": "Ratio Test for Consistency (a1/a2, b1/b2, c1/c2)",
+              "type": "procedural",
+              "lo_codes": [
+                "3.1.3"
+              ],
+              "insights": [
+                "The Ratio is the DNA of the Line"
+              ]
+            },
+            {
+              "id": "ch3_pair_of_linear_equations_when_two_lines_meet__word_problem_setup",
+              "name": "Word-Problem Setup — Translating English to Two Equations",
+              "type": "transfer",
+              "lo_codes": [
+                "3.1.4"
+              ],
+              "insights": [
+                "Every Unknown Needs Independent Info"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch3_pair_of_linear_equations_solving_the_system",
+          "name": "Solving the System",
+          "sequence": 2,
+          "session_estimate": 1,
+          "lo_codes": [
+            "3.2.1",
+            "3.2.2",
+            "3.2.3",
+            "3.2.4"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch3_pair_of_linear_equations_solving_the_system__substitution",
+              "name": "Substitution Method",
+              "type": "procedural",
+              "lo_codes": [
+                "3.2.1"
+              ],
+              "insights": [
+                "Plug-and-Reduce: Substitute Expressions, Not Just Variables"
+              ]
+            },
+            {
+              "id": "ch3_pair_of_linear_equations_solving_the_system__elimination",
+              "name": "Elimination Method (Scale and Balance)",
+              "type": "procedural",
+              "lo_codes": [
+                "3.2.2"
+              ],
+              "insights": [
+                "Elimination is Scale-and-Balance"
+              ]
+            },
+            {
+              "id": "ch3_pair_of_linear_equations_solving_the_system__reading_output",
+              "name": "Reading the Algebra's Output (0=0, 0=9, real answer)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "3.2.3"
+              ],
+              "insights": [
+                "The Algebra Speaks"
+              ]
+            },
+            {
+              "id": "ch3_pair_of_linear_equations_solving_the_system__method_choice",
+              "name": "Choosing the Faster Method",
+              "type": "transfer",
+              "lo_codes": [
+                "3.2.4"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch4_quadratic_equations",
+      "name": "Quadratic Equations",
+      "sequence": 4,
+      "session_estimate": {
+        "min": 2,
+        "max": 3
+      },
+      "topics": []
+    },
+    {
+      "id": "ch5_arithmetic_progressions",
+      "name": "Arithmetic Progressions",
+      "sequence": 5,
+      "session_estimate": {
+        "min": 1,
+        "max": 2
+      },
+      "topics": []
+    },
+    {
+      "id": "ch6_triangles",
+      "name": "Triangles",
+      "sequence": 6,
+      "session_estimate": {
+        "min": 2,
+        "max": 3
+      },
+      "topics": []
+    },
+    {
+      "id": "ch7_coordinate_geometry",
+      "name": "Coordinate Geometry",
+      "sequence": 7,
+      "session_estimate": {
+        "min": 1,
+        "max": 2
+      },
+      "topics": [
+        {
+          "id": "ch7_coordinate_geometry_locating_and_measuring",
+          "name": "Locating & Measuring Points",
+          "lo_codes": [
+            "7.1.1",
+            "7.1.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch7_coordinate_geometry_locating_and_measuring__the_address",
+              "name": "The Address: a point needs two numbers",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "7.1.1"
+              ],
+              "lo_description": "Conceptual: A point's location in a plane is an ordered pair — two pieces of information — and order matters: (a,b) != (b,a). The number of coordinates needed equals the dimension (1 on a line, 2 in a plane, 3 in space); fewer leaves the location underdetermined (one constraint fixes a line/region, not a point).\nProcedural: Plot a given ordered pair and read coordinates off a plotted point; state the abscissa (= distance from the y-axis = x-coordinate) and ordinate (= distance from the x-axis = y-coordinate) with correct sign by quadrant; write the coordinates of a point on an axis from a verbal description; translate a verbal/visual spatial description (a labelled map, 'midway between A and B') into coordinates."
+            },
+            {
+              "id": "ch7_coordinate_geometry_locating_and_measuring__distance_formula",
+              "name": "Distance = Pythagoras on the gaps",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "7.1.2"
+              ],
+              "lo_description": "Conceptual: A distance is Pythagoras on the two coordinate gaps — explain WHY sqrt(dx^2 + dy^2), not just recall it. The sign of a gap does not matter (gaps are squared; distance is never negative). The two special cases (distance from the origin, distance to an axis) are the general formula degenerating, not separate rules. THRESHOLD (T2): a geometric measurement is now an algebraic statement — 'equidistant', 'right angle', 'on the circle', 'how far' are all equations in coordinates; geometry has become computation. Equidistance is a locus: equidistant from two points = a line, from three = a single point.\nProcedural: Apply the distance formula and simplify the surd; distance from the origin / to an axis; find an unknown coordinate from a given distance (set the distance = value, square, solve); set up and solve an equidistance condition; model a real scene onto the plane then measure; locate the equidistant-from-three point; compute a median length (midpoint then distance); use distance on a circle (radius = half the diameter; on-circle test = distance from centre equals the radius); intercept-finding (set y=0 for the x-intercept, x=0 for the y-intercept) then operate on the intercepts; circle-via-centre solve-for-parameter."
+            }
+          ]
+        },
+        {
+          "id": "ch7_coordinate_geometry_section_and_shapes",
+          "name": "Section Formula & Shapes",
+          "lo_codes": [
+            "7.2.1",
+            "7.2.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch7_coordinate_geometry_section_and_shapes__section_formula",
+              "name": "Section Formula: splitting a journey in a ratio",
+              "type": "procedural",
+              "lo_codes": [
+                "7.2.1"
+              ],
+              "lo_description": "Conceptual: Section is a fraction of the journey — dividing AB in m:n splits each coordinate-gap in the same m:n ratio; the point is a fixed fraction from A, not a new construction. The midpoint is the 1:1 case (the average), predictable from the section formula. A stated distance/position relationship encodes a ratio ('twice as far', 'BC = 2*BA', 'on the x-axis', 'the diameter's far end') — read it into an internal ratio before computing. Determinacy: given partial constraints, decide whether the section/midpoint condition actually determines the point.\nProcedural: Forward internal division; midpoint forward and reverse (given the midpoint and one endpoint, find the other, incl. the diameter's far end given the centre); find the ratio (incl. the axis-divides pattern — set the relevant coordinate = 0, solve k:1, back-substitute the point); trisection / four equal parts; convert a distance-ratio into a section-ratio then apply; midpoint under a linear constraint; disambiguate AP:AB (fraction-of-whole) vs AP:PB (part-to-part) before applying."
+            },
+            {
+              "id": "ch7_coordinate_geometry_section_and_shapes__interrogating_shapes",
+              "name": "Interrogating Shapes with the two tools",
+              "type": "transfer",
+              "lo_codes": [
+                "7.2.2"
+              ],
+              "lo_description": "Conceptual: A figure's identity is a set of distance/section equalities — 'is this a square?' is 'are these specific lengths equal?' (T2 applied). Know the defining property of each figure and WHY each check is necessary — square = 4 equal sides + equal diagonals; rhombus = 4 equal sides (unequal diagonals); rectangle = opposite sides equal + equal diagonals; isosceles = two equal sides; right-angled = converse of Pythagoras — i.e. why '4 equal sides' alone fails to prove a square (the IS-vs-IS-NOT distinction). Collinearity is 'the longest gap = the sum of the other two' (the triangle degenerates) — the area-free, distance-only test. Recognise which tool determines a point and whether the data even determines it. See composite measurements as compositions of the two primitives.\nProcedural: Classify a triangle from three vertices (squared sides + converse of Pythagoras); verify a named quadrilateral via its property-checklist; test collinearity by the distance-sum; find a missing vertex (parallelogram: diagonals bisect, so equate the two diagonals' midpoints and solve; add the equal-diagonal/right-angle constraint for a rectangle/square); locate a point under an equidistance constraint; compute a composite length (median); model a real-world scene onto the grid then apply the right tool; cross-part tool-selection-and-sequencing within a multi-part case study. Collinearity must use the distance-sum route, never area = 0."
+            }
+          ]
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "spatial_modelling",
+          "description": "Translate a real-world scene or verbal description into a coordinate setup — choose an origin, assign axes, and sign each displacement/position correctly — before any formula fires."
+        },
+        {
+          "slug": "tool_discrimination",
+          "description": "Given partial constraints, decide whether a point/figure is even determined and which tool (distance, section, midpoint) actually pins it down — triage before computing."
+        },
+        {
+          "slug": "language_precision",
+          "description": "Read mathematical relations exactly as stated — AP:AB (fraction-of-whole) vs AP:PB (part-to-part), distance-from-axis vs coordinate, ratio order m:n, '3x as far from A' vs 'from B' — and not collapse near-synonyms."
+        },
+        {
+          "slug": "multi_step_composition",
+          "description": "Compose two or more primitives in the correct order across the linked parts of a problem (e.g. midpoint then distance for a median; section then classify in a case study) and keep the bookkeeping clean."
+        },
+        {
+          "slug": "representational_fluency",
+          "description": "Move freely between a verbal clue, a labelled grid/figure, and the algebraic coordinate expression — reading addresses off a picture and writing pictures back from coordinates."
+        }
+      ]
+    },
+    {
+      "id": "ch8_introduction_to_trigonometry",
+      "name": "Introduction to Trigonometry",
+      "sequence": 8,
+      "session_estimate": {
+        "min": 2,
+        "max": 3
+      },
+      "topics": [
+        {
+          "id": "ch8_introduction_to_trigonometry_what_a_trig_ratio_is",
+          "name": "What a Trig Ratio Is",
+          "lo_codes": [
+            "8.1.1",
+            "8.1.2",
+            "8.1.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch8_introduction_to_trigonometry_what_a_trig_ratio_is__direction_fixes_ratios",
+              "name": "Direction Fixes the Ratio",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "8.1.1"
+              ],
+              "lo_description": "Conceptual: A trig ratio is a property of a DIRECTION, not of a particular triangle — fix an acute angle and the ratio of the two legs is locked regardless of triangle size (THRESHOLD A). Justify that invariance from AA similarity (two right triangles sharing the acute angle are similar, so corresponding sides are proportional, so the side-ratios are equal) rather than from an example. The angle and the ratio are a two-way street: a direction forces its ratios, and a given ratio forces the angle (same ratio means same acute angle). The lock generalises past triangles — a figure's internal proportions depend on its angle alone, not its size (spot the 'size matters too' trap). Predict, without computing, that a ratio changes monotonically as the direction turns, and use that to decide which of two ratio-comparisons is definitely true. [beyond-board: read the locked ratio off the (r cos θ, r sin θ) / unit-circle picture.]\nProcedural: Set up the requested side-ratio from a figure — identify opposite / adjacent / hypotenuse for the NAMED angle (labelled triangle, then fresh or rotated figure, then two triangles sharing the angle, then literal-symbolic sides). Translate a direction between angle, ratio and coordinate form (e.g. x = (2/3) sin A, y = (2/3) cos A gives x²+y²), the squared case that bridges to the Pythagorean identity. [beyond-board: read sec, cosec, tan as unit-circle lengths and combine them.] Procedural load is thin here by design — this sub-topic's job is conceptual."
+            },
+            {
+              "id": "ch8_introduction_to_trigonometry_what_a_trig_ratio_is__naming_the_six_ratios",
+              "name": "Naming the Six Ratios",
+              "type": "procedural",
+              "lo_codes": [
+                "8.1.2"
+              ],
+              "lo_description": "Conceptual: Opposite and adjacent are named RELATIVE to the angle you stand at — switching the reference acute angle swaps which leg is opposite versus adjacent, while the hypotenuse stays put. There are six names over only three independent ratios: cosec, sec, cot are the reciprocals of sin, cos, tan, and tan = sin/cos, cot = cos/sin. 'sin A' is one indivisible symbol denoting the ratio belonging to angle A — it is not sin times A, and sin is meaningless without an angle. (The deep reframe is owned by 1.1; this sub-topic's conceptual content is modest — relativity-of-naming, reciprocal/quotient structure, notation.)\nProcedural: Write any of the six named ratios off a given triangle — label opposite / adjacent / hypotenuse for the named angle first (standard then unfamiliar orientation), then read the ratio. Convert between the six names via the reciprocal and quotient relations (1/sin = cosec, cos/sin = cot; simplify e.g. sin θ(cot θ + tan θ) to a single named ratio, staying within reciprocal/quotient closure — not sin²+cos²=1, which belongs to 2.3). Apply notation discipline — judge true/false statements about the symbols ('cot A = cot times A' is false)."
+            },
+            {
+              "id": "ch8_introduction_to_trigonometry_what_a_trig_ratio_is__one_ratio_determines_the_rest",
+              "name": "One Ratio Determines the Rest",
+              "type": "procedural",
+              "lo_codes": [
+                "8.1.3"
+              ],
+              "lo_description": "Conceptual: One ratio is enough because a direction is a single number — a given ratio fixes the triangle's shape (the size scale k is free), so every other ratio is forced. The scale k cancels out of every ratio, re-deriving 1.1's invariance on each run. (Conceptual content is deliberately sparse — the deep concept is Threshold A, owned in 1.1; the weight here is procedural.)\nProcedural: Given any one ratio of an acute angle, recover the full ratio-set — reconstruct the triangle by setting the two known sides as k-multiples, recover the third by Pythagoras (DISCARD the negative root, since sides are lengths), then read off every other ratio via reciprocal / quotient links. Ladder: clean single ratio (sin A = 1/3 gives the rest), then third side given by an algebraic relation (OQ − PQ = 1), then evaluate a target expression in several ratios (e.g. tan θ = 12/5 gives (sin θ − cos θ)/(sin θ + cos θ), the dominant 1-mark shape), then relation-to-relation manipulation (sec θ − tan θ given, find sec θ + tan θ; bridges to 2.3), then chained figure-to-evaluate (read the ratio off an embedded diagram, then evaluate). [beyond-board: carry the same recover-from-one structure off the plane to a 3D cuboid space-diagonal; and a cross-chapter Circles edge — enrichment only, not representative core.]"
+            }
+          ]
+        },
+        {
+          "id": "ch8_introduction_to_trigonometry_facts_you_read_off_one_triangle",
+          "name": "Facts You Read Off One Triangle",
+          "lo_codes": [
+            "8.2.1",
+            "8.2.2",
+            "8.2.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch8_introduction_to_trigonometry_facts_you_read_off_one_triangle__standard_angle_ratios",
+              "name": "Standard-Angle Ratios",
+              "type": "procedural",
+              "lo_codes": [
+                "8.2.1"
+              ],
+              "lo_description": "Conceptual: The five standard directions (0/30/45/60/90) are the only ones whose ratios geometry pins down exactly. 45 forces sin = cos because that direction bisects the right angle, so opposite = adjacent. Derive 30/60 off one bisected-equilateral triangle and see why sin30 = cos60 and sin60 = cos30. Read 0/90 as the limits of a degenerating triangle, and say which ratios are undefined and why (a vanishing side in the denominator). Justify the monotonic behaviour from 0 to 90 (sin rises 0->1, cos falls 1->0) and use it to judge claims like 'sin theta = cos theta for all theta' (false; true only at 45).\nProcedural: Derive any standard value from its triangle (isosceles-right for 45, bisected-equilateral for 30/60, the degenerate limit for 0/90). Evaluate standard-angle expressions by substituting exact values and simplifying with surds, and back-solve when the expression is set equal to a target (find a constant, e.g. 4 sec^2 60 + sin^2 60 + p = 25/4; find an angle, e.g. tan 3theta = root3 -> theta = 20, respecting the inside coefficient). Recognise an evaluated form as another standard ratio (2 tan30/(1+tan^2 30) -> sin60). [beyond-board: model a physical real-setup constraint as a standard-angle relation.]"
+            },
+            {
+              "id": "ch8_introduction_to_trigonometry_facts_you_read_off_one_triangle__complementary_angles",
+              "name": "Complementary Angles",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "8.2.2"
+              ],
+              "lo_description": "Conceptual: An angle and its complement (theta and 90-theta) swap each ratio for its co-ratio (sin<->cos, tan<->cot, sec<->cosec) BECAUSE the two acute angles of a right triangle sum to 90 and the side opposite one is adjacent to the other (this is why cosine is 'co'-sine). Read the co-ratio family off the figure rather than from memory. Recognise two named angles as complements when they sum to 90 (53 & 37, 18 & 72) and predict their co-ratios are equal without computing the angles. Complementary (sum 90) is not supplementary (sum 180). [beyond-board: theta and 90-theta as two perpendicular directions sharing one right triangle.]\nProcedural: Exploit the complement to rewrite or solve - atomic substitution (sin theta -> cos(90-theta)), find-the-angle from a complement/standard equation (sin(A-B)=k, cos(A+B)=k with A,B acute -> equate angles, solve the linear system), and collapse-then-evaluate a complement-laden expression (scan for pairs, rewrite to equal angles, reduce to a number). Use complement substitution as a step inside a proof."
+            },
+            {
+              "id": "ch8_introduction_to_trigonometry_facts_you_read_off_one_triangle__pythagorean_identities",
+              "name": "The Pythagorean Identities",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "8.2.3"
+              ],
+              "lo_description": "Conceptual: sin^2 theta + cos^2 theta = 1 IS the Class-9 Pythagoras theorem (AB^2 + BC^2 = AC^2) divided by AC^2 - not a new rule (THRESHOLD B). The same fact divided by the other two sides gives 1 + tan^2 = sec^2 and 1 + cot^2 = cosec^2: three identities are one fact divided three ways. Distinguish an identity (true for all valid theta) from an equation (true only at specific angles). State which endpoint each identity excludes and why (the offending ratio blows up). [beyond-board: read sin^2 + cos^2 = 1 as 'the point (cos theta, sin theta) lies on the unit circle.']\nProcedural: Derive and verify the identities from Pythagoras (write AB^2 + BC^2 = AC^2, divide by the chosen square, then confirm on a standard angle before trusting it abstractly). Simplify and prove with the identity - single-substitution (replace sin^2 theta with 1 - cos^2 theta, or tan^2 theta with sec^2 theta - 1) and square-and-add/subtract a linear relation in sin theta, cos theta to eliminate the cross-term and reach a target (a cos theta + b sin theta = m, a sin theta - b cos theta = n -> a^2 + b^2 = m^2 + n^2). [Heavier multi-step proof work is owned by 3.1, not here.]"
+            }
+          ]
+        },
+        {
+          "id": "ch8_introduction_to_trigonometry_the_algebra_of_identities",
+          "name": "The Algebra of Identities",
+          "lo_codes": [
+            "8.3.1"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch8_introduction_to_trigonometry_the_algebra_of_identities__proving_and_manipulating_identities",
+              "name": "Proving and Manipulating Identities",
+              "type": "procedural",
+              "lo_codes": [
+                "8.3.1"
+              ],
+              "lo_description": "Conceptual: A proof is a one-way chain - transform one side down to the other, never operate on both sides until they match; this is what distinguishes proving a general truth from solving an equation. All six ratios reduce to sin and cos, so converting to sin/cos is always legal and usually the decisive first move. Recognise the algebraic identity hiding under the trig surface (a^2 - b^2, a^3 +/- b^3, (a +/- b)^2) and use sin^2 + cos^2 = 1 to collapse it. A conditional identity is driven by a supplied relation, distinct from a free-standing prove-that.\nProcedural: Prove or simplify an identity by picking the right first move and working one side to the other - express one ratio-set in terms of another, convert-to-sin/cos and reduce, combine fractions over a common denominator (the workhorse 3-marker); the conjugate trick for a root or (1 +/- ratio) denominator; factor a power-sum/difference (sin^6 + cos^6 = 1 - 3 sin^2 cos^2); side-condition / square-and-combine (tan + sin = m, tan - sin = n -> m^2 - n^2 = 4 root(mn)); conditional identities; reciprocal-sum completion (two-valued answers). Audit and repair a flawed proof - locate the slip (dropped cross-term, illegal cancellation), fix it, and reach the correct result."
+            }
+          ]
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "known_vs_unknown",
+          "description": "Known-vs-unknown framing: given some information, judge what can and cannot be inferred, and whether a quantity is determined (one ratio determines all six; a ratio determines the angle; 'cannot be determined' is a real answer)."
+        },
+        {
+          "slug": "language_precision",
+          "description": "Language precision: parse and produce exact mathematical language — sin A is not sin times A, sin²θ is not sin θ², complementary is not supplementary, and state domains and conditions."
+        }
+      ]
+    },
+    {
+      "id": "ch9_some_applications_of_trigonometry",
+      "name": "Some Applications of Trigonometry",
+      "sequence": 9,
+      "session_estimate": {
+        "min": 1,
+        "max": 2
+      },
+      "topics": [
+        {
+          "id": "ch9_some_applications_of_trigonometry_build_ground_solve_one_triangle",
+          "name": "Build, Ground, Solve One Triangle",
+          "lo_codes": [
+            "9.1.1",
+            "9.1.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch9_some_applications_of_trigonometry_build_ground_solve_one_triangle__see_it_and_build",
+              "name": "See It & Build",
+              "type": "non-threshold",
+              "lo_codes": [
+                "9.1.1"
+              ],
+              "lo_description": "Conceptual: Nothing on the page is a triangle until YOU impose one — read a verbal height-and-distance scene (tower, ladder, rope, kite) and manufacture the right triangle that models it, choosing the vertical (object/height), the horizontal (ground distance) and the slant (line of sight / rope / ladder), recognising the triangle is imposed, not already present. Name and locate the line of sight (eye → top of object) and decide elevation (look up) vs depression (look down), placing the angle in the correct corner — elevation at the ground-level observer, depression at the elevated eye, always between the HORIZONTAL and the line of sight. Identify the 90° (object ⟂ ground) and justify why the figure is a right triangle at all (this is what licenses the Ch8 ratios). Tag every side known vs wanted and read off which ratio WOULD link them (recognition only — execution is 1.2). The 'See it' beat on the cleanest figure: one object, one observer, one angle, level ground.\nProcedural: Construct and fully label the right-triangle diagram from a worded scene — draw the triangle, mark the 90°, seat the elevation/depression angle in the correct corner, label each side known/wanted. The Figure dial carries the ladder: F1 (a diagram is given — just label/read it) → F2 (build the triangle yourself from the words — the working floor) → F2 with a depression angle to seat correctly (the harder placement). Procedural axis is deliberately THIN — this sub-topic produces a representation, not an answer: no ratio-picking and no arithmetic (Algebra OFF, Calculation OFF; only the Figure dial is live). The emptiness is information — the solve machinery switches on in 1.2."
+            },
+            {
+              "id": "ch9_some_applications_of_trigonometry_build_ground_solve_one_triangle__ground_it_and_solve",
+              "name": "Ground It & Solve",
+              "type": "non-threshold",
+              "lo_codes": [
+                "9.1.2"
+              ],
+              "lo_description": "Conceptual: A triangle's angles fix its SHAPE but never its SIZE — equal-angle triangles are similar (Ch6), so an angle alone leaves a whole family of triangles at every scale. To pin which one you need exactly ONE real length, the scale-setter — the chapter's one key understanding (surface-then-fluency, NOT a threshold): distance→angle is possible, angle→distance is impossible without a grounding length. Locate that scale-setter and read its disguise (Act A) — an explicit base ('15 m from the foot'), a height handed over (a 5 m pole), or a known object's size (a 1.5 m observer) — and flag a figure as not-yet-solvable when none is locatable ('is it grounded?' as a completeness check). Choose the Ch8 ratio (tan/sin/cos/cot) that links known→wanted and justify the choice (opposite+adjacent → tan/cot; hypotenuse → sin/cos). Recognise that the solved triangle is rarely the whole answer — the most-forgotten step is the ADD-BACK: restore a dropped constant (observer eye-height, the object's base height) or SUM two solved lengths (broken-tree = standing part + broken slant) so the reported number answers the real question.\nProcedural: Solve a single right triangle for the wanted side or angle — set up the chosen ratio with the known side and the special angle and solve. The Calculation dial runs easy→expert: clean tan-with-a-base → sin/cos with the unknown in the denominator (rearrange) → results carrying a surd to rationalise or the √3 ≈ 1.73 substitution; a named rung is the INVERSE read — solve for the ANGLE (known sides → read off the special angle, e.g. sin a = 750/1500 → a = 30°), which the HOTS corpus leans on heavily. Then add back / subtract / combine the dropped or second length (eye-height, below-triangle part, or sum-two-lengths) to report the real-world quantity (Story dial). Also EXTRACT the scale-setter from buried wording before solving — list every length explicit and implicit ('1.5 m tall', 'two consecutive km markers = 1 km', 'from the foot'), decoding any non-geometric quantity into a length first (speed×time → distance; sonar round-trip → halve). Algebra stays at A1 (one clean equation, no symbolic coefficients); Proof axis off; cap at a single equation — anything needing two simultaneous equations is Topic 3."
+            }
+          ]
+        },
+        {
+          "id": "ch9_some_applications_of_trigonometry_composite_figures_two_triangles",
+          "name": "Composite Figures: Two Triangles",
+          "lo_codes": [
+            "9.2.1",
+            "9.2.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch9_some_applications_of_trigonometry_composite_figures_two_triangles__stacked_figures",
+              "name": "Stacked Figures",
+              "type": "non-threshold",
+              "lo_codes": [
+                "9.2.1"
+              ],
+              "lo_description": "Conceptual: Read a two-on-a-shared-vertical scene (flagstaff-on-building, statue-on-pedestal, tower-on-building) as TWO right triangles with a common base — the composite vertical = lower height + upper height, so the wanted piece = (whole) − (lower) or (upper). Locate the scale-setter when it is a HEIGHT, not a base (Act A, height-disguise): a building's own vertical length grounds the whole figure, and a base distance is NOT needed because the shared base falls out of the first triangle once one height is known — the chapter's scale insight re-met with the scale-setter in a new costume. Predict which triangle is directly solvable first (the one whose height is known) to release the shared base, then the second triangle uses that base; neither triangle needs an assumed variable (this is what keeps 2.1 inside Act A, out of Act B). Explain the depression-variant: from a building top, the elevation of a tower's top and the depression of its foot are two triangles sharing the eye-level sight-line, the building height grounding the lower one — bridging toward 2.2.\nProcedural: Set up and solve EACH of the two right triangles for its target side (tan/sin/cos/cot linking known→wanted) — Figure dial F2 (build the two triangles) → F3 (chain across the busy shared-base figure), Algebra dial A1 (clean numbers) → A2 (the shared base comes out as a surd like 10√3 and must be carried into the second triangle). Then COMBINE the two results (add/subtract) to isolate the wanted composite part, carrying surds correctly — e.g. flagstaff = 10√3 − 10 = 10(√3 − 1) ≈ 7.32 m. NO auxiliary-variable algebra here (that is Topic 3) — two clean directly-solvable triangles plus one combine, deliberately one rung below 3.1. If a stacked problem can ONLY be solved by assuming x, it belongs in Topic 3, not here."
+            },
+            {
+              "id": "ch9_some_applications_of_trigonometry_composite_figures_two_triangles__looking_across_a_gap",
+              "name": "Looking Across a Gap",
+              "type": "non-threshold",
+              "lo_codes": [
+                "9.2.2"
+              ],
+              "lo_description": "Conceptual: Establish depression = elevation as ALTERNATE ANGLES and justify why (the chapter's single new geometric fact) — the line of sight is a transversal cutting two horizontal parallels (the eye-level horizontal and the ground), so the angle of depression of a point equals the angle of elevation of the observer from that point; derive it, don't recall it. Place the angle in the CORRECT corner (the confusion-killer): a depression angle marked at the observer's eye must be TRANSFERRED to the base angle of the ground triangle — putting it at the top corner where it's marked, instead of the bottom corner where it operates, gives the wrong ratio. Read a gap scene as two triangles meeting at a common foot, with total width = base₁ + base₂ (ADD the bases — contrast 2.1's stacking, which adds/subtracts heights). Recognise the scale-setter as the observer's height above the gap (one vertical length grounds BOTH triangles at once, Act A). Distinguish same-side (two-viewpoint → subtract/eliminate, Topic 3 territory) from opposite-side (gap → add) figures, so the load-bearing preposition 'on either side / opposite sides' decides add vs subtract.\nProcedural: Transfer each depression angle to the ground-triangle's base angle, then solve each triangle for its base — Figure dial F2 (draw the two triangles + the parallel horizontals) → F3 (chain across the busy gap figure); the angle-transfer step (depression-at-top → base-angle-at-ground) is the discriminating skill. Then SUM the two bases to the total width, carrying surds — clean (3√3 + 3 → 3(√3 + 1)) up to the asymmetric gap (one elevation + one depression, or an extra height alongside the gap) at the F3/A2 ceiling. Still NO auxiliary variable — each base is directly solvable once its angle is placed; the new load over 2.1 is conceptual (depression = elevation, angle-placement), not algebraic. A two-points-on-one-bank figure leans toward Topic 3's eliminate and does NOT belong here."
+            }
+          ]
+        },
+        {
+          "id": "ch9_some_applications_of_trigonometry_assume_a_variable_and_eliminate",
+          "name": "Assume a Variable and Eliminate (Act B): Act, Don't Freeze",
+          "lo_codes": [
+            "9.3.1",
+            "9.3.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch9_some_applications_of_trigonometry_assume_a_variable_and_eliminate__assume_x_and_eliminate",
+              "name": "Assume x and Eliminate (Act B)",
+              "type": "non-threshold",
+              "lo_codes": [
+                "9.3.1"
+              ],
+              "lo_description": "Conceptual: Recognise WHEN a single triangle cannot be solved and Act B is required — count unknowns per triangle, see that every triangle has two, and DECIDE 'I must assume a variable' rather than hunting for a directly-solvable triangle that isn't there (the trigger-recognition that separates ACT from FREEZE). Explain why the assumed x is safe to posit and WILL cancel: two independent equations in two unknowns (the target and x) pin both, so naming the unwanted length costs nothing — the structure resolves it (trust made into a reason, not a leap of faith). Read the scale-setter as an EXPRESSION in x, not a bare number — the '40 m longer' shadow is x + 40; 'walks towards / moves' gives the second base as a shift off x. Hold Act A and Act B as INDEPENDENT moves (the chapter's load-bearing distinction): assume-and-trust is not triggered by a disguised scale-setter — it can be mandatory even when the scale-setter is handed over plainly. Run the complementary-angle case (θ and 90−θ): eliminate by MULTIPLYING the two tan-equations so tan θ · cot θ = 1 kills the angle.\nProcedural: Run the assume-and-eliminate procedure end to end — name the unwanted length x → write each triangle's ratio as an equation in x and the target → eliminate x (substitute, or multiply complementary equations) → solve → rationalise/simplify the surd. The Figure dial (F2 build → F3 two linked triangles) and the Algebra dial (A1 clean elimination → A2 the scale-setter as a symbolic expression, then rationalising (√3 ± 1) denominators) carry it easy→expert. Set the two equations up from a figure where the scale-setter is BURIED in wording — decode '40 m longer', 'walks towards', 'two consecutive markers' to know what the expression in x actually is before any triangle is written. Inverse / partial-information variants: given the target (or one base) and one angle, work back to the other angle, the gap, or the scale-setter (flip any forward item)."
+            },
+            {
+              "id": "ch9_some_applications_of_trigonometry_assume_a_variable_and_eliminate__moving_object_speed_time",
+              "name": "Moving Object → Speed / Time",
+              "type": "non-threshold",
+              "lo_codes": [
+                "9.3.2"
+              ],
+              "lo_description": "Conceptual: Recognise that the 'distance' Act B hands back is a DISTANCE TRAVELLED when the two observations straddle a motion, and that distance alone is not the answer — a rate (speed or time) needs one more step (divide/rearrange). Map the geometry-then-rate as TWO independent stages and keep them separate: (1) Act-B elimination → distance, (2) speed = distance ÷ time or time = distance ÷ speed — the rate step cannot start until the geometry resolves the distance (stops conflating the trig answer with the kinematic answer). Read the scale-setter / fixed reference correctly under motion — the UNCHANGING dimension (a balloon's constant height less the eye-height, a tower's fixed height for an approaching car) grounds the figure, while the horizontal distances are what change between the two observations. Handle the uniform-speed assumption as the bridge that makes a FUTURE time recoverable: constant speed found over the first leg propagates to the remaining distance, so a future time only follows because that speed persists.\nProcedural: Run elimination-then-rate end to end — set up the two-observation figure → assume the moving/horizontal distances → eliminate to get the distance travelled (3.1's procedure) → divide by the given time for speed, OR rearrange for time; includes the eye-height correction (subtract the observer's eye-height from the constant height before the triangles). Figure dial (two triangles sharing the fixed height) and Algebra dial (A1 → A2 surd handling) carry the geometry; the final divide adds a light RATE step on top — the chapter's only place a number-crunch is the finish. Rearrange the rate relation in the demanded direction (speed ↔ time), recognising which the stem asks and which is given (the 'time for the next leg' variant is the terminal item). Decode the moving-scene stem first — extract what is fixed, what moves, and the two angles, turning any speed×time quantity into a length before any triangle is drawn."
+            }
+          ]
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "language_precision",
+          "description": "Language precision: parse prepositions and multi-clause phrasing precisely enough to extract every quantity a scene gives — explicit and implicit — before any triangle is drawn ('on either side' ⇒ the gap is between the points; 'two consecutive km markers' ⇒ a 1 km gap; '1.5 m tall observer' ⇒ a grounding length; 'the far shadow is 40 m longer' ⇒ the scale-setter buried as an expression; 'sonar round-trip' ⇒ halve the path before any depth)."
+        }
+      ]
+    },
+    {
+      "id": "ch10_circles",
+      "name": "Circles",
+      "sequence": 10,
+      "session_estimate": {
+        "min": 1,
+        "max": 2
+      },
+      "topics": []
+    },
+    {
+      "id": "ch11_areas_related_to_circles",
+      "name": "Areas Related to Circles",
+      "sequence": 11,
+      "session_estimate": {
+        "min": 1,
+        "max": 2
+      },
+      "topics": []
+    },
+    {
+      "id": "ch12_surface_areas_and_volumes",
+      "name": "Surface Areas and Volumes",
+      "sequence": 12,
+      "session_estimate": {
+        "min": 2,
+        "max": 3
+      },
+      "topics": []
+    },
+    {
+      "id": "ch13_statistics",
+      "name": "Statistics",
+      "sequence": 13,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Mathematics/ch13_statistics/topics.md",
+      "session_estimate": {
+        "min": 6.5,
+        "max": 7
+      },
+      "topics": [
+        {
+          "id": "ch13_statistics_notation_fluency",
+          "name": "Notation Fluency (Enrichment)",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [
+            "13.0.1",
+            "13.0.2",
+            "13.0.3",
+            "13.0.4"
+          ],
+          "enrichment": true,
+          "voice_context": {
+            "core_concept": "Statistics introduces a dense layer of new symbolic notation: the bar (x̄) for a summary, subscripts (xᵢ, fᵢ, cfᵢ) as pointers into a frequency table, and Σ as 'add over all rows' with its own algebra. Students who don't ground these symbols early read every formula in the chapter as a wall of letters. This enrichment topic builds notation as a literacy skill before any measure is computed: read a symbol, point to where it lives, and translate every formula in the chapter into a sentence.",
+            "prerequisites": [
+              "Class 9 ungrouped mean as Σx/n",
+              "Reading frequency tables (x and f columns)",
+              "Basic algebra: distributing constants, combining like terms"
+            ],
+            "connections": {
+              "within_chapter": "Front-loaded before Topic 2 (Three Summaries) so every later formula — grouped mean, assumed-mean, step-deviation, median, mode — can be read as English. The Σ-algebra rules built here (constant pulls out, no-subscript term contributes n times) are the seeds of step-deviation in Topic 4.",
+              "cross_chapter": "Σ-notation literacy generalises to Class 11 sequences/series, probability, and any future statistics work. Subscript-as-pointer discipline reappears in coordinate geometry (xᵢ, yᵢ) and in matrices."
+            },
+            "common_errors": [
+              "Writing x̄ᵢ — treating the bar and the subscript as compatible (they're not; bar means 'already summarised, no row index')",
+              "Writing 'f = 7' without a subscript — losing the row reference",
+              "Pulling a non-constant out of Σ — e.g., assuming Σ(xᵢ²) = (Σxᵢ)²",
+              "Forgetting that a subscript-free term inside Σ contributes n times, not once"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_notation_fluency__bar_vs_individual",
+              "name": "x̄ vs xᵢ — bar collapses, subscript points",
+              "type": "procedural",
+              "enrichment": true,
+              "lo_codes": [
+                "13.0.1"
+              ]
+            },
+            {
+              "id": "ch13_statistics_notation_fluency__subscripts_as_pointers",
+              "name": "Subscripts as pointers into the table",
+              "type": "procedural",
+              "enrichment": true,
+              "lo_codes": [
+                "13.0.2"
+              ]
+            },
+            {
+              "id": "ch13_statistics_notation_fluency__sigma_reading_and_expanding",
+              "name": "Reading and expanding Σ — the rules",
+              "type": "procedural",
+              "enrichment": true,
+              "lo_codes": [
+                "13.0.3"
+              ]
+            },
+            {
+              "id": "ch13_statistics_notation_fluency__composing_formulas",
+              "name": "Reading the chapter's formulas as sentences",
+              "type": "procedural",
+              "enrichment": true,
+              "lo_codes": [
+                "13.0.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_three_summaries",
+          "name": "The Three Summaries",
+          "sequence": 2,
+          "session_estimate": 1,
+          "lo_codes": [
+            "13.1.1",
+            "13.1.2"
+          ],
+          "voice_context": {
+            "core_concept": "Mean, median, and mode are three different ways to summarise a dataset with a single number. Each answers a different question — what's the typical value, what's the middle value, what's the most common value — and each has a context where it's the right tool. Before any new formulas appear, the student needs to feel that 'average' is not one thing but three different things.",
+            "prerequisites": [
+              "Class 9 ungrouped mean (Σx/n), median (middle of sorted list, n-odd / n-even cases), mode (most frequent value)",
+              "Reading frequency tables and bar charts"
+            ],
+            "connections": {
+              "within_chapter": "Front-loads the 'when' question. Sets up Topics 2-6 (each measure gets its own deep build) and 7.1 (synthesis). The salary example seeded here is the chapter's emotional anchor and reappears in 6.1 (median's robustness).",
+              "cross_chapter": "Statistical thinking for life — interpreting averages, polls, distributions, real-estate prices, exam results. Real-world anchors (cricket / income / shoe sizes) recur in question authoring.",
+              "prior_grade": "Activates Class 9 definitions of all three summaries; resets the 'average = mean' default."
+            },
+            "misconceptions": [
+              "Believing 'average' always means 'mean'",
+              "Confusing mode with frequency itself ('the mode is 5' when 5 is the count, not the value)",
+              "For median, forgetting to sort before picking the middle",
+              "Defaulting to mean even when data is skewed",
+              "Applying mean to categorical data (averaging phone numbers, jersey numbers, pin codes)"
+            ],
+            "deep_understanding": "Shown a salary list with a heavy outlier (₹25k, ₹28k, ₹30k, ₹32k, ₹35k, ₹40k, ₹2,00,000), the student instinctively reaches for the median to describe a 'typical salary' — recognising mean as misleading when one value dominates.",
+            "keywords": [
+              "mean",
+              "median",
+              "mode",
+              "average",
+              "summary",
+              "skew",
+              "outlier",
+              "categorical",
+              "robustness"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_three_summaries__what_three_summaries_are",
+              "name": "What mean, median, and mode are",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.1.1"
+              ]
+            },
+            {
+              "id": "ch13_statistics_three_summaries__when_to_use_which",
+              "name": "When to use which",
+              "type": "transfer",
+              "lo_codes": [
+                "13.1.2"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_meaning_and_structure_of_mean",
+          "name": "Meaning and Structure of the Mean",
+          "sequence": 3,
+          "session_estimate": 2,
+          "lo_codes": [
+            "13.2.1",
+            "13.2.2",
+            "13.2.3",
+            "13.2.4"
+          ],
+          "voice_context": {
+            "core_concept": "The mean isn't a formula — it's an answer to a question. 'If everyone had the same amount, what would each have?' That single framing makes Σx/n inevitable. Beyond the meaning, the mean has rich mathematical structure: it's a balance point on the number line, two clusters combine in a predictable ratio, and 'weight' generalises beyond frequency to importance.",
+            "prerequisites": [
+              "Class 9 ungrouped mean formula",
+              "Plotting numbers on a number line",
+              "Ratio reasoning (m:n splits)",
+              "Comfort with fractional answers"
+            ],
+            "connections": {
+              "within_chapter": "Load-bearing topic. Topic 3 (invariances) is the predictable behaviour of this structure; Topic 4 (grouped mean) replaces per-cluster means with class-mark assumptions but reuses the (mean, count) sufficient-summary idea from 2.4.",
+              "cross_chapter": "Weighted-mean appears in GPA computation, batting averages, weighted polls, weighted product reviews. Group-combining appears in survey aggregation, multi-classroom result reporting.",
+              "prior_grade": "Extends Class 9 ungrouped mean with structural meaning (balance, weighting, combination) rather than just the formula."
+            },
+            "misconceptions": [
+              "Thinking the mean must be one of the actual data values (it usually isn't)",
+              "Splitting the gap in n:m ratio instead of m:n (intuitive trap — 'more values means more distance')",
+              "Forgetting that the mean lies BETWEEN the smallest and largest values",
+              "Naively averaging two group means: 'A averaged 70, B averaged 80, so combined = 75' (only true if equal sizes)",
+              "Forgetting to divide by total weight (Σw, not by count of values) in weighted mean"
+            ],
+            "deep_understanding": "Given two classes of different sizes with their separate means, the student computes combined mean correctly via (n₁M₁ + n₂M₂)/(n₁+n₂) and articulates why the larger class dominates. They recognise the same formula works whether 'weight' means count or importance.",
+            "keywords": [
+              "mean",
+              "balance point",
+              "equalising value",
+              "weighted average",
+              "frequency",
+              "importance",
+              "group combination",
+              "sufficient summary",
+              "number line"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_meaning_and_structure_of_mean__equalizing_value",
+              "name": "Mean as the equalizing value",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.2.1"
+              ]
+            },
+            {
+              "id": "ch13_statistics_meaning_and_structure_of_mean__number_line_balance",
+              "name": "Mean as a number-line balance",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.2.2"
+              ]
+            },
+            {
+              "id": "ch13_statistics_meaning_and_structure_of_mean__weightage",
+              "name": "Weightage: occurrence and importance",
+              "type": "transfer",
+              "lo_codes": [
+                "13.2.3"
+              ]
+            },
+            {
+              "id": "ch13_statistics_meaning_and_structure_of_mean__combining_groups",
+              "name": "Combining groups: (mean, count) is a sufficient summary",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.2.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_mean_invariances_and_step_deviation",
+          "name": "The Mean's Invariances and Step-Deviation",
+          "sequence": 4,
+          "session_estimate": 1,
+          "lo_codes": [
+            "13.3.1",
+            "13.3.2"
+          ],
+          "voice_context": {
+            "core_concept": "The mean responds to operations on the data in predictable ways. Add c to every value → mean shifts by c. Multiply by k → mean scales by k. Add a value equal to the current mean → mean doesn't change. Sum of deviations from the mean = 0. These invariances are the *mechanism* by which assumed-mean and step-deviation methods work.",
+            "prerequisites": [
+              "Topic 2 (meaning + structure of mean)",
+              "Comfort with negative numbers and division",
+              "Algebraic manipulation of Σ (sigma) notation"
+            ],
+            "connections": {
+              "within_chapter": "Direct application in Topic 4 (procedural computation of grouped mean). Bridge between 'what mean means' and 'how mean is computed efficiently.'",
+              "cross_chapter": "Sets up Class 11 standard deviation — same shift-and-scale trick applied to (x - x̄)² values.",
+              "prior_grade": "Goes beyond Class 9's formula-only treatment of mean by exposing its compositional behaviour under operations."
+            },
+            "misconceptions": [
+              "Believing mean changes by k·c when you add c to every value (confusing shift with scale)",
+              "Thinking adding a value equal to the mean *might* change the mean a little (it does not, exactly)",
+              "For sum-of-deviations: dropping signs (treating |x_i - x̄| instead of (x_i - x̄))",
+              "Believing sum of deviations from any reference point = 0 (only the mean has this property)",
+              "Forgetting to add *a* back at the end of assumed-mean (or to multiply by h in step-deviation)",
+              "Applying step-deviation when class widths are unequal (no common scale factor)"
+            ],
+            "deep_understanding": "Student recognises x̄ = a + h·ū not as a third formula to memorise, but as Topic 3's shift-and-scale invariance reversed — and predicts that step-deviation will fail when class widths are unequal, before being told.",
+            "keywords": [
+              "invariance",
+              "shift",
+              "scale",
+              "neutrality",
+              "balance",
+              "deviation",
+              "assumed mean",
+              "step deviation",
+              "sigma notation"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_mean_invariances_and_step_deviation__invariances",
+              "name": "Mean's invariances: shift, scale, neutrality, balance",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.3.1"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch13_seq_01_invariances_shift_scale",
+                  "name": "Shift and Scale: what you do to the data, you do to the mean"
+                },
+                {
+                  "id": "ch13_seq_02_invariances_balance_neutrality",
+                  "name": "Balance and Neutrality: the mean is the unique zero-deviation point"
+                }
+              ]
+            },
+            {
+              "id": "ch13_statistics_mean_invariances_and_step_deviation__step_deviation_applied",
+              "name": "Step-deviation as the invariances applied",
+              "type": "transfer",
+              "lo_codes": [
+                "13.3.2"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_mean_at_class_level",
+          "name": "Mean at the Class Level",
+          "sequence": 5,
+          "session_estimate": 1,
+          "lo_codes": [
+            "13.4.1",
+            "13.4.2"
+          ],
+          "voice_context": {
+            "core_concept": "When data is too large to handle individually, we group it into classes — but grouping costs us information. The grouped mean is an approximation that assumes observations are uniformly distributed within each class (concentrated at the midpoint). The formula is a practical compromise, not a different 'correct' formula.",
+            "prerequisites": [
+              "Topics 2 and 3 (mean structure and invariances)",
+              "Reading frequency tables with class intervals",
+              "Concept of class mark (average of upper and lower class limits)"
+            ],
+            "connections": {
+              "within_chapter": "Procedural sub-topic 4.2 carries bulk of NCERT exercise practice but rests on 4.1's conceptual foundation. The 'when does the assumption fail' reasoning recurs in 5.1 and 6.1.",
+              "cross_chapter": "Real-world: census uses age buckets, polling uses brackets, factory measurements use bins — all accept the uniform-within-class trade-off in exchange for tractability.",
+              "prior_grade": "Extends Class 9's class-mark concept from a definition into a working tool, with awareness of what's lost."
+            },
+            "misconceptions": [
+              "Using the lower or upper class limit as x_i instead of the class mark",
+              "Believing the grouped mean is the exact mean",
+              "Forgetting that wider classes mean more information loss",
+              "Sign errors in d_i = x_i - a (especially when x_i < a)",
+              "Applying step-deviation when class widths are unequal",
+              "Choosing assumed-mean *a* poorly (far from data centre, defeating the simplification)"
+            ],
+            "deep_understanding": "Looking at a grouped mean computation, the student predicts whether the answer will overestimate or underestimate the true mean, based on inspection of where data sits within each class (skewed to upper edge → exact mean is higher than grouped mean).",
+            "keywords": [
+              "class mark",
+              "grouped data",
+              "direct method",
+              "assumed mean",
+              "step deviation",
+              "approximation",
+              "uniform within class",
+              "class width"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_mean_at_class_level__grouping_leap",
+              "name": "The grouping leap: what we assume, what we lose, when it breaks",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.4.1"
+              ]
+            },
+            {
+              "id": "ch13_statistics_mean_at_class_level__computing_grouped_mean",
+              "name": "Computing the grouped mean: direct, assumed-mean, step-deviation",
+              "type": "procedural",
+              "lo_codes": [
+                "13.4.2"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_mode_of_grouped_data",
+          "name": "Mode of Grouped Data",
+          "sequence": 6,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "13.5.1"
+          ],
+          "voice_context": {
+            "core_concept": "The mode of grouped data is found by linear interpolation inside the modal class — pulled TOWARDS the taller neighbour, where data is denser. The formula mode = l + Δ₁/(Δ₁+Δ₂) × h is the algebraic shorthand for that tug-of-war. When neighbours are equal, the mode sits at the midpoint of the modal class.",
+            "prerequisites": [
+              "Topics 1 and 2 (conceptual base for averages)",
+              "Reading histograms (heights of bars, frequencies)",
+              "Comfort with simple ratios"
+            ],
+            "connections": {
+              "within_chapter": "Same linear-interpolation machinery as Topic 6 (median), now on histogram heights instead of cumulative curve. Topic 7.1 explicitly synthesises both.",
+              "cross_chapter": "Real-world: market research (most popular size to stock), categorical data analysis, fashion / inventory decisions.",
+              "prior_grade": "Extends Class 9 mode (most-frequent value of ungrouped data) to an interpolated estimate inside a modal class."
+            },
+            "misconceptions": [
+              "Plugging the *frequency* of the modal class (f₁) as the mode itself",
+              "Misidentifying f₀ vs f₂ (preceding vs succeeding class)",
+              "Computing Δ₁/(Δ₁+Δ₂) but forgetting to multiply by h, or to add l",
+              "Predicting the mode tilts AWAY from the taller neighbour (treating the taller bar as a competitor)",
+              "Applying the formula when the modal class isn't unique (two classes tied for highest)"
+            ],
+            "deep_understanding": "When neighbours are equal heights (f₀ = f₂), the student predicts mode = midpoint of modal class without computing — recognising the formula naturally recovers the symmetric case when there's no asymmetry to exploit.",
+            "keywords": [
+              "mode",
+              "modal class",
+              "histogram",
+              "linear interpolation",
+              "neighbour frequency",
+              "tug of war",
+              "asymmetry"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_mode_of_grouped_data__tug_of_war",
+              "name": "The tug of war: linear interpolation in the modal class",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.5.1"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_median_of_grouped_data",
+          "name": "Median of Grouped Data",
+          "sequence": 7,
+          "session_estimate": 1,
+          "lo_codes": [
+            "13.6.1",
+            "13.6.2"
+          ],
+          "voice_context": {
+            "core_concept": "The median of grouped data is the value where cumulative frequency crosses N/2 — the data point exactly halfway through if you walked the dataset in order. Inside the median class, linear interpolation assumes items are spread out evenly. The formula reads itself once you adopt the 'walking through a doorway' mental picture.",
+            "prerequisites": [
+              "Topic 1 (concept of median for ungrouped data)",
+              "Cumulative frequency tables (running totals)",
+              "Comfort with the idea of 'the value below which half the data lies'"
+            ],
+            "connections": {
+              "within_chapter": "Same linear-interpolation machinery as 5.1 (mode), now on the cumulative curve. 7.1 directly synthesises. Connects to 1.2's 'when to use median' — robustness is the answer.",
+              "cross_chapter": "Real-world: median household income, median home price, median exam score, percentile lookups in surveys and salary reports — all cases where mean would mislead.",
+              "prior_grade": "Extends Class 9 median (middle of sorted list) to an interpolated estimate from a cumulative table."
+            },
+            "misconceptions": [
+              "Confusing cumulative frequency with regular frequency",
+              "Identifying the modal class (highest f) instead of the median class (cf first ≥ N/2)",
+              "Using the cf of the median class itself in the formula instead of the *previous* class's cf",
+              "Forgetting to multiply by h (treating the result as a fraction)",
+              "Confusing N/2 with (N+1)/2 (the position formula for ungrouped odd-sized data)",
+              "For 'less than' cumulative tables, forgetting to convert to class intervals + frequencies"
+            ],
+            "deep_understanding": "When the boss's salary in the chapter's anchor example changes from ₹2,00,000 to ₹20,00,000, the student predicts the median doesn't move at all — because median depends on the position of values, not their magnitude.",
+            "keywords": [
+              "median",
+              "cumulative frequency",
+              "median class",
+              "N by 2 crossing",
+              "percentile",
+              "linear interpolation",
+              "robustness",
+              "less than table"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_median_of_grouped_data__cumulative_frequency_n_by_2",
+              "name": "Cumulative frequency and the N/2 crossing",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.6.1"
+              ]
+            },
+            {
+              "id": "ch13_statistics_median_of_grouped_data__computing_grouped_median",
+              "name": "Computing the grouped median",
+              "type": "procedural",
+              "lo_codes": [
+                "13.6.2"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch13_statistics_through_line_and_closing",
+          "name": "Through-Line and Closing",
+          "sequence": 8,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "13.7.1",
+            "13.7.2"
+          ],
+          "voice_context": {
+            "core_concept": "Three different formulas (grouped mean, grouped mode, grouped median) — but underneath, one idea repeated three times: when grouping forces us to lose raw data, we recover something useful by assuming things vary linearly within a class. Each formula picks a different curve to interpolate on. Plus a light remark on the empirical relationship 3·Median ≈ Mode + 2·Mean.",
+            "prerequisites": [
+              "Topics 1-6"
+            ],
+            "connections": {
+              "within_chapter": "Capstone. References 4.1, 5.1, 6.1 directly. The synthesis re-organises everything before it from three formulas into one principle and three applications.",
+              "cross_chapter": "Conceptual seed for Class 11 calculus — linear interpolation generalises to derivatives. Empirical relationship is a useful sanity-check across all three measures.",
+              "prior_grade": "Synthesis topic — no new prior-grade activation; integrates Class 9 definitions with Class 10 grouped formulas."
+            },
+            "misconceptions": [
+              "Treating the three formulas as unrelated facts (the default state without synthesis)",
+              "Believing the linearity assumptions are universal truths rather than approximations chosen for tractability",
+              "Misremembering the empirical-relationship coefficients (e.g., 2·Med = 3·Mode + Mean)",
+              "Treating 3·Median ≈ Mode + 2·Mean as exact rather than an empirical approximation"
+            ],
+            "deep_understanding": "Student articulates the through-line in their own words: 'all three formulas assume something varies linearly within a class — uniform values for mean, smooth heights for mode, constant accumulation for median' — and recognises 7.2's relationship as a sanity check, not a fourth formula.",
+            "keywords": [
+              "synthesis",
+              "linear interpolation",
+              "empirical relationship",
+              "mode",
+              "median",
+              "mean",
+              "approximation",
+              "uniform within class"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch13_statistics_through_line_and_closing__linear_interpolation_three_ways",
+              "name": "Linear interpolation, three ways",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "13.7.1"
+              ]
+            },
+            {
+              "id": "ch13_statistics_through_line_and_closing__empirical_relationship",
+              "name": "The empirical relationship: 3·Median ≈ Mode + 2·Mean",
+              "type": "transfer",
+              "lo_codes": [
+                "13.7.2"
+              ]
+            }
+          ]
+        }
+      ],
+      "lo_codes": [
+        "13.0.1",
+        "13.0.2",
+        "13.0.3",
+        "13.0.4"
+      ]
+    },
+    {
+      "id": "ch14_probability",
+      "name": "Probability",
+      "sequence": 14,
+      "session_estimate": {
+        "min": 1,
+        "max": 1
+      },
+      "topics": []
+    }
+  ]
+}

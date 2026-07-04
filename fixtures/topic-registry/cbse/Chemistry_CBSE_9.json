@@ -1,0 +1,269 @@
+{
+  "subject": "Chemistry Class 9",
+  "board": "CBSE",
+  "sessions_per_week": 1,
+  "chapters": [
+    {
+      "id": "ch5_mixtures",
+      "name": "Exploring Mixtures and their Separation",
+      "sequence": 1,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Chemistry/ch5_exploring_mixtures_and_their_separation/topics.md",
+      "session_estimate": {
+        "min": 7,
+        "max": 9
+      },
+      "topics": [
+        {
+          "id": "ch5_mixtures_foundation",
+          "name": "What a Mixture Is, and the Big Split",
+          "sequence": 1,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "5.1.1",
+            "5.1.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch5_mixtures_foundation__mixture_vs_compound",
+              "name": "Mixture vs Compound — the Spine",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.1.1"
+              ],
+              "lo_description": "Conceptual: A mixture is two or more substances physically jumbled with each part keeping its own properties, in no fixed proportion; a compound is a brand-new substance where the parts surrendered their identities and sit in a fixed ratio. The student can contrast the two across the load-bearing axes — identity of parts (kept vs lost), proportion (variable vs fixed), separability (physical means vs not), properties of the whole (a blend vs new) — and judge a borderline or disguised case from these, not a memorised list. Crucially they can explain why \"each part keeps its property\" is the chapter's engine: it is precisely what licenses both quantifying a component (concentration) and exploiting a component's own property to pull it back out (separation), so they can trace the spine forward. They also hold that mixture-vs-compound is about what happened to the parts, not how it looks — a uniform-looking salt solution is still a mixture.\nProcedural: Thin by design — one named skill: given a described material or scenario, run the mixture/compound decision (identity-retention -> separability-by-physical-means -> fixed-vs-variable proportion) and return the classification with the deciding reason, from a clean prototype up to a deliberately disguised case."
+            },
+            {
+              "id": "ch5_mixtures_foundation__homogeneous_heterogeneous",
+              "name": "Homogeneous vs Heterogeneous",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.1.2"
+              ],
+              "lo_description": "Conceptual: Homogeneous means uniform composition throughout (a solution); heterogeneous means components in visibly distinct regions. The student can assign a mixture to the right class with the deciding reason, and articulate that the real classifier is uniformity at the relevant scale — the naked-eye \"can I see the parts?\" test is a heuristic, not the definition. They can name failure cases where the eye is fooled: a colloid that looks uniform but isn't a true solution (milk), and a solid solution that looks like one substance (brass). They hold that homogeneous is not the same as liquid or transparent (air and brass are homogeneous) and that a homogeneous mixture is still a mixture, not a compound. They can also classify a gas-containing mixture by what is dispersed in the gas (gas-in-gas homogeneous; solid- or liquid-in-gas heterogeneous). The load-bearing forward fuse: the homo/hetero call decides which family of separation handles is available (homogeneous -> molecular-property handles; heterogeneous -> bulk-physical handles), so this first cut is a decision tool feeding the C5 separation key.\nProcedural: One genuine action skill — run the classification procedure: inspect for visible distinct regions / settling, then if uniform to the eye apply the confirming sideways-light-beam check, and return homogeneous-solution vs heterogeneous (vs the looks-homogeneous-colloid exception); from sand+water up to a multi-item sort. (A thinner companion skill: read a given observation table and decide the type from the evidence rather than prior knowledge of the substance.)"
+            }
+          ]
+        },
+        {
+          "id": "ch5_mixtures_concentration",
+          "name": "Concentration — How Much Is in It",
+          "sequence": 2,
+          "session_estimate": 2,
+          "lo_codes": [
+            "5.2.1",
+            "5.2.2",
+            "5.2.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch5_mixtures_concentration__solute_solvent_proportion",
+              "name": "Solute, Solvent, and Why Proportion Matters",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.2.1"
+              ],
+              "lo_description": "Conceptual: In a solution the dissolved/smaller-amount component is the solute and the medium/larger-amount component is the solvent; the student can name each for any solution and justify the call, including the non-obvious close-proportion case. The headline understanding is that a solution's behaviour is set by the proportion, not the ingredient list — the same three ingredients at the wrong ratio are a different thing (ORS vs sugar syrup). Concentration is a property of the mixture (\"this glass is 11% sugar\"), not of the substance (\"sugar is sweet\"), so the student can reframe any \"is X safe/good/harmful?\" question into \"at what concentration?\" — the dose makes the poison (even water harms above some level). They can explain what dilution does (adding solvent lowers concentration; solute amount unchanged) and predict the qualitative effect of repeated dilution, and connect this to the spine: we can even speak of \"how much sugar is in it\" only because the sugar kept its identity.\nProcedural: Thin / concept-first — one qualitative skill: track a staged dilution, stating which step is more/less concentrated and ordering them, with no arithmetic (the reasoning rehearsal that C2.2 later turns into formulae)."
+            },
+            {
+              "id": "ch5_mixtures_concentration__percentage_metrics",
+              "name": "Three Ways to Say How Much — % m/m, m/v, v/v",
+              "type": "procedural",
+              "lo_codes": [
+                "5.2.2"
+              ],
+              "lo_description": "Conceptual: All three metrics share one shape, (part / whole) x 100, but use three different \"wholes\" because you measure different things in different units depending on the situation: solid-in-liquid -> % m/v (g per 100 mL); two miscible liquids -> % v/v (mL per 100 mL); whole-weighed or mass-convention -> % m/m (g per 100 g). The student can read a label number as a concentration in words, choose the right metric for a situation and justify it from how each component is naturally measured plus convention, and explain why the same solute yields a different percentage under m/m vs m/v (the denominator is a different physical quantity) — so a percentage is meaningless without its m/m, m/v, v/v tag. They know the denominator is the whole solution (solute included), not the solvent, and that % m/m = % w/w.\nProcedural: Compute % m/m, % m/v, and % v/v from given data (forming total = solute + solvent when only parts are given). Run the inverse: given the percentage and the total (or the solute), find the missing quantity (zinc-oxide-in-talc; make-the-vinegar; Cu/Zn split in brass). Convert a real label or recipe into the right percentage(s) — pick the metric first, then compute. One skill per metric plus an inverse skill; the dial carries each from a clean plug-in to a multi-component recipe."
+            },
+            {
+              "id": "ch5_mixtures_concentration__why_composition_matters",
+              "name": "Why It Matters — Safe to Consume, Composition Decides Performance",
+              "type": "transfer",
+              "lo_codes": [
+                "5.2.3"
+              ],
+              "lo_description": "Conceptual: Composition has two consequences, and the student can argue each with a real example. Face 1 (consume): a food/medicine/air-quality label number is a concentration driving a real safety decision — same substance, amount-per-volume flips safe to harmful (22 g sugar in a glass; 0.9% saline matches blood; AQI sets the mask). Face 2 (process and perform): what's in a raw material, and how much, decides how it is processed and how well the product performs — 24K gold is too soft so jewellery is 22K; under 1% carbon decides car-door vs knife; light-sweet crude refines cleaner than heavy-sour; more ethanol raises octane but lowers mileage. The student treats \"purer\" as a trade-off, not a ranking, and reads Face 2 as the bridge from \"know what's in it\" to \"separate it\" (Engine A -> Engine B). The underlying mechanisms (sulfur/viscosity, calorific value, carbon metallurgy) are named, not derived — beyond board at mechanism depth.\nProcedural: Thin / borrowed — no new procedure; it consumes the C2.2 arithmetic in service of a decision. The named skill is interpret-a-computed-concentration against a threshold or fitness-for-purpose: read a number you produced and say what it means for safety or performance (compute a drink's sugar %, judge it; compute an alloy's Cu/Zn split, reason about hardness)."
+            }
+          ]
+        },
+        {
+          "id": "ch5_mixtures_solubility",
+          "name": "Solubility — How Much Can Dissolve",
+          "sequence": 3,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "5.3.1",
+            "5.3.2",
+            "5.3.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch5_mixtures_solubility__saturated_unsaturated",
+              "name": "Saturated vs Unsaturated — Solubility as a Ceiling",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.3.1"
+              ],
+              "lo_description": "Conceptual: Solubility is the maximum mass of solute a fixed amount of solvent will hold at a stated temperature — a ceiling the solvent and temperature impose, not a free choice (the contrast with C2 concentration, which the experimenter sets at will below that ceiling). The student can define saturated (holding the maximum it can at this temperature) and unsaturated (below it), and tell from a description (more dissolves vs sits undissolved) which a solution is. They can explain why a temperature must always accompany a solubility figure (the same pair has different ceilings at different temperatures), why undissolved solute at the bottom is the visible signature of saturation (the system is at its ceiling), and — owning the distinction the chapter cross-references — that \"saturated\" (at the ceiling) is a different axis from \"concentrated\": a solution can be concentrated yet unsaturated, or dilute yet saturated.\nProcedural: Classify a described or numerical solution as saturated/unsaturated given the solubility figure and the amounts present. Compute the mass needed to just saturate a stated mass of solvent at a stated temperature from a solubility figure, and the inverse (given mass dissolved at saturation, state the solubility)."
+            },
+            {
+              "id": "ch5_mixtures_solubility__solubility_temperature_curve",
+              "name": "Solubility vs Temperature — the Solubility Curve",
+              "type": "procedural",
+              "lo_codes": [
+                "5.3.2"
+              ],
+              "lo_description": "Conceptual: The ceiling is not fixed — heat the water and most solids dissolve far more, while gases do the opposite and escape as you warm them (the canonical bounding contrast). The student can predict the direction of change with a real instance each (hot chai; warm fizzy drink going flat), read a solubility curve as \"the ceiling at every temperature\" and say what a steep vs shallow curve means about temperature-sensitivity, and compare two substances from their curves — including the harder read that the answer can flip across temperatures where curves cross. They connect this to the spine: because the ceiling moves predictably with temperature, solubility becomes an exploitable, controllable handle (the knob crystallisation later turns). The kinetic mechanism behind falling gas solubility is named (warm ponds carry less oxygen) but beyond board at mechanism depth.\nProcedural: Read a single value off a solubility curve or table at a stated temperature. Answer comparative / fill-in-the-blank reads (\"A at 20 C vs 60 C\"; \"which of A or B dissolves more at T\"). Interpolate / reason across a temperature range from a table — compare how much each of several salts gains over a range and flag the near-flat one."
+            },
+            {
+              "id": "ch5_mixtures_solubility__cooling_crystallisation_hook",
+              "name": "Cool a Saturated Solution and a Solid Drops Out",
+              "type": "procedural",
+              "lo_codes": [
+                "5.3.3"
+              ],
+              "lo_description": "Conceptual: Saturate hot (high ceiling, lots in) then cool slowly and the ceiling drops below what's dissolved, so the excess crystallises out as a pure solid, leaving a solution saturated again at the lower temperature. The student can predict this and explain why; explain why the solid that forms is purer than the starting mixture (only the saturated solute is forced out — soluble impurities, below their own ceilings, stay dissolved); reason that a steep-curve substance is recoverable by cooling but a flat-curve one (NaCl) is not — so salt is obtained by evaporation while sugar/KNO3-type solids are obtained by cooling (the separation key in miniature); and recognise one rule (drop below the ceiling -> crystals form) behind rock candy/mishri, sugar refining, salt pans, and kidney stones. They can state that this prediction is the principle crystallisation (C5.1) cashes in. Supersaturation/nucleation vocabulary is beyond board.\nProcedural: Compute the mass of solid that separates on cooling = (solubility at higher T) - (solubility at lower T), the two-read subtraction (e.g. 287 g -> 241 g gives 46 g). Scale the calculation to a non-100 g solvent mass — apply the per-100 g figures proportionally before subtracting."
+            }
+          ]
+        },
+        {
+          "id": "ch5_mixtures_particle_size",
+          "name": "Particle Size — Suspensions, Colloids, Tyndall",
+          "sequence": 4,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "5.4.1",
+            "5.4.2",
+            "5.4.3",
+            "5.4.4"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch5_mixtures_particle_size__size_spectrum",
+              "name": "The Particle-Size Spectrum — Solution, Colloid, Suspension",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.4.1"
+              ],
+              "lo_description": "Conceptual: The \"not-uniform\" world is one continuous ruler with particle size as its only axis: solutions (< 1 nm, true particle-level mixing, identity hidden), colloids (1-1000 nm, large enough to do new things but too small to see or settle), suspensions (> 1000 nm, bits visibly separate). The student can state that size is the single ordering property and explain why this is a spectrum, not three separate boxes; locate a named everyday mixture (salt water, milk, muddy water, blood, sugar solution) on the scale and justify the placement from behaviour, not a list; explain why a colloid \"looks homogeneous but behaves heterogeneously\" — it sits between the C1 eye-test categories, so the eye-test alone can't classify it; and connect the band to the spine (larger particle -> the component keeps its identity more visibly, which is what later makes the heterogeneous separations possible — the forward link to the C5 bulk-physical handles).\nProcedural: Thin — one repeatable skill: classify a given mixture as solution/colloid/suspension by reading its particle-size band from a stated size value or a described/diagrammed behaviour, from \"5 nm -> colloid\" up to a multi-cue case reconciling size, visibility, and settling."
+            },
+            {
+              "id": "ch5_mixtures_particle_size__size_decides_behaviour",
+              "name": "What Particle Size Decides — Visibility, Settling, Filterability",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.4.2"
+              ],
+              "lo_description": "Conceptual: The size ruler is predictive — three behaviours read straight off particle size. The student can explain why suspension particles are visible while colloid and solution particles are not (grounding visibility in size, not asserting it); why a colloid does not settle on standing even though it is heterogeneous (particles too small for gravity to overcome dispersal — its signature contrast with a suspension); and why filtration removes suspension particles but not colloidal/dissolved ones (filter-pore size vs particle size), and therefore why muddy water can stay cloudy after filtering (forward link to coagulation, C5.6). The deep move is to derive these as consequences of one cause (size) rather than memorise three facts per family, using a suspension-vs-colloid contrast pair to mark where behaviour flips.\nProcedural: Thin — one predict-from-cause skill: predict a target property (visible? settles? passes a filter?) for a given mixture from its size band, and fill the full solution/suspension/colloid comparison table, from a single-property call up to the whole table with a contrast row."
+            },
+            {
+              "id": "ch5_mixtures_particle_size__tyndall_effect",
+              "name": "The Tyndall Effect",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.4.3"
+              ],
+              "lo_description": "Conceptual: Shine a narrow beam through a mixture and look from the side — in a true solution the path is invisible (particles too small to scatter); in a colloid or suspension the particles scatter the beam so its path lights up (the Tyndall effect). The student can state the effect and explain why it occurs in colloids/suspensions but not solutions, grounded in particle size; use it as the discriminating test that succeeds exactly where the C1 eye-test fails on a clear-looking colloid (decide solution vs colloid/suspension from the beam-path observation); identify everyday sightings (projector beam, godrays, fog-lit headlights, laser through mist) as the same phenomenon; and distinguish Tyndall (particle scattering) from the beyond-board sky-blue Rayleigh case — a related cousin, not the same effect. Key guard: solution particles are the smallest, so the \"larger particles scatter\" inversion is wrong.\nProcedural: Thin — one observe-then-classify skill driven by the scattering cue: read a light-beam observation (beam visible vs not) and infer the mixture type, from a one-beaker read up to a two-liquid contrast where one scatters and one does not."
+            },
+            {
+              "id": "ch5_mixtures_particle_size__colloids_around_us",
+              "name": "Colloids Around Us — Dispersed Phase, Medium, Emulsions",
+              "type": "transfer",
+              "lo_codes": [
+                "5.4.4"
+              ],
+              "lo_description": "Conceptual: The student already eats, drinks, and breathes colloids — milk, blood, fog, smoke, ice cream, butter, paint. The student can recognise common everyday colloids and justify \"colloid\" using size/Tyndall/settling evidence rather than recall; name the two-part anatomy — the dispersed phase (the component spread through) and the dispersion medium (the component it is spread in) — for a given colloid (milk = fat in water; fog = water in air; blood = cells/proteins in plasma); define an emulsion as the liquid-in-liquid colloid, give examples, and explain why an emulsifying agent (soap, milk proteins) is needed to stop the two liquids re-separating; and apply the C4.2 settling logic to blood (a true suspension would settle out — circulation depends on blood staying dispersed; forward link to centrifugation, C5.4).\nProcedural: Thin — one labelling skill: identify the dispersed phase and dispersion medium of a named colloid, from a clean milk/fog case up to blood or smoke where the student must pick which is dispersed in which."
+            }
+          ]
+        },
+        {
+          "id": "ch5_mixtures_separation",
+          "name": "Separating Mixtures — Engine B",
+          "sequence": 5,
+          "session_estimate": 2.5,
+          "lo_codes": [
+            "5.5.1",
+            "5.5.2",
+            "5.5.3",
+            "5.5.4",
+            "5.5.5",
+            "5.5.6",
+            "5.5.7"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch5_mixtures_separation__separation_key",
+              "name": "The X-to-Y Separation Key",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "5.5.1"
+              ],
+              "lo_description": "Conceptual: Every separation is one move — find a property where the two components differ, then exploit it — but the kind of mixture (X) decides which family of handles (Y) is even available. The student can explain why separation is possible at all (each component kept its property; no chemical change happened, so a physical handle survives); derive the handle family from the mixture type — homogeneous -> molecular-property handles (boiling point, solubility, adsorption affinity) because the parts are mixed at the particle level with no visible bits to grab; heterogeneous -> bulk-physical handles (size, density, immiscibility, sublimability, clumping, magnetism); state the choosing principle (pick the property where the components differ most — the bigger the gap, the cleaner the cut); map a named method back to its handle and required mixture type in reverse; and name magnetic property as a bulk-physical handle in the heterogeneous toolbox. This is the explicit pay-off of the C1.2 / C4.1 forward fuse: classify first, that names your toolbox, then pick the sharpest tool.\nProcedural: One spine skill: classify a named mixture as homogeneous/heterogeneous and then select an appropriate separation method, justifying the choice by naming the exploited property — from a single clean mixture up to a multi-component mixture needing a sequence of methods."
+            },
+            {
+              "id": "ch5_mixtures_separation__crystallisation",
+              "name": "Crystallisation",
+              "type": "procedural",
+              "lo_codes": [
+                "5.5.2"
+              ],
+              "lo_description": "Conceptual: A dissolved solid kept its property, including a solubility that drops as the water cools — so saturate hot and cool slowly and the excess drops out, and because crystals form by like-particles arranging into a regular lattice, impurities are left behind in the mother liquor. The student can explain why cooling a saturated solution drops a solid out and why crystallisation yields a purer solid than evaporation (the lattice excludes foreign particles; evaporation drives off water indiscriminately, trapping impurities); connect crystallisation to its everyday faces (rock candy/mishri, salt pans, sugar refining, kidney stones) and identify the common driver; and distinguish evaporation, crystallisation, and distillation by what each recovers (evaporation recovers the solid and loses the solvent; distillation recovers the solvent; crystallisation recovers a pure solid). [X: homogeneous -> Y: molecular handle = solubility-vs-temperature.]\nProcedural: Sequence the crystallisation procedure (hot saturated solution -> filter hot to remove insoluble impurity -> cool slowly undisturbed -> filter, rinse, dry) and state the reason for each step. Compute saturated-solution quantities from a solubility figure (the two-temperature difference, scaled to a non-100 g water mass). Reason about how a process variable (cooling rate, evaporation rate / surface area) affects crystal size and quality, and identify which variable a given experiment isolates."
+            },
+            {
+              "id": "ch5_mixtures_separation__distillation",
+              "name": "Distillation and Fractional Distillation",
+              "type": "procedural",
+              "lo_codes": [
+                "5.5.3"
+              ],
+              "lo_description": "Conceptual: Two miscible liquids look like one but each kept its own boiling point — heat the mixture, the lower-boiling liquid vaporises first, and a condenser turns that vapour back to pure liquid in a separate vessel. The student can explain why distillation separates miscible liquids; state and justify the ~25 C rule (distillation needs a boiling-point gap of roughly 25 C or more, or the two co-vaporise; below that, fractional distillation is required); explain how a fractionating column achieves what one boil can't (repeated condensation-vaporisation on each obstruction, each cycle enriching the rising vapour) and why temperature decreases up the column (ordering the refinery fractions); and choose between simple and fractional distillation for a given pair from their boiling points. Fractional distillation is in-board at mechanism depth. [X: homogeneous -> Y: molecular handle = boiling point.]\nProcedural: Draw and label the distillation set-up (distillation flask, thermometer at the side-arm, condenser with water counter-current — in at the bottom, out at the top, receiver) and narrate where each liquid goes, from labelling a given diagram up to constructing it for a novel pair and adding a fractionating column. Read a boiling-point table and decide, per pair, whether the technique can separate them and which variant to use."
+            },
+            {
+              "id": "ch5_mixtures_separation__chromatography",
+              "name": "Chromatography",
+              "type": "procedural",
+              "lo_codes": [
+                "5.5.4"
+              ],
+              "lo_description": "Conceptual: Sometimes the components of a solution differ in none of the obvious handles, yet still differ in how strongly each sticks (adsorbs) to a surface versus how readily it travels with a moving solvent. The student can explain the mechanism in one chain — components have different affinities for the stationary vs mobile phase -> they move at different speeds -> end at different positions -> separated; define and distinguish the two phases (stationary = fixed material that holds components back; mobile = the moving solvent that carries them) and identify each in a set-up; predict ordering from affinity (most attracted to the stationary phase -> slowest / elutes last; most soluble in the mobile phase -> fastest / first) and reason backwards from an observed order; and explain why chromatography is the right choice when boiling-point and solubility handles fail (closely-related dissolved substances like dyes/pigments). Column chromatography is in-board at mechanism depth. [X: homogeneous -> Y: molecular handle = adsorption affinity.]\nProcedural: One skill: set up / describe paper chromatography (spot above the solvent line so the solvent dips below the spot and doesn't wash it off, let it rise, read the separated spots) and state the reason for each constraint, from labelling the figure up to designing a run for a novel coloured mixture and choosing the solvent."
+            },
+            {
+              "id": "ch5_mixtures_separation__separating_funnel_centrifugation",
+              "name": "Separating Funnel and Centrifugation",
+              "type": "procedural",
+              "lo_codes": [
+                "5.5.5"
+              ],
+              "lo_description": "Conceptual: When two liquids won't mix, each keeps its bulk layer — the denser sits below, the lighter floats, and a visible boundary is the handle. A separating funnel runs off the lower (denser) layer through a stopcock; the same density logic, sped up by force, drives centrifugation, which spins a fine suspension so the denser particles fling outward to the bottom while the lighter liquid stays on top (separating blood into plasma and cells). The student can explain why a separating funnel works for immiscible liquids and name the mixture type it needs (two immiscible liquids — heterogeneous), explaining why it fails for miscible liquids (no layer forms); explain centrifugation's mechanism and identify density as the exploited property; reason about the edge case of two immiscible liquids of equal density (no clean layering); and connect both methods to real uses (oil-water; blood components, paperfuge, dairy cream). Both are heterogeneous-only methods — a true solution gives them nothing. [X: heterogeneous -> Y: bulk handle = immiscibility + density.]\nProcedural: Describe / draw the separating-funnel procedure (stand -> two layers -> open stopcock -> run off lower layer -> close -> discard interface -> collect upper) with the reason for the discard-the-interface step, from labelling the figure up to a density-prediction of which liquid is on top and why. Predict the centrifugation outcome (which component ends at the bottom, which at top) from relative densities."
+            },
+            {
+              "id": "ch5_mixtures_separation__sublimation",
+              "name": "Sublimation",
+              "type": "procedural",
+              "lo_codes": [
+                "5.5.6"
+              ],
+              "lo_description": "Conceptual: A few solids (camphor, naphthalene, dry ice) skip the liquid step and go straight to vapour on gentle heating — they sublime. If one component of a solid-solid mixture sublimes and the other doesn't, that difference is the handle: heat the mixture, the sublimable part rises as vapour and re-deposits as a solid on a cool surface above, while the non-sublimable part stays put. The student can define sublimation (solid -> vapour without a liquid stage, below the melting point) and its reverse deposition, and name sublimable substances; explain why sublimation separates such a mixture; identify a mixture as a sublimation candidate (a solid-solid mix where exactly one part sublimes) and reject it where neither or both sublime; and place sublimation in the correct order within a multi-step separation (sublime the volatile solid first, before dissolving/filtering the rest). [X: heterogeneous (solid-solid) -> Y: bulk handle = sublimability.]\nProcedural: One skill: describe / draw the sublimation set-up (china dish on a tripod, inverted funnel with cotton-plugged nozzle, gentle heat, collect the re-deposited solid on the inner wall) and explain each part's role, from labelling the figure up to sequencing it inside a three-component separation (e.g. sand + salt + naphthalene)."
+            },
+            {
+              "id": "ch5_mixtures_separation__coagulation",
+              "name": "Coagulation (with Sedimentation, Decantation, Filtration)",
+              "type": "transfer",
+              "lo_codes": [
+                "5.5.7"
+              ],
+              "lo_description": "Conceptual: A suspension's fine particles can be so small that filtration lets them slip through and the water stays cloudy — so you change their effective size: add a coagulant (alum, fitkari) and the fine particles clump into larger clusters that now settle by gravity (sedimentation) and can be poured off (decantation) or caught on a filter. The student can explain why plain filtration fails on a fine suspension and why coagulation fixes it; define coagulant/coagulation and name everyday coagulants (alum for muddy water; acid — lemon/vinegar — for milk -> paneer); order the bulk-separation steps for a fine suspension (coagulate -> sediment -> decant / filter) and explain why each step depends on the one before; and place this on the particle-size spectrum (coagulation pushes fine particles up the size scale into \"settleable\" — the C4 back-link). Dialysis-membrane and reverse-osmosis mechanisms are beyond board. [X: heterogeneous (fine suspension) -> Y: bulk handle = particle size + clumping.]\nProcedural: One skill: describe the coagulation procedure (add alum to muddy water -> fine particles clump -> settle -> decant/filter the clear water) and identify, for a given turbid mixture, whether filtration alone suffices or coagulation is needed first."
+            }
+          ]
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "language_precision",
+          "description": "Parse the exact wording of a stem and hold the chapter's near-synonym distinctions apart — saturated vs concentrated, homogeneous vs heterogeneous, solute vs solvent, mixture vs compound, the m/m vs m/v preposition — instead of collapsing them."
+        },
+        {
+          "slug": "quantitative_thinking",
+          "description": "Treat numbers as carriers of meaning — read a label or curve as a concentration or ceiling, compute, and judge the value against a threshold or fitness-for-purpose, not just directionally."
+        }
+      ]
+    }
+  ]
+}

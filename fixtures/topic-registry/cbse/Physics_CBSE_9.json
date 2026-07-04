@@ -1,0 +1,165 @@
+{
+  "subject": "Physics Class 9",
+  "board": "CBSE",
+  "sessions_per_week": 1,
+  "chapters": [
+    {
+      "id": "ch4_motion",
+      "name": "Describing Motion Around Us",
+      "sequence": 4,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Physics/ch4_describing_motion_around_us/topics.md",
+      "session_estimate": {
+        "min": 7,
+        "max": 8
+      },
+      "topics": [
+        {
+          "id": "ch4_motion_position_distance_displacement",
+          "name": "Position, Distance, Displacement",
+          "sequence": 1,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "4.1.1",
+            "4.1.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_motion_position_distance_displacement__reference_frame",
+              "name": "Position and the Reference Frame",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "4.1.1"
+              ],
+              "lo_description": "Conceptual:\n- Threshold (A) Physical — frame-relativity: \"What's at rest for one observer can be moving for another — motion is not a property of the object alone.\"\n- Threshold (B) Mathematical — sign as a free choice: \"Once a frame is chosen, which direction is positive is still a free choice — flipping it changes every sign but the physics is unchanged.\"\n- C1 — Position value is frame-relative. The student can show that two observers — standing in different places and/or facing different ways — assign different signed numbers to the same object, and can refuse to give a position until the frame is named. (the position-value foundation under both thresholds; static frames — testable now)\n- C2 — Motion-status is frame-relative. The student can recognise that whether an object is \"moving\" or \"at rest\" depends on the observer, because observers can move relative to each other. (= threshold A; seeded now, but its questions are deferred until after velocity + acceleration)\n- C3 — The positive direction is the observer's orientation. The student can explain the axis sign as which way the observer faces — not an arbitrary mathematical pick — and can say what physically changes (and what doesn't) when the positive side is flipped. (= threshold B; 1D)\n- Scope rule — conceptual reach > procedural scope: 2D may be tested for understanding (e.g. \"would this still work if the observer faced a different way in a plane?\") but is never demanded procedurally — solving stays 1D.\nProcedural:\n- P1 — Operate the number-line representation of position — read positions off a given line, construct one by choosing an origin + positive direction, handle busy multi-point configurations. (Representation dial)\n- P2 — Execute a frame change — given an object's position to one observer, produce its position for another: shift the origin (offset every position) and/or flip the positive direction (negate every sign), and physically interpret what the flip means. (Representation + signed-number bookkeeping; Inverse modifier at the top end)\n- P3 — Translate frame to observer, both ways — explain two mathematical reference frames as two physical observers, and two observers as two mathematical frames; math to real-world words and words to math."
+            },
+            {
+              "id": "ch4_motion_position_distance_displacement__distance_vs_displacement",
+              "name": "Distance vs Displacement in 1D",
+              "type": "procedural",
+              "lo_codes": [
+                "4.1.2"
+              ],
+              "lo_description": "Conceptual:\n- C1 — Distinguish distance from displacement intuitively. The student can take a journey, produce both quantities, and say why they differ — path covered (\"what did you do?\") vs net result (\"what did it net out to?\"). Includes knowing when the two collapse (single, unreversed direction along a line — equal magnitude) vs split (any reversal breaks them apart), and that |displacement| <= distance always.\n- C2 — Displacement is directional and signed, not just a net magnitude. The student can show displacement carries direction, not only size — opposite directions are negatives of each other (west is the negative of east; down the negative of up), in 2D as well as 1D — and can recognise a zero or negative displacement sitting under a non-zero distance (a round trip, a there-and-back).\n- C3 — Displacement is lossy; the path carries more information (optional enhancer). The student can explain that distances + directions determine displacement, but displacement does not determine the distances — at most a single missing leg is recoverable. Net displacement throws information away; the path strictly contains more. (Optional — author only if bandwidth allows. Same asymmetric-information structure as 2.4.)\nProcedural:\n- P1 — Compute distance and displacement in 1D — including multi-leg journeys with reversals. (on a number line: displacement = x_final - x_initial; distance = sum of |delta x| over each leg.)\n- P2 — Compute displacement for basic 2D scenarios — perpendicular legs allowed (e.g. \"3 m east then 4 m north\"), reasoned out in language / common-sense right-triangle terms. Scope ceiling: no formal cartesian coordinates, no vector notation — direction is carried in words + per-axis sign.\n- P3 — Translate between math and words, both ways — describe a real journey as distance/displacement values, and narrate given values back as a real journey.\n- P4 — Inverse: find a missing leg given the net displacement and the other legs."
+            }
+          ]
+        },
+        {
+          "id": "ch4_motion_speed_velocity_acceleration",
+          "name": "Speed, Velocity, Acceleration",
+          "sequence": 2,
+          "session_estimate": 2,
+          "lo_codes": [
+            "4.2.1",
+            "4.2.2",
+            "4.2.3",
+            "4.2.4"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_motion_speed_velocity_acceleration__speed_and_velocity",
+              "name": "Speed and Velocity — Rates With and Without Direction",
+              "type": "procedural",
+              "lo_codes": [
+                "4.2.1"
+              ],
+              "lo_description": "Conceptual:\n- C1 — Read a rate as a per-second amount. The student can read a speed/velocity as how much distance/displacement is covered every second — given 1 second, the higher-rate object covers more — rather than as a formula to plug into; and can compare two scenarios by normalising to per-second (the bigger-number trap: 50 m in 3 s vs 500 m in 100 s, \"how much in one second?\").\n- C2 — A rate is quoted per-second but clockable over any interval, and describes only that interval. The student can take a measurement over any window (10 s, 0.1 s, ...) and express it in per-second form, and understands a quoted rate is valid only for its own duration — so it can change interval to interval (100 m/s for 0.1 s, then 10 m/s for 0.9 s). (Deliberately stops short of 2.4's average-vs-instantaneous threshold. Boundary: 2.1 = \"a rate is per-second but clockable over any window\"; 2.4 = \"and here's what the window choice does to information.\")\nProcedural:\n- P1 — State and compute speed vs velocity from varied information. Distinguish the two (speed unsigned, >= 0; velocity signed, carrying direction along the chosen positive axis — both in m/s), pick the right one for what the question asks, and stay correct under distractors / incomplete or over-specified data. (heavy emphasis — the procedural core of this sub-topic.)\n- P2 — Express a rate measured over any interval in per-second form — convert a window measurement to per-second, and flag that the result describes only its measured interval.\n- P3 — Compute average speed vs average velocity for multi-leg journeys — average speed = total distance / time; average velocity = total displacement / time — including reversals / round trips where they diverge: avg speed > 0 while avg velocity = 0; speedometer reads speed, not velocity. (draws on 1.2-C2: zero displacement under non-zero distance.)\n- P4 — Inverse rate problems — given a rate + one quantity, find the other: time from distance + speed, displacement from velocity + time, or a missing leg's speed/time given the overall average.\n- P5 — Convert between speed units (km/h to m/s) and compute correctly across mixed-unit data. (the universal procedural speed skill.)"
+            },
+            {
+              "id": "ch4_motion_speed_velocity_acceleration__acceleration",
+              "name": "Acceleration — the Per-Second-Per-Second Leap",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "4.2.2"
+              ],
+              "lo_description": "Conceptual:\n- Threshold concept: \"Rate of rate is independent of the rate itself.\"\n- C1 — Read acceleration as the rate of change of velocity (\"velocity's velocity\"). The student can articulate acceleration as how much velocity is gained or lost every second, recognise it as the same \"rate of\" step that built velocity from position, stacked one level up, and read the unit m/s^2 as physical meaning (\"5 m/s^2 = gains 5 m/s every second\"), not as a symbol.\n- C2 — Acceleration is independent of velocity (the threshold). The student can demonstrate that \"how fast velocity is changing\" is a separate fact from \"how fast it's going\": produce or recognise a fast object with zero acceleration, a momentarily stationary object with non-zero acceleration, a slow object accelerating hard — and predict that knowing one tells you nothing about the other.\n- C3 — Acceleration is quoted per-second-per-second but clockable over any window. The student can recognise that the per-second-per-second rate is an expression — the actual measured duration can be much longer or much shorter — and that a quoted acceleration describes only its window. (Mirror of 2.1-C2, one level up. Scope: this chapter uses constant acceleration only, so average = instantaneous; average acceleration = (v - u)/(t2 - t1).)\n- C4 — The recursion is a reusable machine. The student can see \"acceleration = velocity's velocity\" as an instance of a general rate-of-rate structure that keeps applying — each level independent of the ones below — foreshadowing jerk (rate of acceleration) and every future \"rate of X.\" (Core — carries the threshold's integrative + transformative reach. The jerk detail is its far end.)\nProcedural:\n- P1 — Compute acceleration across time windows and situations — from average acceleration = (v - u)/(t2 - t1): starting from rest, slowing down, different measurement windows, and varied real situations.\n- P2 — Inverse: find the missing quantity — given any two of {initial velocity, final velocity, time, acceleration}, compute the third, including tricky / multi-step situations.\n- P3 — Translate real-world situations to math, both ways — describe a real acceleration scenario in maths, and narrate given numbers back as a real situation. (heavy emphasis.)\n- P4 — Convert units before computing — km/h to m/s before reaching m/s^2 (e.g. 0 to 100 km/h in 7 s)."
+            },
+            {
+              "id": "ch4_motion_speed_velocity_acceleration__sign_direction_matrix",
+              "name": "Direction of Acceleration vs Direction of Velocity",
+              "type": "procedural",
+              "lo_codes": [
+                "4.2.3"
+              ],
+              "lo_description": "Conceptual (deliberately light; this sub-topic is procedure-heavy by design):\n- C1 — Direction of acceleration is independent of the direction of velocity. The student can recognise acceleration can point any direction relative to velocity (same as, or opposite to, the motion) — its direction isn't tied to where the object is heading. (the directional sibling of 2.2-C2's magnitude-independence)\n- C2 — The speeding-up / slowing-down schema, as meaning. Same sign (a, v) -> speeding up; opposite signs -> slowing down. The student can reject the naive \"negative acceleration = slowing down\" and read each of the four (v, a) combinations as a physical picture. The four combinations are the canonical bank:\n    (+v, +a) Moving in chosen-positive direction, speeding up\n    (+v, -a) Moving in chosen-positive direction, slowing down\n    (-v, +a) Moving in chosen-negative direction, slowing down\n    (-v, -a) Moving in chosen-negative direction, speeding up\n  The sign convention itself is a choice (inherited from Topic 1) — switching it flips every sign; the physical motion is unchanged.\nProcedural (the bulk — a heavy application push):\n- P1 — Handle all four (v, a) sign combinations fluently — given the signs, state speeding-up/slowing-down + the motion picture; given a description, assign the signs. (sign-tangle, matrix-completion)\n- P2 — Sign-switch — re-sign every quantity under a flipped positive direction, and recognise it's the same physical motion. (reinforces Topic 1's sign-as-a-choice)\n- P3 — Multi-scenario directional cases — ball thrown up (a fixed downward, v flips at the top); car on a downhill with the engine working with/against the slope; motion against a current or wind -> map each to the right (v, a) signs and narrate it.\n- P4 — Heavy real-world application with constraints/bounds — including finding the missing quantity among {u, v, a, t} inside multi-step problems: minimum time to reach take-off speed given a maximum acceleration; max/min time when acceleration varies with passenger load; reasoning over ranges, not just point values. Scope ceiling: v-a-t only — the moment a problem needs distance, it belongs to Topic 4 (kinematic equations)."
+            },
+            {
+              "id": "ch4_motion_speed_velocity_acceleration__average_vs_instantaneous",
+              "name": "Average vs In-the-Moment Rate",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "4.2.4"
+              ],
+              "lo_description": "Conceptual:\n- Threshold concept: \"Knowing what happened at each moment tells you the average. Knowing the average tells you nothing about any moment.\"\n- C1 — Average and in-the-moment are different facts about motion. The student can distinguish \"the rate in this moment\" from \"the average rate over an interval,\" and show they can disagree wildly (tortoise/rabbit: wild instantaneous bursts, lower average).\n- C2 — Average is the net effect over its window. The student can articulate — as a mental model — that an average is the net effect across the whole window (total displacement / time, the culmination of every moment in it), not a readout of any single moment, and never (v1+v2)/2 except as a constant-acceleration shortcut. (Canonical illustration: a round trip's average velocity is 0 — net displacement is zero — even though the speedometer never read zero.)\n- C3 — There is no single \"the average\" — only an average for a chosen window. Same motion, different windows, different averages (the train: low over the first 2 min, high between stations, different again over 3 hours); the student can refuse \"what is the average?\" until \"over what interval?\" is pinned.\n- C4 — The threshold: information flows one way (for any rate). The student can clearly explain, from a mental model, that the moments determine the average (fine to coarse is computable) but the average tells you nothing about any single moment (coarse to fine is not recoverable — at most weak constraints, e.g. some moment must sit at or above the average). Holds for any rate — speed, velocity, acceleration. Same asymmetric-information shape as 1.2-C3; \"calculus without calculus.\" (threshold spine.)\n- C5 — Instantaneous rate: the rate at an exact moment. The student can grasp \"what exactly is the rate right now\" at a single instant (the speedometer reading at this moment) — distinct from any window average — by imagining the window shrink toward a moment, without touching formal calculus. (the transformative far-end of C4.)\n- C6 — Transfer: the averaging asymmetry is domain-general (optional enhancer / long-transfer). The student can apply the same one-way-information principle beyond motion — an average exam score, monthly rainfall, average income all lose the distribution of their underlying values the same way — and recognise it as a general property of averaging, not a fact about motion. (Optional.)\nProcedural:\n- P1 — Compute and compare averages of the same motion over different windows. Given a motion, compute the average over several specified windows, show they differ, and identify which window a question is actually asking about.\n- P2 — Average-speed traps — compute correctly where (v1+v2)/2 fails. The harmonic-mean case (half the distance at v1, half at v2 -> average speed = 2*v1*v2/(v1+v2)), equal-time vs equal-distance averaging giving different answers, and knowing when (v1+v2)/2 is legitimately valid (constant acceleration / equal-time).\n- P3 — Reverse-information problems. Given only an average, determine what can and cannot be inferred about the moments — state the weak constraints (e.g. at least one moment >= the average) and reject over-claims that try to reconstruct specific moment values.\n- P4 — Combination & multi-segment problems (fluency push). Averages over many segments, not just two; and back-solving — given some segments plus a target overall average, find the required speed / acceleration / time in the missing segment."
+            }
+          ]
+        },
+        {
+          "id": "ch4_motion_graphical_representation",
+          "name": "Graphical Representation of Motion",
+          "sequence": 3,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "4.3.1",
+            "4.3.2",
+            "4.3.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_motion_graphical_representation__reading_graphs_as_rate",
+              "name": "Reading Any Graph as a Rate of Change",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "4.3.1"
+              ],
+              "lo_description": "Conceptual:\n- C1 — A graph shows a rate: steepness is how fast y changes; up-or-down is a separate fact. The student can read any line graph as a rate of change of the y-quantity per step in x — steeper = faster-changing — and state it in y-per-x units, on axes that need not be motion (savings vs months, temperature vs time). Crucially, steepness is magnitude (how fast) and the up/down direction is sign (a separate fact): a steep downward line is changing just as fast as a steep upward line — y is falling quickly, not \"slowly.\" The student can refuse the naive fusion \"up = fast/increasing, down = slow/decreasing.\" (the general first level; the magnitude-vs-sign split is owned here, before 3.2 layers on \"downward = negative direction\".)\n- C2 — Straight vs curved tells you whether the rate is steady or changing. The student can read a straight line as a constant rate and a curve as a changing rate, and read the second level off the bend: steepening = rate increasing, flattening = rate decreasing. (the \"two levels\" — done by shape, no calculus.)\n- C3 — A table of increments is the calculus-free reading of the second level. The student can lay a motion (or any quantity) out as a table and read the rate from the per-step increments — equal increments = constant rate (straight line); growing increments = rate increasing (steepening); shrinking increments = rate decreasing (flattening) — and connect the table's pattern to the graph's shape, in both directions. (the discrete view of C2; the successive-increments move.)\n- C4 — Steepness is read against the scale, not by eye. The student can recognise that the same data on different axis scales looks steeper or shallower, and so judges a rate from the numbers/scale, not raw visual impression. (the scale/visual-bias guard — NCERT \"The Journey Beyond\".)\n- Scope: taught deliberately on general / non-motion axes (savings/month, temperature/hour, rainfall/month, water level/time) BEFORE the skill is spent on motion. Motion-specific graphs (position-time, velocity-time) are 3.2/3.3.\nProcedural:\n- P1 — Construct a graph from a table — choose axes (independent variable on x), set origin + a sensible scale, plot, join — for both straight-line and curved data.\n- P2 — Construct a table from a graph — read coordinates off a line/curve at chosen x-values and tabulate. (the inverse of P1; same correspondence, both directions.)\n- P3 — Read the rate off a graph — compute the rate of change of a straight segment (change in y over change in x) with its sign and y-per-x units; for a curve, state qualitatively whether the rate is increasing or decreasing from the bend; and read the rate from the axis NUMBERS, not from how steep the line looks (the scale-illusion guard).\n- P4 — Read the second level off a table — from a column of increments (and how they change), classify the motion/quantity as constant / increasing / decreasing rate, and predict the graph's shape. (operationalises C3.)"
+            },
+            {
+              "id": "ch4_motion_graphical_representation__position_time_graphs",
+              "name": "Position-time Graphs",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "4.3.2"
+              ],
+              "lo_description": "Conceptual:\n- C1 — On a position-time (s-t) graph, the steepness of the line (its rate of change, the slope) is the velocity, and the shape is the story of the motion. The student can read an s-t graph as a journey: flat line = at rest; straight slope = uniform velocity; steeper = faster; curve = changing velocity; downward slope = motion in the negative direction. Builds on 3.1-C1/C2; 'tell the story of this graph' (chapter Move #6). The student must reject the naive fusion 'down on the graph = slowing down' — a downward slope is direction (position decreasing), not a change of speed; steepness is how-fast (magnitude), up-or-down is which-direction (sign), two separate facts.\n- C2 — A curved s-t line is non-uniform motion, read by its bend through the increments table (3.1-C3) — and 'accelerating' does NOT mean 'the s-t graph steepens'. The student can read a steepening curve as speeding up and a flattening curve as slowing down (growing vs shrinking per-second position-increments), and — the canonical trap — reject 'there's acceleration, so the s-t graph gets steeper'. Whether the curve steepens or flattens is set by the sign of acceleration relative to velocity (2.3), NOT by whether acceleration exists: an acceleration opposing the motion (the up-phase of a ball thrown straight up) produces a FLATTENING curve even though a is non-zero, because the displacement-increments shrink; after the top the same unchanging downward acceleration now supports the now-downward velocity and the curve STEEPENS — the a-vs-v sign relationship flips at the top, the acceleration does not. Qualitative only — instantaneous slope of a curve is out of scope (calculus, deferred).\nProcedural:\n- P1 — Construct an s-t graph from tabular position data (uniform and non-uniform), choosing axes + scale.\n- P2 — Compute velocity as the steepness (slope) of a straight s-t segment — build the change-in-position / change-in-time triangle, with sign.\n- P3 — Compare velocities by comparing steepness — given two s-t lines, say which is faster, and find where/whether they meet or have equal velocity (a crossing means equal POSITION, not equal velocity; equal velocity would mean parallel lines).\n- P4 — Read a journey off an s-t graph — narrate the motion, identify rest / uniform / non-uniform / return segments, give velocity signs (negative for a returning/downward segment), and compare average velocity vs average speed over an interval, including reversals where they diverge (a return-to-start gives zero net displacement, so average velocity 0 while average speed is non-zero)."
+            },
+            {
+              "id": "ch4_motion_graphical_representation__velocity_time_graphs",
+              "name": "Velocity-time Graphs",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "4.3.3"
+              ],
+              "lo_description": "Conceptual:\n- C1 — On a v-t graph, the line's rate of change (slope) = acceleration. The student can read a velocity-time graph's steepness as the rate of change of velocity: upward line = speeding up (positive acceleration), downward line = slowing (negative acceleration), flat line = constant velocity (zero acceleration). Steepness is the SIZE of the change and up/down is only its DIRECTION — a steep downward line is changing velocity just as fast as a steep upward one (rejects 'down = slow').\n- C2 — A flat v-t line means constant velocity, NOT rest — the cross-graph trap. The student can hold that the same shape (a horizontal line) means opposite things on the two graphs — at rest on a position-time graph, moving steadily on a velocity-time graph — and reads each by which graph it sits on and where the line sits, not by the shape. A flat v-t line above the axis is steady motion (constant velocity); only a flat v-t line at zero is rest. Distinguishes 'constant velocity' from 'zero velocity'.\nProcedural:\n- P1 — Construct a v-t graph from data or a narrative (constant velocity; constant acceleration; multi-stage), choosing axes + scale.\n- P2 — Compute acceleration as the rate of change (slope) of a v-t segment — (v - u) / (t2 - t1), carrying the sign.\n- P3 — Read and partition a multi-stage v-t graph — identify constant-velocity, accelerating, and decelerating segments, and match a qualitative state (speeding up / steady / slowing down) to the direction of the line in that segment.\n- P4 — Compare two v-t graphs — starting velocities, slopes (which accelerates faster), and the point where their velocities are equal (the intersection); including inverse / back-solve (what slope is needed to reach a target velocity). Boundary: v-a-t only — area under v-t = displacement is 3.4, not here."
+            }
+          ]
+        },
+        {
+          "id": "ch4_motion_kinematic_equations",
+          "name": "Kinematic Equations",
+          "sequence": 4,
+          "session_estimate": 2,
+          "lo_codes": [],
+          "sub_topics": []
+        },
+        {
+          "id": "ch4_motion_uniform_circular_motion",
+          "name": "Uniform Circular Motion",
+          "sequence": 5,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": []
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "language_precision",
+          "description": "Parse and produce precise physics language — prepositions, multi-clause stems, property-vs-entity verbs; decode the English of a problem and state answers exactly."
+        },
+        {
+          "slug": "causal_reasoning",
+          "description": "Reason in cause-and-effect, sequence, and timeline — narrate each motion problem as a small causal story."
+        }
+      ]
+    }
+  ]
+}

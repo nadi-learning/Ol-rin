@@ -22,6 +22,7 @@
     "seed:tutor": "bun scripts/seed_tutor.ts",
     "seed:parent": "bun scripts/seed_parent.ts",
     "seed:pace": "bun scripts/seed_pace.ts",
+    "seed:registry": "bun scripts/seed_topic_registry.ts",
     "probe:pace": "bun scripts/probe_pace_plan.ts",
     "probe:boot": "bun scripts/probe_boot.ts",
     "probe:auth": "bun scripts/probe_auth_whitelist.ts",

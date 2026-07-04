@@ -1,0 +1,208 @@
+{
+  "subject": "Physics",
+  "board": "Cambridge",
+  "chapters": [
+    {
+      "id": "ch14_electricity",
+      "name": "Electricity",
+      "sequence": 14,
+      "topics_md": "content-authoring/Cambridge/Grade8/Physics/ch14_electricity/topics.md",
+      "session_estimate": {
+        "min": 5,
+        "max": 7
+      },
+      "topics": [
+        {
+          "id": "ch14_electricity_current_and_charge",
+          "name": "Current & Charge",
+          "sequence": 1,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "14.1.1",
+            "14.1.2",
+            "14.1.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch14_electricity_current_and_charge__flow_of_charge",
+              "name": "The Flow of Charge",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "14.1.1"
+              ],
+              "insights": [
+                "The Turnstile"
+              ]
+            },
+            {
+              "id": "ch14_electricity_current_and_charge__current_in_series",
+              "name": "Current in Series (Single Path)",
+              "type": "transfer",
+              "lo_codes": [
+                "14.1.2"
+              ]
+            },
+            {
+              "id": "ch14_electricity_current_and_charge__current_in_parallel",
+              "name": "Current in Parallel (Junctions)",
+              "type": "transfer",
+              "lo_codes": [
+                "14.1.3"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch14_seq_02_conservation_of_traffic",
+                  "name": "Conservation of Traffic"
+                },
+                {
+                  "id": "ch14_seq_03_branch_independence",
+                  "name": "Branch Independence"
+                }
+              ],
+              "insights": [
+                "Branch Independence",
+                "Conservation of Traffic"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch14_electricity_voltage_and_energy",
+          "name": "Voltage & Energy",
+          "sequence": 2,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "14.2.1",
+            "14.2.2",
+            "14.2.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch14_electricity_voltage_and_energy__voltage_as_energy",
+              "name": "The Push and Energy (Voltage)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "14.2.1"
+              ],
+              "insights": [
+                "Energy Difference"
+              ]
+            },
+            {
+              "id": "ch14_electricity_voltage_and_energy__voltage_in_series",
+              "name": "Voltage in Series (Sharing Energy)",
+              "type": "transfer",
+              "lo_codes": [
+                "14.2.2"
+              ],
+              "insights": [
+                "Zero-Sum Loop"
+              ]
+            },
+            {
+              "id": "ch14_electricity_voltage_and_energy__voltage_in_parallel",
+              "name": "Voltage in Parallel (Full Energy per Branch)",
+              "type": "transfer",
+              "lo_codes": [
+                "14.2.3"
+              ],
+              "insights": [
+                "Direct Line"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch14_electricity_resistance_and_ohms_law",
+          "name": "Resistance & Ohm's Law",
+          "sequence": 3,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "14.3.1",
+            "14.3.2",
+            "14.3.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch14_electricity_resistance_and_ohms_law__concept_of_resistance",
+              "name": "The Concept of Resistance",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "14.3.1"
+              ]
+            },
+            {
+              "id": "ch14_electricity_resistance_and_ohms_law__calculating_resistance",
+              "name": "Calculating Resistance (R = V/I)",
+              "type": "procedural",
+              "lo_codes": [
+                "14.3.2"
+              ],
+              "insights": [
+                "The Bottleneck"
+              ]
+            },
+            {
+              "id": "ch14_electricity_resistance_and_ohms_law__factors_affecting_resistance",
+              "name": "Factors Affecting Wire Resistance",
+              "type": "transfer",
+              "lo_codes": [
+                "14.3.3"
+              ],
+              "insights": [
+                "Geometry of Resistance"
+              ]
+            },
+            {
+              "id": "ch14_electricity_resistance_and_ohms_law__parallel_resistance_paradox",
+              "name": "The Parallel Resistance Paradox",
+              "type": "deep_intuition",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch14_electricity_power_and_energy_bills",
+          "name": "Power & Energy Bills",
+          "sequence": 4,
+          "session_estimate": 1,
+          "lo_codes": [
+            "14.4.1",
+            "14.4.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch14_electricity_power_and_energy_bills__power_as_rate",
+              "name": "Power as Rate of Transfer",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "14.4.1"
+              ],
+              "insights": [
+                "Power is a Speed"
+              ]
+            },
+            {
+              "id": "ch14_electricity_power_and_energy_bills__kwh_and_cost",
+              "name": "The Kilowatt-Hour and Cost",
+              "type": "procedural",
+              "lo_codes": [
+                "14.4.2"
+              ],
+              "insights": [
+                "The Silent Multiplier"
+              ]
+            },
+            {
+              "id": "ch14_electricity_power_and_energy_bills__efficiency",
+              "name": "Efficiency and Lighting",
+              "type": "transfer",
+              "enrichment": true,
+              "lo_codes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

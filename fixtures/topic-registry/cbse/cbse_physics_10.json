@@ -1,0 +1,1105 @@
+{
+  "subject": "Physics Class 10",
+  "board": "CBSE",
+  "sessions_per_week": 1,
+  "chapters": [
+    {
+      "id": "ch9_light",
+      "name": "Light — Reflection and Refraction",
+      "sequence": 9,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Physics/ch9_light/topics.md",
+      "session_estimate": {
+        "min": 7,
+        "max": 9
+      },
+      "topics": [
+        {
+          "id": "ch9_light_light_fundamentals",
+          "name": "Light Fundamentals",
+          "sequence": 1,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "9.1.1",
+            "9.1.2",
+            "9.1.3",
+            "9.1.4"
+          ],
+          "voice_context": {
+            "core_concept": "Light is electromagnetic radiation with different wavelengths. When light hits matter, three things happen: transmission, absorption, reflection — every material does a mix. An object's color is determined by which wavelengths it reflects. Additive mixing (light) and subtractive mixing (paint) produce opposite results.",
+            "prerequisites": [
+              "Light travels in straight lines (Class 6)",
+              "Luminous vs non-luminous objects (Class 6)"
+            ],
+            "connections": {
+              "within_chapter": "Transmission/absorption/reflection framework sets up ALL of reflection and refraction",
+              "cross_chapter": "Dispersion and scattering in Ch 10 are direct applications of 'white light = all wavelengths mixed'",
+              "prior_grade": "Activates Class 6-8 light basics"
+            },
+            "misconceptions": [
+              "Thinking a red apple IS red (rather than reflects red wavelengths)",
+              "Assuming mixing all colored lights gives a dark/muddy result (it gives white)",
+              "Conflating color of light with color of pigment/paint"
+            ],
+            "deep_understanding": "Student can predict what color a red apple would appear under blue light (black — no red light to reflect) and explain why surgical lights must be white (need true colors for diagnosis).",
+            "keywords": [
+              "wavelength",
+              "spectrum",
+              "color",
+              "absorption",
+              "transmission",
+              "reflection",
+              "additive",
+              "subtractive"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_light_fundamentals__light_spectrum",
+              "name": "Light as a Spectrum",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.1.1"
+              ]
+            },
+            {
+              "id": "ch9_light_light_fundamentals__light_matter_interaction",
+              "name": "How Light Interacts with Matter",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.1.2"
+              ]
+            },
+            {
+              "id": "ch9_light_light_fundamentals__color_of_objects",
+              "name": "Why Objects Have Color",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.1.3"
+              ]
+            },
+            {
+              "id": "ch9_light_light_fundamentals__color_mixing",
+              "name": "Color Mixing (Additive vs Subtractive)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.1.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_reflection_fundamentals",
+          "name": "Reflection Fundamentals",
+          "sequence": 2,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "9.2.1",
+            "9.2.2",
+            "9.2.3",
+            "9.2.4"
+          ],
+          "voice_context": {
+            "core_concept": "All surfaces obey the same two laws of reflection. The difference between a mirror and a wall is surface roughness — smooth surfaces keep reflected rays organized (specular), rough surfaces scatter them (diffuse). Plane mirrors form virtual, same-size, laterally inverted images.",
+            "prerequisites": [
+              "Topic 1 (light interacts with matter)",
+              "Class 8 knowledge of basic reflection laws"
+            ],
+            "connections": {
+              "within_chapter": "Laws of reflection are the basis for ALL ray tracing in mirrors (Topics 4-6)",
+              "cross_chapter": "Not directly tested frequently, but supports all optics understanding",
+              "prior_grade": "Deepens Class 8 reflection content — students 'know' reflection but superficially"
+            },
+            "misconceptions": [
+              "Thinking mirrors 'reflect' but walls 'don't' (walls reflect ~90% of light, just diffusely)",
+              "Confusing lateral inversion with up-down inversion",
+              "Thinking laws of reflection only apply to smooth/shiny surfaces"
+            ],
+            "deep_understanding": "Student can explain why a wet road looks like a mirror (water fills surface roughness → specular reflection) and why lateral inversion is really front-to-back reversal interpreted as left-right swap.",
+            "keywords": [
+              "reflection",
+              "specular",
+              "diffuse",
+              "plane mirror",
+              "virtual image",
+              "lateral inversion",
+              "normal"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_reflection_fundamentals__laws_of_reflection",
+              "name": "Laws of Reflection",
+              "type": "procedural",
+              "lo_codes": [
+                "9.2.1"
+              ]
+            },
+            {
+              "id": "ch9_light_reflection_fundamentals__regular_vs_diffuse",
+              "name": "Regular vs Diffuse Reflection",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.2.2"
+              ]
+            },
+            {
+              "id": "ch9_light_reflection_fundamentals__plane_mirror",
+              "name": "Plane Mirror Image Formation",
+              "type": "transfer",
+              "lo_codes": [
+                "9.2.3"
+              ]
+            },
+            {
+              "id": "ch9_light_reflection_fundamentals__lateral_inversion",
+              "name": "Lateral Inversion",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.2.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_image_formation",
+          "name": "What is Image Formation?",
+          "sequence": 3,
+          "session_estimate": 1,
+          "lo_codes": [
+            "9.3.1",
+            "9.3.2",
+            "9.3.3"
+          ],
+          "voice_context": {
+            "core_concept": "Without optics, light from every point on an object hits every point on a screen — creating blur, not an image. An image requires a device that forces all rays from ONE object point to converge at ONE image point. Real images form where rays actually meet. Virtual images form where rays APPEAR to come from.",
+            "prerequisites": [
+              "Topic 2 (laws of reflection, plane mirror as virtual image example)"
+            ],
+            "connections": {
+              "within_chapter": "This is the WHY behind Topics 5, 6, 9, 10 — all image formation and formula work",
+              "cross_chapter": "The eye (Ch 10) forms a real image on the retina using the same principle",
+              "prior_grade": "Connects back to plane mirror: 'now you know WHY it's virtual'"
+            },
+            "misconceptions": [
+              "Thinking covering half a mirror gives half an image (it gives a complete but dimmer image)",
+              "Defining real/virtual as 'inverted/erect' (that's correlation, not definition)",
+              "Thinking virtual images don't exist — they look perfectly real to your eyes"
+            ],
+            "deep_understanding": "Student can predict that covering any portion of a mirror/lens produces a complete but dimmer image, reasoning from 'each point on the object sends rays to the entire mirror surface.'",
+            "keywords": [
+              "image",
+              "real image",
+              "virtual image",
+              "point-by-point",
+              "convergence",
+              "screen",
+              "blur"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_image_formation__chaos_problem",
+              "name": "The Chaos Problem (Why Optics Are Needed)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.3.1"
+              ]
+            },
+            {
+              "id": "ch9_light_image_formation__real_images",
+              "name": "Real Images (Rays Actually Meet)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.3.2"
+              ]
+            },
+            {
+              "id": "ch9_light_image_formation__virtual_images",
+              "name": "Virtual Images (Rays Appear to Come From)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.3.3"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_spherical_mirror_geometry",
+          "name": "Spherical Mirror Geometry",
+          "sequence": 4,
+          "session_estimate": 1,
+          "lo_codes": [
+            "9.4.1",
+            "9.4.2",
+            "9.4.3",
+            "9.4.4"
+          ],
+          "voice_context": {
+            "core_concept": "A curved mirror is a slice of a sphere. Concave converges light; convex diverges it. Key geometry: Pole (P), Centre of Curvature (C), Focus (F), Radius (R), with f = R/2. Ray tracing uses 'convenient rays' whose paths are predictable — but ANY two rays from a point converge to the same image point.",
+            "prerequisites": [
+              "Topic 2 (laws of reflection)",
+              "Topic 3 (what images are, real vs virtual)"
+            ],
+            "connections": {
+              "within_chapter": "Terminology and ray tracing rules used in Topics 5-6. Lens geometry (Topic 8) parallels this.",
+              "cross_chapter": "Focus as convergence point appears in satellite dishes, radio telescopes, parabolic microphones",
+              "prior_grade": "No direct prior — new content"
+            },
+            "misconceptions": [
+              "Confusing focus (a point) with focal length (a distance)",
+              "Thinking C and F are on the mirror surface (they are not, except P)",
+              "Thinking the four 'convenient rays' are the only rays that form the image",
+              "For convex mirrors: drawing reflected rays through the real focus instead of appearing to diverge from virtual focus"
+            ],
+            "deep_understanding": "Student can explain why a ray through C bounces straight back (C-to-surface line IS the normal, so i=0°, r=0°) and why we only need any 2 rays to locate an image.",
+            "keywords": [
+              "concave",
+              "convex",
+              "pole",
+              "centre of curvature",
+              "focus",
+              "focal length",
+              "radius",
+              "ray tracing",
+              "principal axis"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_spherical_mirror_geometry__concave_convex_types",
+              "name": "Concave and Convex Mirror Types",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.4.1"
+              ]
+            },
+            {
+              "id": "ch9_light_spherical_mirror_geometry__mirror_terminology",
+              "name": "Mirror Terminology (P, C, F, R)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.4.2"
+              ]
+            },
+            {
+              "id": "ch9_light_spherical_mirror_geometry__focus_and_focal_length",
+              "name": "Focus and Focal Length (f = R/2)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.4.3"
+              ]
+            },
+            {
+              "id": "ch9_light_spherical_mirror_geometry__ray_tracing_rules",
+              "name": "Ray Tracing Rules (Four Convenient Rays)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.4.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_mirror_image_formation",
+          "name": "Mirror Image Formation",
+          "sequence": 5,
+          "session_estimate": 1.25,
+          "lo_codes": [
+            "9.5.1",
+            "9.5.2",
+            "9.5.3"
+          ],
+          "voice_context": {
+            "core_concept": "As an object moves from far away toward a concave mirror, the image changes continuously — a smooth progression, not 6 discrete cases. Convex mirrors always give virtual, erect, diminished images. Key transfer: converging devices give varied images, diverging devices give only one type.",
+            "prerequisites": [
+              "Topic 3 (real vs virtual images)",
+              "Topic 4 (geometry, ray tracing rules)"
+            ],
+            "connections": {
+              "within_chapter": "Pattern transfers directly to lens image formation (Topic 9). Feeds into formula work (Topic 6).",
+              "cross_chapter": "The eye (Ch 10) uses a converging lens to form real images on the retina",
+              "prior_grade": "No direct prior — new content"
+            },
+            "misconceptions": [
+              "Treating the 6 cases as isolated facts to memorize rather than a continuous progression",
+              "Believing concave mirrors ALWAYS form real inverted images (they form virtual for object between P and F)",
+              "Believing convex mirrors can form real images",
+              "Thinking a real inverted image is also laterally inverted (it's a 180° rotation, not lateral inversion)"
+            ],
+            "deep_understanding": "Student can predict image behavior for perpendicular object motion (Joystick Principle), explain why a real image of a right hand is still a right hand (180° rotation, not lateral inversion), and reason about applications from image properties rather than memorizing uses.",
+            "keywords": [
+              "concave mirror",
+              "convex mirror",
+              "ray diagram",
+              "real image",
+              "virtual image",
+              "magnified",
+              "diminished",
+              "erect",
+              "inverted",
+              "applications"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_mirror_image_formation__concave_mirror_images",
+              "name": "Concave Mirror Image Formation (6 Positions)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.5.1"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch9_seq_03_continuous_progression",
+                  "name": "Image formation is a continuous progression, not 6 discrete cases"
+                },
+                {
+                  "id": "ch9_seq_04_converging_diverging",
+                  "name": "Converging = varied images, Diverging = one type only"
+                },
+                {
+                  "id": "ch9_seq_05_180_flip_rule",
+                  "name": "The 180° Flip Rule — real images rotate, they don't laterally invert"
+                },
+                {
+                  "id": "ch9_seq_06_stretching_pencil",
+                  "name": "The Stretching Pencil — non-uniform longitudinal magnification"
+                }
+              ]
+            },
+            {
+              "id": "ch9_light_mirror_image_formation__convex_mirror_images",
+              "name": "Convex Mirror Image Formation (2 Positions)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.5.2"
+              ]
+            },
+            {
+              "id": "ch9_light_mirror_image_formation__mirror_applications",
+              "name": "Uses of Concave and Convex Mirrors",
+              "type": "transfer",
+              "lo_codes": [
+                "9.5.3"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_mirror_formula",
+          "name": "Mirror Formula & Numericals",
+          "sequence": 6,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "9.6.1",
+            "9.6.2",
+            "9.6.3",
+            "9.6.4"
+          ],
+          "voice_context": {
+            "core_concept": "Sign convention (Cartesian with origin at P), mirror formula 1/v + 1/u = 1/f, magnification m = -v/u. Sign of m tells nature (positive=virtual, negative=real), magnitude tells size. Sign convention errors are the #1 source of wrong answers.",
+            "prerequisites": [
+              "Topic 4 (geometry — P, C, F)",
+              "Topic 5 (image formation — qualitative understanding to check answers against)"
+            ],
+            "connections": {
+              "within_chapter": "Same sign convention used for lenses (Topic 10). Quantifies Topic 5.",
+              "cross_chapter": "The 'identify → sign convention → substitute → interpret' process transfers to Electricity (Ohm's law, resistance combinations)",
+              "prior_grade": "Basic algebraic manipulation"
+            },
+            "misconceptions": [
+              "Pre-assigning signs to unknowns (e.g., writing 1/(-v) because they expect a real image)",
+              "Using the wrong magnification formula for lenses vs mirrors",
+              "Forgetting that u is always negative (object in front of mirror)",
+              "Not checking if computed v makes physical sense (e.g., real image between P and F is impossible)"
+            ],
+            "deep_understanding": "Student can detect impossible answers using the Forbidden Zone (concave real image never between P and F) and Convex Speed Limit (v never exceeds f), and can use the Substitution Bridge (m = -v/u) to solve problems where both u and v are unknown.",
+            "keywords": [
+              "sign convention",
+              "mirror formula",
+              "magnification",
+              "concave",
+              "convex",
+              "numerical",
+              "focal length",
+              "image distance",
+              "object distance"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_mirror_formula__sign_convention",
+              "name": "New Cartesian Sign Convention",
+              "type": "procedural",
+              "lo_codes": [
+                "9.6.1"
+              ]
+            },
+            {
+              "id": "ch9_light_mirror_formula__mirror_formula",
+              "name": "Mirror Formula (1/v + 1/u = 1/f)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.6.2"
+              ]
+            },
+            {
+              "id": "ch9_light_mirror_formula__magnification_interpretation",
+              "name": "Magnification and Image Interpretation",
+              "type": "transfer",
+              "lo_codes": [
+                "9.6.3"
+              ]
+            },
+            {
+              "id": "ch9_light_mirror_formula__mirror_numericals",
+              "name": "Mirror Formula Numericals",
+              "type": "procedural",
+              "lo_codes": [
+                "9.6.4"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch9_seq_09_core_exam_mirror",
+                  "name": "Given u,f → find v,m — the core mirror exam pattern"
+                },
+                {
+                  "id": "ch9_seq_11_error_detectors",
+                  "name": "Error Detectors — Convex Speed Limit + Forbidden Zone"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_refraction",
+          "name": "Refraction",
+          "sequence": 7,
+          "session_estimate": 1,
+          "lo_codes": [
+            "9.7.1",
+            "9.7.2",
+            "9.7.3",
+            "9.7.4"
+          ],
+          "voice_context": {
+            "core_concept": "Light changes speed in different media. When it crosses a boundary at an angle, one side of the beam slows first, causing it to pivot (bend). Snell's law quantifies this: n₁ sin i = n₂ sin r. Through a glass slab, two opposite bendings cancel — emergent ray parallel to incident, just shifted.",
+            "prerequisites": [
+              "Topic 1 (light as energy, interaction with matter)",
+              "Basic trigonometry (sin function)"
+            ],
+            "connections": {
+              "within_chapter": "The physics behind ALL lens behavior (Topics 8-10)",
+              "cross_chapter": "Total internal reflection, dispersion, atmospheric refraction in Ch 10 are all consequences",
+              "prior_grade": "Genuinely new physics for most students"
+            },
+            "misconceptions": [
+              "Confusing optical density with mass density (kerosene is lighter than water but optically denser)",
+              "Thinking 'water bends light toward normal' absolutely (it depends on what medium light is coming FROM)",
+              "Thinking refraction = bending (bending is a symptom; speed change is the cause — at 0° there's speed change but no bending)",
+              "Treating pool-shallow, coin-raised, pencil-bent, sun-after-sunset as four separate phenomena (they're all the same ray diagram)"
+            ],
+            "deep_understanding": "Student can predict bending direction for ANY pair of media by comparing refractive indices (the 'Who is Slower' principle), and can explain that at normal incidence the speed changes but no bending occurs.",
+            "keywords": [
+              "refraction",
+              "speed of light",
+              "Snell's law",
+              "refractive index",
+              "optical density",
+              "glass slab",
+              "lateral displacement",
+              "apparent depth"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_refraction__cause_of_refraction",
+              "name": "Cause of Refraction (Speed Change)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.7.1"
+              ]
+            },
+            {
+              "id": "ch9_light_refraction__snells_law",
+              "name": "Snell's Law and Bending Rules",
+              "type": "procedural",
+              "lo_codes": [
+                "9.7.2"
+              ]
+            },
+            {
+              "id": "ch9_light_refraction__refractive_index",
+              "name": "Refractive Index (n = c/v)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.7.3"
+              ]
+            },
+            {
+              "id": "ch9_light_refraction__glass_slab",
+              "name": "Refraction Through a Glass Slab",
+              "type": "transfer",
+              "lo_codes": [
+                "9.7.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_lens_geometry",
+          "name": "Lens Geometry",
+          "sequence": 8,
+          "session_estimate": 0.75,
+          "lo_codes": [
+            "9.8.1",
+            "9.8.2",
+            "9.8.3",
+            "9.8.4"
+          ],
+          "voice_context": {
+            "core_concept": "A lens is effectively a stack of prisms with graduated angles — outer regions bend light more, center barely bends. This graduated bending brings parallel rays to a single focus. Key geometry: Optical Centre (O), two Principal Foci (F1, F2), focal length (f). Converging lens ↔ concave mirror, Diverging lens ↔ convex mirror.",
+            "prerequisites": [
+              "Topic 7 (refraction — why light bends)",
+              "Topic 4 (mirror geometry — for parallel structure)"
+            ],
+            "connections": {
+              "within_chapter": "Ray tracing rules used directly in Topic 9. Mirror↔lens correspondence halves the learning for image formation.",
+              "cross_chapter": "The eye lens (Ch 10) is a convex lens — essential for vision correction",
+              "prior_grade": "No direct prior"
+            },
+            "misconceptions": [
+              "Thinking convex shape always converges (an air bubble in glass has convex shape but diverges)",
+              "Not understanding why lenses have two foci while mirrors have one (transparency vs reflection)",
+              "Thinking the ray through O goes straight by magic (it's the glass slab result — locally parallel surfaces)",
+              "Confusing lens types for non-standard shapes like meniscus lenses"
+            ],
+            "deep_understanding": "Student can use the Thick-Middle Acid Test to classify any lens shape, explain the Air Bubble Paradox (convex air bubble in glass diverges), and reason that covering half a lens doesn't halve the image.",
+            "keywords": [
+              "convex lens",
+              "concave lens",
+              "optical centre",
+              "principal focus",
+              "focal length",
+              "converging",
+              "diverging",
+              "prism stack"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_lens_geometry__lens_types",
+              "name": "Convex and Concave Lens Types",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "9.8.1"
+              ]
+            },
+            {
+              "id": "ch9_light_lens_geometry__lens_terminology",
+              "name": "Lens Terminology (O, F1, F2, 2F1, 2F2)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.8.2"
+              ]
+            },
+            {
+              "id": "ch9_light_lens_geometry__lens_ray_tracing_rules",
+              "name": "Lens Ray Tracing Rules",
+              "type": "procedural",
+              "lo_codes": [
+                "9.8.3"
+              ]
+            },
+            {
+              "id": "ch9_light_lens_geometry__converging_diverging_correspondence",
+              "name": "Mirror ↔ Lens Correspondence",
+              "type": "transfer",
+              "lo_codes": [
+                "9.8.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_lens_image_formation",
+          "name": "Lens Image Formation",
+          "sequence": 9,
+          "session_estimate": 1,
+          "lo_codes": [
+            "9.9.1",
+            "9.9.2",
+            "9.9.3",
+            "9.9.4"
+          ],
+          "voice_context": {
+            "core_concept": "Convex lens image formation parallels concave mirror. Concave lens parallels convex mirror. Critical difference: lenses form real images on the OPPOSITE side (not same side like mirrors). The magnifying glass (object inside F → virtual magnified) and myopia correction (concave lens delays convergence) are key applications.",
+            "prerequisites": [
+              "Topic 5 (mirror image formation — the pattern to transfer)",
+              "Topic 8 (lens geometry, ray tracing rules)"
+            ],
+            "connections": {
+              "within_chapter": "Parallel to Topic 5. Feeds into Topic 10 (formula quantifies).",
+              "cross_chapter": "Ch 10 is entirely about lenses in the eye — defects of vision corrected by choosing right lens type and power",
+              "prior_grade": "No direct prior"
+            },
+            "misconceptions": [
+              "Assuming real/virtual sides are the same as for mirrors (they're opposite — lenses transmit, mirrors reflect)",
+              "Thinking convex lenses always form real images (virtual for object inside F)",
+              "Not understanding how a concave lens 'helps' when paired with a converging system (the delay mechanism)"
+            ],
+            "deep_understanding": "Student can predict lens behavior by transferring from mirrors (converging/diverging principle), explain the magnifying glass transition when pulling past F (virtual→blur→real inverted), and decompose a compound microscope into a chain of standard lens cases (Relay Race).",
+            "keywords": [
+              "convex lens",
+              "concave lens",
+              "ray diagram",
+              "magnifying glass",
+              "myopia",
+              "compound microscope",
+              "virtual image",
+              "real image"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_lens_image_formation__convex_lens_images",
+              "name": "Convex Lens Image Formation (6 Positions)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.9.1"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch9_seq_17_mirror_to_lens_transfer",
+                  "name": "Mirror → Lens pattern transfer"
+                },
+                {
+                  "id": "ch9_seq_18_through_looking_glass",
+                  "name": "Through the Looking Glass — real and virtual sides flip for lenses"
+                }
+              ]
+            },
+            {
+              "id": "ch9_light_lens_image_formation__concave_lens_images",
+              "name": "Concave Lens Image Formation (2 Positions)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.9.2"
+              ]
+            },
+            {
+              "id": "ch9_light_lens_image_formation__lens_applications",
+              "name": "Uses of Lenses (Magnifying Glass, Spectacles)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.9.3"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch9_seq_19_magnifier_virtual_catch",
+                  "name": "The Magnifier's Virtual Catch — what happens when you pull past F"
+                },
+                {
+                  "id": "ch9_seq_20_relay_race",
+                  "name": "The Relay Race — compound optics as chained standard cases"
+                }
+              ]
+            },
+            {
+              "id": "ch9_light_lens_image_formation__myopia_correction",
+              "name": "Myopia Correction (Concave Lens + Eye)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.9.4"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ch9_light_lens_formula_power",
+          "name": "Lens Formula & Power",
+          "sequence": 10,
+          "session_estimate": 1,
+          "lo_codes": [
+            "9.10.1",
+            "9.10.2",
+            "9.10.3",
+            "9.10.4"
+          ],
+          "voice_context": {
+            "core_concept": "Lens formula: 1/v - 1/u = 1/f (MINUS, unlike mirror's PLUS — encodes opposite-side imaging). Magnification: m = v/u (no minus, unlike mirrors). Power P = 1/f(metres), unit = dioptre. Powers add: P_total = P1 + P2. The minus sign difference from mirrors is the #1 error source.",
+            "prerequisites": [
+              "Topic 6 (mirror formula — to contrast)",
+              "Topic 9 (lens image formation — qualitative checks)"
+            ],
+            "connections": {
+              "within_chapter": "Quantitative counterpart to Topic 9, as Topic 6 was for Topic 5",
+              "cross_chapter": "Ch 10 uses power (dioptres) for corrective lens prescriptions",
+              "prior_grade": "Basic algebra"
+            },
+            "misconceptions": [
+              "Using the mirror formula (+ instead of -) for lenses",
+              "Using m = -v/u for lenses (that's mirrors — lenses use m = v/u)",
+              "Plugging focal length in cm into P = 1/f (must be metres — off by factor of 100)",
+              "Assuming convex lens always gives positive v (negative when virtual, object inside F)"
+            ],
+            "deep_understanding": "Student can regenerate the formula during an exam using the Extreme Case Sanity Check (plug u = -∞, verify v = f), decode any lens prescription (sign → lens type → eye defect), and identify an unknown lens from measured u and v (Black-Box Detective).",
+            "keywords": [
+              "lens formula",
+              "magnification",
+              "power",
+              "dioptre",
+              "sign convention",
+              "lens combination",
+              "convex",
+              "concave",
+              "prescription"
+            ]
+          },
+          "sub_topics": [
+            {
+              "id": "ch9_light_lens_formula_power__lens_formula",
+              "name": "Lens Formula (1/v - 1/u = 1/f)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.10.1"
+              ],
+              "scaffolded_sequences": [
+                {
+                  "id": "ch9_seq_21_core_exam_lens",
+                  "name": "Given u,f → find v,m for lens — the core lens exam pattern"
+                },
+                {
+                  "id": "ch9_seq_22_extreme_case_sanity",
+                  "name": "Extreme Case Sanity Check — regenerate the formula from ray diagrams"
+                },
+                {
+                  "id": "ch9_seq_23_black_box_detective",
+                  "name": "Black-Box Lens Detective — use the formula backwards to identify unknowns"
+                }
+              ]
+            },
+            {
+              "id": "ch9_light_lens_formula_power__lens_magnification",
+              "name": "Lens Magnification (m = v/u)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.10.2"
+              ]
+            },
+            {
+              "id": "ch9_light_lens_formula_power__power_of_lens",
+              "name": "Power of a Lens (P = 1/f)",
+              "type": "procedural",
+              "lo_codes": [
+                "9.10.3"
+              ]
+            },
+            {
+              "id": "ch9_light_lens_formula_power__lens_combinations",
+              "name": "Lens Combinations (P = P1 + P2)",
+              "type": "transfer",
+              "lo_codes": [
+                "9.10.4"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch10_human_eye",
+      "name": "The Human Eye and the Colourful World",
+      "sequence": 10,
+      "topics_md": "content-authoring/CBSE/Class_9-10/Physics/ch10_human_eye/topics.md",
+      "session_estimate": {
+        "min": 4,
+        "max": 5
+      },
+      "topics": [
+        {
+          "id": "ch10_human_eye_two_lens_system",
+          "name": "The Eye as a Two-Lens Optical System",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": ["10.1.1", "10.1.2"],
+          "sub_topics": [
+            {
+              "id": "ch10_human_eye_two_lens_system__anatomy_and_architecture",
+              "name": "Anatomy and the Two-Lens Architecture",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": ["10.1.1"]
+            },
+            {
+              "id": "ch10_human_eye_two_lens_system__accommodation_and_points",
+              "name": "Accommodation and the Near/Far Points",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": ["10.1.2"]
+            }
+          ]
+        },
+        {
+          "id": "ch10_human_eye_defects_of_vision",
+          "name": "Defects of Vision and Their Correction",
+          "sequence": 2,
+          "session_estimate": 1.5,
+          "lo_codes": ["10.2.1", "10.2.2", "10.2.3"],
+          "sub_topics": [
+            {
+              "id": "ch10_human_eye_defects_of_vision__causes_myopia_hypermetropia",
+              "name": "Causes of Myopia and Hypermetropia",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": ["10.2.1"]
+            },
+            {
+              "id": "ch10_human_eye_defects_of_vision__computing_corrective_lens",
+              "name": "Computing the Corrective Lens",
+              "type": "procedural",
+              "enrichment": false,
+              "lo_codes": ["10.2.2"]
+            },
+            {
+              "id": "ch10_human_eye_defects_of_vision__presbyopia_range_narrowing",
+              "name": "Presbyopia and the Range Narrowing with Age",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": ["10.2.3"]
+            }
+          ]
+        },
+        {
+          "id": "ch10_human_eye_dispersion_and_n_lambda",
+          "name": "Refraction, Dispersion, and the Wavelength-Dependence of Refractive Index",
+          "sequence": 3,
+          "session_estimate": 1,
+          "lo_codes": ["10.3.1", "10.3.2"],
+          "sub_topics": [
+            {
+              "id": "ch10_human_eye_dispersion_and_n_lambda__prism_and_n_lambda",
+              "name": "Dispersion through a Prism, and What It Tells Us about n(λ)",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": ["10.3.1"],
+              "lo_description": "Conceptual:\n- Threshold: a medium's refractive index depends on wavelength — so n, the speed (v = c/n), and the bending (sin i / sin r) are the same fact and all differ by colour; white light fans into a spectrum wherever the geometry doesn't cancel that difference.\n- C1 (beyond-board): derive n(λ) via Snell rather than recall it — every colour enters at the same angle i but emerges along different paths → r differs by colour → n must differ by colour.\n- C2 (beyond-board): hold n, speed, and bending as one locked triple (n = c/v = sin i / sin r); given any one, predict the other two — a higher-n colour is both slower in the glass and bent more.\n- C3 (board): order the spectrum by n with the direction right — violet = highest n = slowest = bent most; red = lowest n = fastest = bent least; place the right colour at the prism base. Classic error = reversing the direction.\n- C4 (board): read prism geometry as the cause of visible dispersion — both refractions bend the ray toward the base, and the angled (non-parallel) faces stop the second face undoing the first, so the fanned spectrum survives.\n- C5 (board): explain recombination + colour-purity as proof white is a mixture — an inverted second prism recombines the colours into white (the prism separates, doesn't create), and a single isolated colour through a second prism does not split further, only deviates (Newton's experimentum crucis).\nProcedural (board surface = draw / name / explain, no calculation):\n- P1: draw + label the prism ray diagram — bend toward normal at face 1 → toward base → away at face 2; mark angle of incidence i, emergence e, deviation D; violet deviating more than red → fanned VIBGYOR. (heaviest single procedure in the chapter.)\n- P2: draw the recombination setup (inverted second prism → white) and the single-colour-no-further-split diagram, and state what each proves.\n- P3: articulate the full argument as an exam answer — what dispersion is → the Snell argument forcing n(λ) → colour order → why the angled faces make it visible.\n- Scope ceiling: qualitative only — no angle calculation, no δ = (n−1)A, no dispersive power (Class 12)."
+            },
+            {
+              "id": "ch10_human_eye_dispersion_and_n_lambda__rainbow_slab_lens",
+              "name": "The Same Physics Elsewhere: Rainbow, Slab, Lens",
+              "type": "transfer",
+              "enrichment": false,
+              "lo_codes": ["10.3.2"],
+              "lo_description": "Conceptual:\n- C1 (board): explain the rainbow's mechanism — trace a ray through a spherical droplet: refraction in (wavelength-dependent) → total internal reflection at the back → refraction out; each colour exits at a slightly different angle (red ≈ 42°, violet ≈ 40° from the antisolar point — the specific angles are beyond-board, the mechanism is core).\n- C2 (board + enrichment tail): explain when/where a rainbow appears as observer-relative geometry — sun behind the observer, droplets in front, band centred on the antisolar point; (tail) the rainbow is an angular pattern relative to your eye, not a physical arc out there.\n- C3 (beyond-board): explain why a glass slab hides dispersion — its parallel faces undo the angular deviation colour-by-colour → colours emerge parallel and laterally offset, not recombined; correct the misleading 'they recombine into white' line.\n- C4 (beyond-board): explain why a lens does disperse (chromatic aberration) — curved, nowhere-parallel faces don't cancel → colours focus at different points (violet closest, red farthest) → coloured fringes.\n- C5 (beyond-board): apply the preserve-vs-cancel rule — dispersion happens at every refraction; predict whether a geometry shows it by asking whether the downstream geometry adds the per-colour angular differences (prism, lens, droplet) or cancels them (slab).\nProcedural (board surface = draw + explain, rainbow only; no numerics):\n- P1: draw + label the single-droplet rainbow ray diagram — refraction in → TIR at the back → refraction out; mark the dispersion points and the internal reflection; red and violet emerging at different angles.\n- P2: articulate when/where a rainbow forms as an exam answer — sun behind the observer, droplets in front, band centred on the antisolar point.\n- P3 (beyond-board): draw/explain the slab (parallel offset, not recombined) and lens (colours focusing at different points = chromatic aberration) cases.\n- Scope ceiling: no numerics — rainbow angles (42°/40°) are recalled, not computed."
+            }
+          ]
+        },
+        {
+          "id": "ch10_human_eye_atmospheric_optics",
+          "name": "Atmospheric Optical Phenomena",
+          "sequence": 4,
+          "session_estimate": 1,
+          "lo_codes": ["10.4.1", "10.4.2"],
+          "sub_topics": [
+            {
+              "id": "ch10_human_eye_atmospheric_optics__atmospheric_refraction",
+              "name": "Atmospheric Refraction",
+              "type": "transfer",
+              "enrichment": false,
+              "lo_codes": ["10.4.1"],
+              "lo_description": "Conceptual:\n- C1 (textbook floor): explain atmospheric refraction as continuous bending through a graded atmosphere — air's refractive index is slightly >1 (n ≈ 1.0003) and decreases with altitude (a density gradient, not a slab with one boundary), so light from a celestial object bends continuously along a curved path. (the one real conceptual lever.)\n- C2 (textbook floor): explain advance sunrise and delayed sunset — the bending lets us see the sun ~2 minutes before it geometrically rises and after it sets (we see it where it isn't), the apparent shift ≈ the sun's diameter near the horizon; the apparent flattening of the sun's disc at the horizon is the same effect.\n- C3 (textbook floor + transfer): explain twinkling of stars, and why planets don't — twinkling = rapid fluctuation in a star's apparent brightness/position from atmospheric turbulence (drifting density pockets), with the star a point source so one pocket distorts the whole image; planets, being nearer, are tiny disks whose parts pass through independent turbulence cells that average out → steady.\nProcedural (light surface — Calculation off; the action is explain + transfer):\n- P1: draw + interpret the atmospheric-refraction ray diagram — light from the sun curving through the graded atmosphere; mark the apparent (raised) sun vs the actual (below-horizon) sun → advance sunrise / delayed sunset.\n- P2: articulate the phenomena as complete exam answers — atmospheric refraction → twinkling (turbulence + point source) and advance sunrise / delayed sunset.\n- P3 (transfer — the differentiator): apply gradient/turbulence bending to a novel sky scenario (flattened/oval sun at the horizon, a low star twinkling more than an overhead one) by reasoning from the mechanism, not recalling a named phenomenon.\n- Scope ceiling: no numerics — '~2 minutes' and 'shift ≈ the sun's diameter' are recalled facts."
+            },
+            {
+              "id": "ch10_human_eye_atmospheric_optics__scattering_tyndall",
+              "name": "Scattering of Light (Tyndall Effect)",
+              "type": "transfer",
+              "enrichment": false,
+              "lo_codes": ["10.4.2"],
+              "lo_description": "Conceptual:\n- C1 (board): define scattering / Tyndall effect and recognise it — light redirected diffusely by fine particles in its path, making the beam visible (Tyndall effect, from Class IX); identify instances (a sunbeam in a smoke-filled room, a beam in a colloid).\n- C2 (textbook core, §10.6.1): scattered colour depends on particle size — very fine particles (smaller than the wavelength) scatter shorter wavelengths (blue) more; larger particles scatter longer wavelengths; particles large enough scatter all wavelengths → the scattered light looks white (also explains white clouds). Not the 1/λ⁴ law (out of scope).\n- C3 (board + the key clarity fold): distinguish scattered ambient light from the direct beam — sky = blue added (sunlight heading elsewhere has its blue scattered in all directions, some reaching the eye from every sky direction); sun = blue subtracted (the direct beam is blue-depleted → yellow, and redder at sunrise/sunset as the path lengthens); red signal = the direct beam, scattered least.\n- C4 (board): apply the red-preserves-direction principle — danger/stop signals and brake lights are red because red scatters least → seen at a distance, same colour, even through fog/smoke; the same long-path logic explains the red sunset.\nProcedural (light surface — Calculation off; the action is draw + explain + transfer):\n- P1: visually represent the scattering — incoming sunlight → fine particles scattering blue in all directions → blue reaching the observer from sky directions (blue sky) + the direct beam to the eye depleted of blue (yellow sun); label which light is added vs subtracted.\n- P2 (board): articulate the phenomena as exam answers — Tyndall definition + 2 examples; why the sky is blue; why danger signals are red.\n- P3 (transfer): apply the direct-vs-scattered model to novel / counterfactual scenes (the sun from space → white sun, black sky; if the atmosphere scattered red instead of blue → red sky, cyan/blue-green sun; why a sunset is redder than noon).\n- Scope ceiling: no numerics — the 1.8× red/blue wavelength ratio is a recalled fact."
+            }
+          ]
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "consistency_detection",
+          "description": "Detect when a claim, a stated reason, or a chain of statements is internally inconsistent or contradicts an established fact — across the Assertion-Reason surface (3.1, 4.2), the direct-vs-scattered confusion (4.2), accommodation-direction inversions (1.2), and defect-vs-range impossibilities (Topic 2)."
+        },
+        {
+          "slug": "long_transfer",
+          "description": "Apply a principle learned in one context to a structurally similar but surface-different situation — n(λ) ported prism → rainbow → slab → lens (3.2), the scattering model carried to novel scenes (4.2), and the range-frame across all of Topic 2's defects."
+        }
+      ]
+    },
+    {
+      "id": "ch11_electricity",
+      "name": "Electricity",
+      "sequence": 11,
+      "session_estimate": {
+        "min": 7,
+        "max": 9
+      },
+      "topics": [
+        {
+          "id": "ch11_electricity_charge",
+          "name": "Charge",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [
+            "11.1.1",
+            "11.1.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch11_electricity_charge__property_two_signs",
+              "name": "Charge as a Property: Two Signs, Neutrality & Imbalance",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": [
+                "11.1.1"
+              ],
+              "lo_description": "Conceptual:\n- C1: run the mass↔charge parallel both ways — charge is a property of matter that sources a force, far stronger than gravity and coming in two signs (attracts AND repels) where mass/gravity has one (attract-only).\n- C2: explain neutrality as cancellation, not absence — equal amounts of two opposite charges cancel, so the strong electrostatic force is hidden (not gone); disturbing the balance makes it reappear. (kills 'neutral = no charge'.)\n- C3 (load-bearing bridge): read an imbalance of charge as a cause — the push the rest of the chapter is about, which T2 calls potential and a battery maintains.\n- C4 (beyond-board): the electrostatic force is enormously stronger than gravity — a comb lifts paper against the whole Earth, yet we feel gravity because electrostatics has cancelled itself away.\nProcedural:\n- None — concept-only by design; no procedure to run (T1's procedural load sits in 1.2)."
+            },
+            {
+              "id": "ch11_electricity_charge__quantifying_coulomb",
+              "name": "Quantifying Charge: the Coulomb & the Electron-Grain",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": [
+                "11.1.2"
+              ],
+              "lo_description": "Conceptual:\n- C1: read charge as a measurable amount in coulombs (C) — two objects can carry more or less charge, comparably.\n- C2: charge is quantised in indivisible grains of e = 1.6×10⁻¹⁹ C, so any real charge is a whole-number multiple of e.\n- C3: connect 'amount of charge' forward — fixing charge as a countable quantity is what lets current be defined as a rate (coulombs per second) in T3.\nProcedural:\n- P1: convert between a charge and an electron count using Q = n·e in both directions (n = Q/e and the inverse), handling the 10⁻¹⁹ exponent and units cleanly."
+            }
+          ]
+        },
+        {
+          "id": "ch11_electricity_potential",
+          "name": "Potential — The Push",
+          "sequence": 2,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "11.2.1"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch11_electricity_potential__push_before_flow",
+              "name": "The Push that Exists Before Any Flow",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": [
+                "11.2.1"
+              ],
+              "lo_description": "Conceptual:\n- C1 (threshold core — counterintuitive): discriminate the push from the flow — show on the battery-on-the-table case that a voltage can exist with ZERO current, so voltage is the cause, not the flow and not a partner that arrives with it.\n- C2 (threshold core — integrative): read potential difference as a between-two-points quantity (not a property in a wire, not a substance carried along it) — 'the voltage' is meaningless until both points are named.\n- C3 (threshold core — transformative; link T1): trace the push back to a charge imbalance between the two points.\n- C4: refuse the electron-distance reading — the relevant 'distance' is the gap between the two points, not how far any electron wanders (drift is a fraction of a mm/s, random, irrelevant to potential).\nProcedural:\n- Deliberately empty at this qualitative layer — the substitution skill (V = W/Q) enters in 2.2, meter placement in 2.3."
+            }
+          ]
+        },
+        {
+          "id": "ch11_electricity_current",
+          "name": "Current — The Flow",
+          "sequence": 3,
+          "session_estimate": 1,
+          "lo_codes": [
+            "11.3.1",
+            "11.3.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch11_electricity_current__rate_of_flow",
+              "name": "Current as the Rate of Charge Flow (I = Q/t)",
+              "type": "procedural",
+              "enrichment": false,
+              "lo_codes": [
+                "11.3.1"
+              ],
+              "lo_description": "Conceptual:\n- C1: read current as a rate — charge crossing a point per unit time (1 A = 1 C/s), the effect of the push; distinct from charge (amount) and voltage (cause); a flow maintained, not a substance stored in the wire.\n- C2: connect the macroscopic rate to the microscopic electron count — a measurable current is an astronomically large number of electrons per second, each carrying e.\n- C3: state that conventional current is the direction positive charge would move (battery + → −), opposite to electron flow in a metal, and that both describe the same physical flow.\nProcedural:\n- P1: operate I = Q/t in any direction (any two → the third) with clean units (C, A, s; mA↔A; minutes/hours→seconds).\n- P2: operate the electron count n = Q/e (and n per second from a current), handling 10¹⁸–10²⁰ magnitudes and scientific notation."
+            },
+            {
+              "id": "ch11_electricity_current__conservation",
+              "name": "Conservation: Current is Never Used Up",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": [
+                "11.3.2"
+              ],
+              "lo_description": "Conceptual:\n- C1 (threshold core — counterintuitive): predict and justify that an ammeter reads the SAME value before and after a single bulb — the current is identical at every point of an unbranched path — and explain why 'less current after the bulb' is wrong (the bulb spends push, not charge).\n- C2 (threshold core — transformative): discriminate what is conserved (charge/current — passes through and returns) from what is spent (push/energy — drawn down into heat/light/work); locate and correct the swap in 'the current is used up'.\n- C3 (threshold core — integrative): justify conservation from 'charge can't pile up or vanish anywhere in the loop', and recognise it as the seed of series = common current and the junction handshake (current in = current out).\n- C4 (consolidation): assert the same current at every point of a multi-component single loop, and adjudicate 'the second bulb is dimmer because the first used up current' as a charge/energy confusion.\nProcedural:\n- P1: trace and label the current at every point of a single-path circuit (battery + series components + ammeter), asserting equality at each labelled point."
+            }
+          ]
+        },
+        {
+          "id": "ch11_electricity_resistance",
+          "name": "Resistance & Ohm's Law",
+          "sequence": 4,
+          "session_estimate": 0.5,
+          "lo_codes": [
+            "11.4.1"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch11_electricity_resistance__ohms_law_balance",
+              "name": "Ohm's Law as the Balance",
+              "type": "deep_intuition",
+              "enrichment": false,
+              "lo_codes": [
+                "11.4.1"
+              ],
+              "lo_description": "Conceptual:\n- C1 (threshold core — counterintuitive): a resistor carrying I develops a counter-push I×R that GROWS with the current until it matches the push available, and the current settles there — so a resistor balances the drive rather than blocking it (answers 'if resistance opposes flow, why does any current flow at all?').\n- C2 (threshold core — transformative): read the same V = IR in two roles — the counter-push the resistor presents to the loop, and the local driver of the current through it (I = V_across/R).\n- C3 (threshold core — integrative): resolve 'which causes which?' — the whole circuit settles globally, all at once, so push→current still holds; nothing chases its own tail.\n- C4: state Ohm's law as a conditional proportionality (fixed conditions, notably temperature) — a straight line through the origin on a V–I plot is ohmic, its slope is R, a curved characteristic is non-ohmic.\n- C5 (signature misconception-killer): hold R = V/I as a MEASUREMENT of a property the wire already has, not a knob — doubling V doubles I and leaves R unchanged; a rheostat changes current by varying R itself. (spot and correct 'double the voltage → resistance halves'.)\n- C6: explain the current-limiting role of a large series resistance in a safety context (line-tester / series safety resistor).\nProcedural:\n- P1: operate V = IR in any direction (any two → the third) with correct units (V, A, Ω; mA/kΩ multiples).\n- P2: read/construct/sketch and compare V–I (and I–V) characteristics; extract R from the slope; judge ohmic vs non-ohmic from straightness; compare two lines (steeper = higher R)."
+            }
+          ]
+        },
+        {
+          "id": "ch11_electricity_series_parallel",
+          "name": "Series & Parallel",
+          "sequence": 5,
+          "session_estimate": 1,
+          "lo_codes": [
+            "11.5.1",
+            "11.5.2"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch11_electricity_series_parallel__series",
+              "name": "Series — Sharing the Path",
+              "type": "transfer",
+              "enrichment": false,
+              "lo_codes": [
+                "11.5.1"
+              ],
+              "lo_description": "Conceptual:\n- C1: establish that on a single series path the current is identical through every resistor (grounded in conservation — nothing used up between them).\n- C2: explain why resistance adds — each resistor's counter-push I×R_i shares the one source push (V = IR₁+IR₂+…, factor the common I → R_eq = R₁+R₂); a series group, from its two ends, is one resistor of that value.\n- C3: read the push-split as structural and proportional — V₁:V₂ = R₁:R₂, set by the resistances alone and known before any current is found, so the bigger resistor takes the bigger share (the voltage divider).\n- C4: predict that adding a series resistor raises R_eq and lowers the common current, and that breaking the single path anywhere kills the whole loop.\nProcedural:\n- P1: compute series equivalent resistance R_eq = R₁+R₂+… (and the inverse — given R_eq and one resistor, find the other).\n- P2: solve a series circuit end-to-end — I = V/R_eq, then each V_i = I·R_i (and the inverse directions)."
+            },
+            {
+              "id": "ch11_electricity_series_parallel__parallel",
+              "name": "Parallel — Sharing the End-Points",
+              "type": "transfer",
+              "enrichment": false,
+              "lo_codes": [
+                "11.5.2"
+              ],
+              "lo_description": "Conceptual:\n- C1: establish that resistors sharing the same two nodes each have the FULL source push across them (voltage is common, not split), grounded in 'potential is a between-two-points quantity fixed by the node pair'.\n- C2: explain why the reciprocals add — each branch independently carries I_i = V/R_i and the branch currents recombine at the junction (factor the common V → 1/R_eq = 1/R₁+1/R₂), so R_eq drops below the smallest branch; a parallel group is one resistor of value R_eq < R_min.\n- C3 (designed surprise): resolve the parallel paradox — adding a branch LOWERS total resistance, because you opened a road, not an obstacle.\n- C4 (designed surprise): resolve the constant-battery myth — the battery fixes the voltage, not the current, so adding branches lowers R_eq and the source delivers MORE total current.\n- C5: predict that the smaller-resistance branch carries the larger current (same V, I = V/R) and dominates R_eq.\nProcedural:\n- P1: compute parallel equivalent resistance 1/R_eq = Σ(1/R_i) (and the two-resistor shortcut R₁R₂/(R₁+R₂)); inverse given R_eq and one branch.\n- P2: solve a parallel circuit end-to-end — full push on each branch → branch currents → total current (and the inverse)."
+            }
+          ]
+        }
+      ],
+      "horizontal": [
+        {
+          "slug": "causal_reasoning",
+          "description": "Name the cause and the effect correctly and hold the direction of causation under pressure — distinguish what drives (voltage) from what responds (current), and cause from mere reason, refusing the chicken-and-egg trap (2.1, 3.2, 4.1)."
+        },
+        {
+          "slug": "language_precision",
+          "description": "Read and write the chapter's notation exactly — one symbol in two roles (V=IR as counter-push vs local driver), property-vs-entity verbs, and between-two-points vs through vs at phrasing — without collapsing distinct quantities that share a letter or a word."
+        }
+      ]
+    },
+    {
+      "id": "ch12_magnetic_effects",
+      "name": "Magnetic Effects of Electric Current",
+      "sequence": 12,
+      "session_estimate": {
+        "min": 4,
+        "max": 6
+      },
+      "topics": []
+    }
+  ]
+}

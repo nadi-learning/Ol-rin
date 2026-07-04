@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useSession, signIn, signOut, devLogin } from "./lib/auth";
+import { useSession, signOut } from "./lib/auth";
 import { trpc, BOARD } from "./trpc";
 import { AppShell, type AppView } from "./components/AppShell";
+import { LandingPage } from "./components/LandingPage";
 import { DashboardPage } from "./components/DashboardPage";
 import { RevisionPage } from "./components/RevisionPage";
 import { PracticePage } from "./components/PracticePage";
@@ -50,21 +51,7 @@ export function App() {
   if (isPending) return <Gate>Checking…</Gate>;
 
   if (!session) {
-    return (
-      <Gate>
-        <h2>Welcome back</h2>
-        <p className="gate-sub">Sign in to continue your revision.</p>
-        <button
-          className="btn-solid"
-          onClick={() =>
-            signIn.social({ provider: "google", callbackURL: window.location.origin })
-          }
-        >
-          Sign in with Google
-        </button>
-        {import.meta.env.DEV && <DevLogin />}
-      </Gate>
-    );
+    return <LandingPage />;
   }
 
   if (error?.includes("NOT_WHITELISTED")) {
@@ -124,26 +111,6 @@ export function App() {
         <PracticePage />
       )}
     </AppShell>
-  );
-}
-
-// Dev-only login bypass (NODE_ENV != production on the BE). No Google needed.
-function DevLogin() {
-  const [email, setEmail] = useState("smoke@example.com");
-  return (
-    <div className="dev-login">
-      <p>dev login (bypass — local only)</p>
-      <div className="dev-login-row">
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="email"
-        />
-        <button className="btn-ghost" onClick={() => devLogin(email)}>
-          Dev sign in
-        </button>
-      </div>
-    </div>
   );
 }
 

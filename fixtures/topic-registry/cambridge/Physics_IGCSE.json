@@ -1,0 +1,502 @@
+{
+  "subject": "Physics IGCSE",
+  "board": "Cambridge",
+  "chapters": [
+    {
+      "id": "ch1_motion",
+      "name": "Motion",
+      "sequence": 1,
+      "topics_md": "content-authoring/Cambridge/IGCSE/Physics/ch1_motion_forces_energy/topics.md",
+      "session_estimate": {
+        "min": 8,
+        "max": 10
+      },
+      "horizontal": [
+        {
+          "slug": "language_precision",
+          "description": "Both-halves definitions, per-segment terminology, and 'show that' working that earns path marks — both-halves definitions and the exam's precision police: definition must carry both parts (e.g. 'change in velocity per unit time'), unit reading as physical meaning (m/s² = '(m/s) gained every second'), and preposition precision ('in a given direction', 'per unit time')."
+        },
+        {
+          "slug": "causal_reasoning",
+          "description": "Cause-chains, sequence/timeline probes, and 'what changes if X is absent?' — rate drives the next level, deceleration has a direction-cause, and the terminal-velocity feedback loop is one long causal chain where the motion adjusts the forces until they stop adjusting the motion."
+        }
+      ],
+      "topics": [
+        {
+          "id": "ch1_motion_rates",
+          "name": "Rates of motion",
+          "sequence": 1,
+          "session_estimate": 2,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch1_motion_rates__speed_velocity_average",
+              "name": "Speed, velocity, and the average",
+              "type": "non-threshold",
+              "lo_codes": [],
+              "lo_description": "Conceptual: Read speed as a per-second amount — how much distance is covered every second — and compare by normalising to per-second (the bigger-number trap); express a measurement over any window in per-second form and know the quoted rate is valid only for its own duration (the multiflash / shrinking-window idea); hold velocity as speed with a direction and show why the distinction earns its keep (a reversal changes velocity by more than any speed-change); treat the average as a whole-journey fact computed as total-distance ÷ total-time, refuse average-the-leg-speeds, and show no moment needs to equal the average.\nProcedural: Compute speed / velocity / average speed from multi-leg journeys, over- and under-specified data, and the train-passing-a-point form (length = v × t); inverse rate problems — find time from distance + speed, distance from speed + time, or a missing leg given the overall average; convert units across mixed-unit data (km/h ↔ m/s, min → s, cm → m); state the definitions precisely with both halves (speed 'per unit time'; velocity 'speed in a given direction')."
+            },
+            {
+              "id": "ch1_motion_rates__acceleration",
+              "name": "Acceleration and deceleration",
+              "type": "threshold",
+              "lo_codes": [],
+              "lo_description": "Conceptual: Read acceleration as velocity's per-second change — how much velocity is gained or lost every second — and read m/s² as physical meaning ('gains 5 m/s every second'), not a symbol; hold the threshold that acceleration is independent of velocity: a fast object can have zero acceleration and a slow object can be accelerating hard, and knowing one tells you nothing about the other; read deceleration as acceleration with the opposite sign — velocity shrinking by the stated amount each second, treated as a = −value in any chain — and explain what the sign is doing (the change opposes the motion); compute the velocity change across a direction reversal (ball off a bat: Δv = u + v, not v − u) and explain why the speed-change reads zero while the velocity-change is the largest in the problem; recognise the recursion — 'rate of a rate' keeps applying upward, each level independent of the ones below.\nProcedural: Compute a = Δv/Δt across windows and situations — from rest, slowing, between two non-zero velocities, including Δv as a vector across a reversal; inverse problems — find the missing quantity among {u, v, a, t} including multi-step setups; use deceleration's sign in downstream calculations (negative a feeding an F = ma chain) without sign loss; state the precise definition of acceleration and deceleration (change in velocity per unit time, direction included for deceleration); convert units before computing (km/h → m/s before m/s²)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch3_waves",
+      "name": "Waves",
+      "sequence": 3,
+      "topics_md": "content-authoring/Cambridge/IGCSE/Physics/ch3_waves/topics.md",
+      "session_estimate": {
+        "min": 10,
+        "max": 12
+      },
+      "topics": [
+        {
+          "id": "ch3_waves_wave_anatomy",
+          "name": "Wave Anatomy & The Wave Equation",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_wave_anatomy__transverse_longitudinal",
+              "name": "Transverse vs Longitudinal",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_wave_anatomy__wave_equation",
+              "name": "The Wave Equation (v = fλ)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_wave_anatomy__graph_reading",
+              "name": "Graph Axis Translation (distance vs time graphs)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_wave_behaviors",
+          "name": "Wave Behaviors (Ripple Tank)",
+          "sequence": 2,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_wave_behaviors__reflection",
+              "name": "Reflection of Waves",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_wave_behaviors__refraction",
+              "name": "Refraction of Waves (speed/wavelength change, frequency constant)",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_wave_behaviors__diffraction",
+              "name": "Diffraction (gap size vs wavelength)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_reflection",
+          "name": "Reflection of Light",
+          "sequence": 3,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_reflection__law_of_reflection",
+              "name": "Law of Reflection (i = r, the Normal)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_reflection__plane_mirror_images",
+              "name": "Plane Mirror Images (virtual, laterally inverted)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_refraction",
+          "name": "Refraction & Optical Density",
+          "sequence": 4,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_refraction__bending_rules",
+              "name": "Bending Toward/Away from Normal",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_refraction__glass_block",
+              "name": "Rectangular Glass Block (lateral displacement)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_refraction__apparent_depth",
+              "name": "Apparent Depth (concept, not calculation)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_refractive_index_tir",
+          "name": "Refractive Index & TIR",
+          "sequence": 5,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_refractive_index_tir__snells_law",
+              "name": "Snell's Law (n = sin i / sin r)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_refractive_index_tir__n_from_speeds",
+              "name": "Refractive Index from Speeds (n = c/v)",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_refractive_index_tir__critical_angle",
+              "name": "Critical Angle (n = 1/sin c)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_refractive_index_tir__tir_conditions",
+              "name": "TIR Conditions (dense→less dense AND i > c)",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_refractive_index_tir__optical_fibres",
+              "name": "Optical Fibres",
+              "type": "transfer",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_lenses_real",
+          "name": "Lenses & Ray Diagrams (Real Images)",
+          "sequence": 6,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_lenses_real__converging_diverging",
+              "name": "Converging vs Diverging Lenses",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_lenses_real__three_construction_rays",
+              "name": "Three Construction Rays",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_lenses_real__real_image_formation",
+              "name": "Real Image Formation (inverted, projectable)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_lenses_real__image_evolution",
+              "name": "Image Evolution with Object Distance",
+              "type": "transfer",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_virtual_images",
+          "name": "Virtual Images & Lens Applications",
+          "sequence": 7,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_virtual_images__magnifying_glass",
+              "name": "Magnifying Glass (object inside F)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_virtual_images__diverging_lens_images",
+              "name": "Diverging Lens Images (always virtual)",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_virtual_images__magnification",
+              "name": "Magnification (image height / object height)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_virtual_images__sight_correction",
+              "name": "Sight Correction (long-sight & short-sight)",
+              "type": "transfer",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_em_spectrum",
+          "name": "EM Spectrum & Dispersion",
+          "sequence": 8,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_em_spectrum__dispersion",
+              "name": "Dispersion (prism, monochromatic light)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_em_spectrum__spectrum_order",
+              "name": "EM Spectrum Order (frequency, wavelength, energy)",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_em_spectrum__uses_dangers",
+              "name": "Uses and Dangers of Each Region",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_em_spectrum__universal_speed",
+              "name": "Universal Speed in Vacuum (c = 3×10⁸ m/s)",
+              "type": "transfer",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_digital_signals",
+          "name": "Analogue vs Digital Signals",
+          "sequence": 9,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_digital_signals__analogue_vs_digital",
+              "name": "Continuous vs Discrete Signals",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_digital_signals__regeneration",
+              "name": "Noise Immunity and Regeneration",
+              "type": "transfer",
+              "lo_codes": []
+            }
+          ]
+        },
+        {
+          "id": "ch3_waves_sound",
+          "name": "Sound & Ultrasound",
+          "sequence": 10,
+          "session_estimate": 1,
+          "lo_codes": [],
+          "sub_topics": [
+            {
+              "id": "ch3_waves_sound__longitudinal_nature",
+              "name": "Longitudinal Nature (compressions/rarefactions)",
+              "type": "deep_intuition",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_sound__pitch_loudness",
+              "name": "Pitch (frequency) vs Loudness (amplitude)",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_sound__echoes_2d",
+              "name": "Echoes and the 2d Principle",
+              "type": "procedural",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_sound__ultrasound",
+              "name": "Ultrasound (sonar, medical imaging)",
+              "type": "transfer",
+              "lo_codes": []
+            },
+            {
+              "id": "ch3_waves_sound__cro_traces",
+              "name": "CRO Trace Interpretation",
+              "type": "procedural",
+              "lo_codes": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ch4_electricity",
+      "name": "Electricity",
+      "sequence": 4,
+      "topics_md": "Cambridge/IGCSE/Physics/ch4_electricity_magnetism/topics.md",
+      "session_estimate": 8,
+      "horizontal": [
+        {
+          "slug": "causal_reasoning",
+          "description": "Name the cause and the effect correctly and hold the direction of causation under pressure — what drives vs what responds, cause vs mere reason."
+        },
+        {
+          "slug": "language_precision",
+          "description": "Read and write the chapter's notation exactly — one symbol in two roles, property-vs-entity verbs, between-two-points vs through vs at phrasing — without collapsing quantities that share a letter or word."
+        }
+      ],
+      "topics": [
+        {
+          "id": "ch4_electricity_charge",
+          "name": "Charge — the property behind it all",
+          "sequence": 1,
+          "session_estimate": 1,
+          "lo_codes": [
+            "ELE-1.1"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_electricity_charge__property_of_matter",
+              "name": "Charge as a property of matter: two signs, neutrality, imbalance",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "ELE-1.1"
+              ],
+              "lo_description": "Conceptual: Run the mass-charge parallel (charge is a property of matter sourcing a force, but in two signs so it attracts and repels); explain neutrality as cancellation not absence (equal protons and electrons, net zero, the strong force hidden not gone); read an imbalance of charge as the cause of a push (the bridge into the chapter, what T2 calls potential difference, a battery maintains one); apply like-repels/unlike-attracts with the force weakening as separation grows, including the backward inference (two objects hanging apart at equal angles repel, so same sign); recognise charge as a countable, quantised amount in coulombs, carried in grains of e=1.6e-19 C.\nProcedural: Convert between a charge and an electron count both ways using Q=n*e, handling the 10^-19 exponent and scientific notation cleanly."
+            }
+          ]
+        },
+        {
+          "id": "ch4_electricity_potential",
+          "name": "Potential — the push (the cause)",
+          "sequence": 2,
+          "session_estimate": 1,
+          "lo_codes": [
+            "ELE-2.1"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_electricity_potential__push_before_flow",
+              "name": "The push that exists before any flow (the cause, qualitative)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "ELE-2.1"
+              ],
+              "lo_description": "Conceptual: THRESHOLD. Discriminate the push from the flow — a battery on the table has a voltage and zero current, so voltage is the cause, not the flow, not a partner that arrives with it; read potential difference as a between-two-points quantity (meaningless until both points are named, not a substance sitting in or carried along a wire); trace the push back to a charge imbalance maintained by the battery's chemical action; refuse the electron-distance reading (the only distance is the gap between the two points, not how far an electron wanders); hold the source apart from the push (battery = chemical charge separation; generator = a moving magnetic field, deferred).\nProcedural: None at this layer — the intuition layer is deliberately procedure-free; the substitution skill enters later sub-topics."
+            }
+          ]
+        },
+        {
+          "id": "ch4_electricity_current_resistance",
+          "name": "Current & Resistance — the flow, and what balances it",
+          "sequence": 3,
+          "session_estimate": 1.5,
+          "lo_codes": [
+            "ELE-3.1",
+            "ELE-3.2",
+            "ELE-3.4"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_electricity_current_resistance__current_rate_of_flow",
+              "name": "Current as the rate of flow (I=Q/t; the ampere; the ammeter; conventional vs electron flow)",
+              "type": "procedural",
+              "lo_codes": [
+                "ELE-3.1"
+              ],
+              "lo_description": "Conceptual: Read current as a rate (charge crossing a point per unit time, 1 A = 1 C/s), the effect of the push, needing a complete circuit to flow; tell the metal-conduction story with free electrons drifting slowly; hold conventional current (+ to -) vs electron flow (the opposite way) as bookkeeping for one and the same physical flow; connect the macroscopic rate to the astronomically large microscopic electron count; derive the ammeter (in series, very low resistance) from 'current is a through-quantity', the mirror of the voltmeter; know a current by its heating, magnetic and chemical effects.\nProcedural: Operate I=Q/t in any direction with clean unit handling (mA<->A, minutes/hours->seconds); operate n=Q/e including chained from a current (10^18-10^20 magnitudes, standard form); place and read an ammeter in series with correct polarity and range."
+            },
+            {
+              "id": "ch4_electricity_current_resistance__conservation",
+              "name": "Conservation — current is never used up",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "ELE-3.2"
+              ],
+              "lo_description": "Conceptual: THRESHOLD. Show the current is identical before and after a component in a single path (an ammeter reads the same on either side of a lamp — the correct result, against intuition); discriminate what is conserved (charge/current — passes through and returns) from what is spent (the push/energy — drawn down across components into heat and light); justify conservation from 'charge cannot pile up or vanish' (rate in = rate out at every point), recognising it as the same principle behind series-common-current and the junction rule; adjudicate and correct a 'the lamp used up some current' claim as a charge/energy confusion.\nProcedural: Trace and label the current at every point of a single-path circuit and assert their equality, reading any ammeter placement as the loop current (deliberately concept-heavy, procedure-light)."
+            },
+            {
+              "id": "ch4_electricity_current_resistance__ohms_law_balance",
+              "name": "Ohm's law as the balance (counter-push and local driver)",
+              "type": "deep_intuition",
+              "lo_codes": [
+                "ELE-3.4"
+              ],
+              "lo_description": "Conceptual: THRESHOLD. Show a resistor balances the drive rather than blocking it (it develops a counter-push I*R that grows with the current until it matches the available push, and the current settles there — so current does flow, and is steady); read V=IR as one number in two roles (the counter-push it presents to the loop, and the local driver of the current through it); resolve the 'which causes which?' circularity (the whole circuit settles globally, all at once, so cause->effect still holds); state Ohm's law as a conditional proportionality (I proportional to V for a metal at constant temperature; a straight line through the origin) and separate the definition R=V/I (any conductor) from the law; hold R=V/I as the measurement of a fixed property, not a knob (doubling V doubles I, R unchanged — refuse 'double the voltage halves the resistance').\nProcedural: Operate V=IR in any direction (V, A, ohm; mA/kohm multiples); read and construct V-I and I-V graphs and extract R from the slope, axes first (V-I slope = R, I-V slope = 1/R); determine a resistance by the ammeter-voltmeter method."
+            }
+          ]
+        },
+        {
+          "id": "ch4_electricity_series_parallel",
+          "name": "Series & Parallel — what do they share?",
+          "sequence": 4,
+          "session_estimate": 1,
+          "lo_codes": [
+            "ELE-4.1",
+            "ELE-4.2",
+            "ELE-4.3"
+          ],
+          "sub_topics": [
+            {
+              "id": "ch4_electricity_series_parallel__series",
+              "name": "Series — share the path, the push splits (+ combined e.m.f. of cells)",
+              "type": "transfer",
+              "lo_codes": [
+                "ELE-4.1"
+              ],
+              "lo_description": "Conceptual: Establish that the current is common on a shared path and say why (conservation — nothing is used up between components); explain why resistance adds in series from the shared push (each resistor's counter-push I*Ri shares the one source push, so R_eq = sum of Ri; a series group seen from its two ends is one resistor); read the push-split as structural and proportional (V1:V2 = R1:R2, set by the resistances alone and known before any current, so the bigger resistor takes the bigger share); predict the effect of changing the chain (adding a resistor raises R_eq and lowers the common current; breaking the single path anywhere kills the loop); combine cell pushes by signed bookkeeping (cells in series add their e.m.f.s, an opposed cell subtracts, cells in parallel give the same e.m.f. but last longer).\nProcedural: Compute the series equivalent resistance (and the inverse); solve a series circuit end-to-end (I=V/R_eq, then each Vi=I*Ri, plus inverse forms); compute the combined e.m.f. of a cell arrangement read off a diagram."
+            },
+            {
+              "id": "ch4_electricity_series_parallel__parallel",
+              "name": "Parallel — share the end-points, the current splits",
+              "type": "transfer",
+              "lo_codes": [
+                "ELE-4.2"
+              ],
+              "lo_description": "Conceptual: Establish that the voltage is common across branches and say why (each branch sits across the same two nodes, so the full push is across each; the push is not split); justify the junction rule from 'current cannot be stored' (total current in = total current out); explain why the reciprocals add (each branch independently carries Ii=V/Ri and the branch currents add at the junction, so 1/R_eq = sum of 1/Ri and R_eq falls below the smallest branch; a parallel group is one resistor); resolve the parallel paradox (adding a branch lowers total resistance — you added a path, not an obstacle); resolve the constant-battery myth (the battery fixes the voltage not the current, so more branches make it deliver more total current); predict which branch carries more current (smaller R, larger I) and justify lamps-in-parallel (full p.d. on each, independent switching, one failure does not kill the rest).\nProcedural: Compute the parallel equivalent resistance (1/R_eq = sum of 1/Ri, and the two-resistor product-over-sum; sanity-check that the answer is below the smallest branch); solve a parallel circuit end-to-end (each Ii=V/Ri, summed to the total via the junction rule, plus inverse forms)."
+            },
+            {
+              "id": "ch4_electricity_series_parallel__mixed",
+              "name": "Mixed circuits — series and parallel combined (reduce step by step)",
+              "type": "procedural",
+              "lo_codes": [
+                "ELE-4.3"
+              ],
+              "lo_description": "Conceptual: Recognise a network as a series resistor in line with a parallel group (or vice versa) and see why it collapses in stages — a parallel group seen from its two end-points behaves as one equivalent resistor, which can then be added in series; the order of reduction follows the topology, not the order the numbers happen to be written.\nProcedural: Reduce a simple combined network to one equivalent resistance by collapsing the parallel group first (product-over-sum or reciprocals) and then adding the series resistor; from the total resistance find the supply current (I=V/R_total) and the voltage across the series resistor (V=I*R); keep the two stages ordered and the running values labelled."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
