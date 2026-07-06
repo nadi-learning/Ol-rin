@@ -48,13 +48,17 @@ import {
   draftBatchSchema,
   geminiQuestionSchema,
   persistDrafts,
-  QUESTION_AUTHOR_SYSTEM,
-  type DraftItem,
   type PersistedDraft,
 } from "./authoring";
+import {
+  claudeSystemFor,
+  loadMethodPack,
+  spawnAuthoringWorker,
+} from "./authoring_worker";
 import { SubTopicNotFoundError } from "./assessment";
 import { assertTutorsStudent, getStudentMastery } from "./tutor";
 import { jsonlExists } from "./cli_session";
+import { withBoard } from "../db/with-board";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -87,6 +91,36 @@ export class ProposeTargetError extends Error {
   }
 }
 
+// A chapter passed to startChat (blocked or interleaved) that isn't visible in the
+// caller's board — RLS filters cross-board chapters to invisible, so a requested id
+// that doesn't resolve is either cross-board or bogus. Router → BAD_REQUEST.
+export class ChapterNotInBoardError extends Error {
+  readonly code = "CHAPTER_NOT_IN_BOARD";
+  constructor(chapterId: string) {
+    super(`chapter ${chapterId} is not visible in this board`);
+    this.name = "ChapterNotInBoardError";
+  }
+}
+
+/**
+ * The effective chapter scope of a chat (Slice QA3-d). Interleaved chats carry the
+ * selected set in `chapter_ids`; blocked chats carry the single `chapter_id` (and
+ * also mirror it into `chapter_ids`). Legacy (pre-QA3-d) rows have only `chapter_id`.
+ * All chapter-scoped reads (grounding coverage, the Gemini target allowlist,
+ * proposeTarget, the authorFromChat guard) go through this so one code path serves
+ * one-or-many chapters.
+ */
+function chatChapterIds(row: {
+  chapterId: string | null;
+  chapterIds: unknown;
+}): string[] {
+  const many = Array.isArray(row.chapterIds)
+    ? row.chapterIds.filter((x): x is string => typeof x === "string")
+    : [];
+  if (many.length > 0) return many;
+  return row.chapterId ? [row.chapterId] : [];
+}
+
 // The conversational agent's role. STATIC (no per-student data) so the resume
 // fingerprint (sha256 of systemPrompt+slot) is stable across the thread — the
 // Claude --resume requirement. The student grounding rides in the FIRST user
@@ -113,7 +147,7 @@ HOW AUTHORING HAPPENS (so you can guide the tutor correctly): you do NOT write t
 // remains available.
 const CHAT_SYSTEM_GEMINI = `${CHAT_SYSTEM_BASE}
 
-HOW AUTHORING HAPPENS (so you author correctly): you have a tool — \`author_questions\`. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), CALL \`author_questions\` with (a) \`subTopicNumber\` = the number of the chosen sub-topic from the AUTHORING TARGETS list in the message, and (b) the drafted \`questions\`. The drafts then appear in a review form where the tutor edits and saves them — so authoring happens RIGHT HERE, by you. Until the tutor gives a go-ahead, do NOT call the tool — keep discussing. Emit the tool as a STRUCTURED function call — NEVER print it as text, pseudocode, tool_code, or \`print(default_api...)\`. (A "Suggest what to work on" button also exists as an alternative, but you don't need it — the tool is yours.)`;
+HOW AUTHORING HAPPENS (so you guide it correctly): you have a tool — \`author_questions\`. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), CALL \`author_questions\` with (a) \`subTopicNumber\` = the number of the chosen sub-topic from the AUTHORING TARGETS list in the message, and (b) \`count\` = how many questions to author. You do NOT write the questions yourself — calling the tool spawns a specialist authoring worker that drafts them to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them. Until the tutor gives a go-ahead, do NOT call the tool — keep discussing. Emit the tool as a STRUCTURED function call — NEVER print it as text, pseudocode, tool_code, or \`print(default_api...)\`. (A "Suggest what to work on" button also exists as an alternative, but you don't need it — the tool is yours.)`;
 
 function chatSystemFor(vendor: VendorChoice): string {
   return vendor === "gemini_api" ? CHAT_SYSTEM_GEMINI : CHAT_SYSTEM_CLAUDE;
@@ -160,7 +194,7 @@ function authorQuestionsToolSpec(): ToolSpec {
   cachedAuthorTool = {
     name: AUTHOR_QUESTIONS_TOOL_NAME,
     description:
-      "Draft a batch of subjective practice questions for ONE sub-topic, targeting this student's weakness. Call ONLY after the tutor gives an explicit go-ahead. The drafts are shown to the tutor in a review form to edit + save — this does NOT save them directly. `subTopicNumber` MUST be one of the numbers in the AUTHORING TARGETS list.",
+      "Select ONE sub-topic to author subjective practice questions for, and how many. Call ONLY after the tutor gives an explicit go-ahead. This spawns a specialist authoring worker that drafts the questions to the full craft bar; the drafts are shown to the tutor in a review form to edit + save — it does NOT save them directly. `subTopicNumber` MUST be one of the numbers in the AUTHORING TARGETS list.",
     inputSchemaJson: {
       type: Type.OBJECT,
       properties: {
@@ -169,19 +203,22 @@ function authorQuestionsToolSpec(): ToolSpec {
           description:
             "the 1-based number of the sub-topic to author for, from the AUTHORING TARGETS list in the message",
         },
-        questions: geminiQuestionSchema.properties.questions,
+        count: {
+          type: Type.INTEGER,
+          description: "how many questions to author (1–8)",
+        },
       },
-      required: ["subTopicNumber", "questions"],
+      required: ["subTopicNumber", "count"],
     } as Record<string, unknown>,
   };
   return cachedAuthorTool;
 }
 
-// Validates the tool call's args. `questions` reuses the draft schema (so the
-// tool output is byte-identical to what authorFromChat/the form already handle).
+// Validates the tool call's args. The tool SELECTS a target + count; the worker
+// authors the questions (QA3-e master→worker split).
 const authorToolArgsSchema = z.object({
   subTopicNumber: z.number().int(),
-  questions: draftBatchSchema.shape.questions,
+  count: z.number().int(),
 });
 
 // ───────────────────────── resume helpers (ported from unit_chat) ─────────────────────────
@@ -224,7 +261,7 @@ function isStaleInteractionError(err: unknown): boolean {
  */
 export async function assembleGrounding(
   tx: Tx,
-  args: { tutorUserId: string; studentId: string; chapterId?: string | null },
+  args: { tutorUserId: string; studentId: string; chapterIds?: string[] },
 ): Promise<string> {
   const mastery = await getStudentMastery(tx, args); // asserts ownership
 
@@ -276,56 +313,95 @@ export async function assembleGrounding(
   // (canonical/shared OR private to them). Lets the AI answer "what's left to
   // author?" — without it the AI can only see the student's mastery, not the
   // curriculum map (Eyeball feedback #1). Skipped for legacy chapter-less chats.
-  const coverageLines = args.chapterId
-    ? await (async () => {
-        const rows = await tx
-          .select({
-            topicName: topic.name,
-            topicOrdinal: topic.ordinal,
-            subTopicId: subTopic.id,
-            subTopicName: subTopic.name,
-            subTopicOrdinal: subTopic.ordinal,
-          })
-          .from(subTopic)
-          .innerJoin(topic, eq(topic.id, subTopic.topicId))
-          .where(eq(topic.chapterId, args.chapterId!))
-          .orderBy(asc(topic.ordinal), asc(subTopic.ordinal));
+  // Coverage spans ALL of the chat's chapters (one for blocked, N for interleaved
+  // — Slice QA3-d). When more than one chapter is in scope, each line is prefixed
+  // with its chapter name so cross-chapter targets are unambiguous.
+  const groundChapterIds = args.chapterIds ?? [];
+  const coverageLines =
+    groundChapterIds.length > 0
+      ? await (async () => {
+          const rows = await tx
+            .select({
+              chapterName: chapter.name,
+              chapterOrdinal: chapter.ordinal,
+              topicName: topic.name,
+              topicOrdinal: topic.ordinal,
+              subTopicId: subTopic.id,
+              subTopicName: subTopic.name,
+              subTopicOrdinal: subTopic.ordinal,
+            })
+            .from(subTopic)
+            .innerJoin(topic, eq(topic.id, subTopic.topicId))
+            .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+            .where(inArray(topic.chapterId, groundChapterIds))
+            .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
 
-        if (rows.length === 0) return null;
+          if (rows.length === 0) return null;
 
-        const counts = await tx
-          .select({
-            subTopicId: question.subTopicId,
-            n: sql<number>`count(*)::int`,
-          })
-          .from(question)
-          .where(
-            and(
-              inArray(
-                question.subTopicId,
-                rows.map((r) => r.subTopicId),
+          const counts = await tx
+            .select({
+              subTopicId: question.subTopicId,
+              n: sql<number>`count(*)::int`,
+            })
+            .from(question)
+            .where(
+              and(
+                inArray(
+                  question.subTopicId,
+                  rows.map((r) => r.subTopicId),
+                ),
+                or(
+                  isNull(question.targetStudentId),
+                  eq(question.targetStudentId, args.studentId),
+                ),
               ),
-              or(
-                isNull(question.targetStudentId),
-                eq(question.targetStudentId, args.studentId),
-              ),
-            ),
-          )
-          .groupBy(question.subTopicId);
-        const byId = new Map(counts.map((c) => [c.subTopicId, c.n]));
+            )
+            .groupBy(question.subTopicId);
+          const byId = new Map(counts.map((c) => [c.subTopicId, c.n]));
 
-        return rows
-          .map((r) => {
-            const n = byId.get(r.subTopicId) ?? 0;
-            const tag =
-              n === 0
-                ? "NONE authored yet"
-                : `${n} question${n === 1 ? "" : "s"} authored`;
-            return `  - ${r.topicName} › ${r.subTopicName}: ${tag}`;
-          })
-          .join("\n");
-      })()
-    : null;
+          const multi = groundChapterIds.length > 1;
+          return rows
+            .map((r) => {
+              const n = byId.get(r.subTopicId) ?? 0;
+              const tag =
+                n === 0
+                  ? "NONE authored yet"
+                  : `${n} question${n === 1 ? "" : "s"} authored`;
+              const path = multi
+                ? `${r.chapterName} › ${r.topicName} › ${r.subTopicName}`
+                : `${r.topicName} › ${r.subTopicName}`;
+              return `  - ${path}: ${tag}`;
+            })
+            .join("\n");
+        })()
+      : null;
+
+  // Raw topics.md (D-QA3-5): the VERBATIM authored breakdown for the chat's
+  // chapter(s) — the full pedagogical map (sub-topics, LOs, misconceptions,
+  // teaching notes) the tutor decides against. Stored at
+  // chapter.metadata->>'topicsMd' by the admin ingest (QA3-b, the sole write
+  // path); null for chapters seeded via content-pull, in which case this section
+  // is omitted and the AI falls back to the CHAPTER COVERAGE sub-topic names.
+  const topicsMdBlock =
+    groundChapterIds.length > 0
+      ? await (async () => {
+          const rows = await tx
+            .select({
+              chapterName: chapter.name,
+              chapterOrdinal: chapter.ordinal,
+              topicsMd: sql<string | null>`${chapter.metadata} ->> 'topicsMd'`,
+            })
+            .from(chapter)
+            .where(inArray(chapter.id, groundChapterIds))
+            .orderBy(asc(chapter.ordinal));
+          const withMd = rows.filter((r) => r.topicsMd && r.topicsMd.trim());
+          if (withMd.length === 0) return null;
+          const multi = groundChapterIds.length > 1;
+          return withMd
+            .map((r) => (multi ? `----- ${r.chapterName} -----\n${r.topicsMd}` : r.topicsMd!))
+            .join("\n\n");
+        })()
+      : null;
 
   return [
     "===== STUDENT GROUNDING (read this before responding) =====",
@@ -338,8 +414,15 @@ export async function assembleGrounding(
     ...(coverageLines
       ? [
           "",
-          "CHAPTER COVERAGE (every sub-topic in this chat's chapter + how many questions already exist for THIS student — canonical + private. Use this to answer what's left to author):",
+          "CHAPTER COVERAGE (every sub-topic in this chat's chapter(s) + how many questions already exist for THIS student — canonical + private. Use this to answer what's left to author):",
           coverageLines,
+        ]
+      : []),
+    ...(topicsMdBlock
+      ? [
+          "",
+          "CHAPTER BREAKDOWN (the VERBATIM authored topics.md — the full pedagogical map: sub-topics, learning objectives, misconceptions, and teaching notes. This is the AUTHORITATIVE source for what each sub-topic actually covers and where students struggle; ground your authoring decisions in it, not in general knowledge):",
+          topicsMdBlock,
         ]
       : []),
     "",
@@ -349,10 +432,14 @@ export async function assembleGrounding(
 
 // ───────────────────────── chat lifecycle ─────────────────────────
 
+export type AuthoringMode = "blocked" | "interleaved";
+
 export type ChatView = {
   chatId: string;
   studentId: string;
-  chapterId: string | null; // the upfront chapter scope (Slice AUTH-v2.1)
+  chapterId: string | null; // the blocked-mode single chapter (Slice AUTH-v2.1)
+  chapterIds: string[]; // effective chapter scope (Slice QA3-d): [one] blocked, N interleaved
+  mode: AuthoringMode; // 'blocked' | 'interleaved' (legacy rows read as 'blocked')
   subTopicId: string | null; // resolved authoring focus (set by proposeTarget)
   vendor: VendorChoice;
   messages: ChatMessage[];
@@ -382,7 +469,13 @@ function parseMessages(raw: unknown): ChatMessage[] {
   return arr.map((m) => ChatMessage.parse(m));
 }
 
-/** Start a new authoring chat for one student with a chosen vendor. */
+/**
+ * Start a new authoring chat for one student with a chosen vendor + mode (Slice
+ * QA3-d). `blocked` scopes to ONE chapter (chapter_id set, chapter_ids mirrors it);
+ * `interleaved` grounds across the selected set (chapter_id null, chapter_ids = N).
+ * Every requested chapter is validated board-visible (RLS filters cross-board rows
+ * to invisible → a missing id throws ChapterNotInBoardError).
+ */
 export async function startChat(
   tx: Tx,
   args: {
@@ -390,20 +483,54 @@ export async function startChat(
     tutorUserId: string;
     studentId: string;
     vendor: VendorChoice;
-    // The chapter chosen upfront (Slice AUTH-v2.1). Optional at the service layer
-    // for back-compat, but the v2.1 flow always passes it — proposeTarget requires
-    // it to scope the sub_topic allowlist.
+    // The mode (defaults to blocked for the fast path + legacy callers).
+    mode?: AuthoringMode;
+    // Blocked's single chapter (Slice AUTH-v2.1 fast path). Optional; folded into
+    // the chapter set below.
     chapterId?: string | null;
+    // The selected chapter set (Slice QA3-d launcher). Blocked = 1, interleaved = N.
+    chapterIds?: string[];
   },
 ): Promise<ChatView> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+
+  const mode: AuthoringMode = args.mode ?? "blocked";
+  // Normalize the requested chapters into the stored shape.
+  let storedChapterId: string | null;
+  let storedChapterIds: string[];
+  if (mode === "interleaved") {
+    storedChapterIds = (args.chapterIds ?? []).filter(Boolean);
+    if (storedChapterIds.length === 0) {
+      throw new Error("interleaved mode requires at least one chapter");
+    }
+    storedChapterId = null; // interleaved has no single-chapter anchor
+  } else {
+    const single = args.chapterId ?? args.chapterIds?.[0] ?? null;
+    storedChapterId = single;
+    storedChapterIds = single ? [single] : [];
+  }
+
+  // Board-visibility check: every requested chapter must resolve under RLS.
+  if (storedChapterIds.length > 0) {
+    const visible = await tx
+      .select({ id: chapter.id })
+      .from(chapter)
+      .where(inArray(chapter.id, storedChapterIds));
+    const visibleIds = new Set(visible.map((c) => c.id));
+    for (const cid of storedChapterIds) {
+      if (!visibleIds.has(cid)) throw new ChapterNotInBoardError(cid);
+    }
+  }
+
   const [created] = await tx
     .insert(authoringChat)
     .values({
       boardId: args.boardId,
       tutorId: args.tutorUserId,
       studentId: args.studentId,
-      chapterId: args.chapterId ?? null,
+      mode,
+      chapterId: storedChapterId,
+      chapterIds: storedChapterIds,
       vendor: args.vendor,
       messages: [],
     })
@@ -412,6 +539,8 @@ export async function startChat(
     chatId: created!.id,
     studentId: created!.studentId,
     chapterId: created!.chapterId ?? null,
+    chapterIds: chatChapterIds(created!),
+    mode: (created!.mode as AuthoringMode) ?? "blocked",
     subTopicId: created!.subTopicId ?? null,
     vendor: created!.vendor as VendorChoice,
     messages: [],
@@ -427,6 +556,8 @@ export async function getChat(
     chatId: row.id,
     studentId: row.studentId,
     chapterId: row.chapterId ?? null,
+    chapterIds: chatChapterIds(row),
+    mode: (row.mode as AuthoringMode) ?? "blocked",
     subTopicId: row.subTopicId ?? null,
     vendor: row.vendor as VendorChoice,
     messages: parseMessages(row.messages),
@@ -522,7 +653,7 @@ export async function sendTurn(
   const grounding = await assembleGrounding(tx, {
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
-    chapterId: row.chapterId ?? null,
+    chapterIds: chatChapterIds(row),
   });
 
   const buildStitched = (): string => {
@@ -563,7 +694,8 @@ export async function sendTurn(
     chapterName: string;
   }[] = [];
   let targetsBlock = "";
-  if (isGemini && row.chapterId) {
+  const turnChapterIds = chatChapterIds(row);
+  if (isGemini && turnChapterIds.length > 0) {
     subs = await tx
       .select({
         subTopicId: subTopic.id,
@@ -574,11 +706,17 @@ export async function sendTurn(
       .from(subTopic)
       .innerJoin(topic, eq(topic.id, subTopic.topicId))
       .innerJoin(chapter, eq(chapter.id, topic.chapterId))
-      .where(eq(chapter.id, row.chapterId))
-      .orderBy(asc(topic.ordinal), asc(subTopic.ordinal));
+      .where(inArray(topic.chapterId, turnChapterIds))
+      .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
     if (subs.length > 0) {
+      // Multi-chapter (interleaved) → prefix the chapter so the number the tool
+      // references maps to an unambiguous target across chapters.
+      const multi = turnChapterIds.length > 1;
       const list = subs
-        .map((s, i) => `  ${i + 1}. ${s.topicName} › ${s.subTopicName}`)
+        .map(
+          (s, i) =>
+            `  ${i + 1}. ${multi ? `${s.chapterName} › ` : ""}${s.topicName} › ${s.subTopicName}`,
+        )
         .join("\n");
       targetsBlock = `\n\n===== AUTHORING TARGETS (for author_questions.subTopicNumber) =====\n${list}\n===== END AUTHORING TARGETS =====`;
     }
@@ -653,6 +791,7 @@ export async function sendTurn(
     if (parsed.success && subs.length > 0) {
       const idx = Math.min(Math.max(parsed.data.subTopicNumber, 1), subs.length) - 1;
       const chosen = subs[idx]!;
+      const count = Math.min(Math.max(parsed.data.count, 1), 8);
       const nextOrdinal = await nextOrdinalFor(tx, chosen.subTopicId);
 
       // Persist the resolved focus (mirrors proposeTarget/authorFromChat).
@@ -660,6 +799,22 @@ export async function sendTurn(
         .update(authoringChat)
         .set({ subTopicId: chosen.subTopicId, updatedAt: new Date() })
         .where(eq(authoringChat.id, row.id));
+
+      // QA3-e: the master SELECTED the target; spawn a fresh scoped worker to
+      // author (method pack + O1/O2 + the scoped slice), so the Gemini in-chat
+      // path drafts to the SAME bar as the structured authorFromChat path.
+      const brief = [
+        ...history.map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`),
+        `TUTOR: ${text}`,
+      ].join("\n\n");
+      const { drafts } = await spawnAuthoringWorker(tx, {
+        boardId: row.boardId,
+        chatId: row.id,
+        subTopicId: chosen.subTopicId,
+        vendor,
+        count,
+        brief,
+      });
 
       // Slice FIG-AUTH (D-FIG-5): persist the drafts as status='draft' rows so each
       // has a real id — the review form can render a figure against it + preview
@@ -669,11 +824,11 @@ export async function sendTurn(
         boardId: row.boardId,
         subTopicId: chosen.subTopicId,
         targetStudentId: row.studentId,
-        drafts: parsed.data.questions,
+        drafts,
       });
 
       const toolResult = {
-        drafted: parsed.data.questions.length,
+        drafted: persisted.length,
         subTopic: chosen.subTopicName,
         status: "shown to the tutor in a review form to edit + save",
       };
@@ -722,6 +877,8 @@ export async function sendTurn(
         chatId: row.id,
         studentId: row.studentId,
         chapterId: row.chapterId ?? null,
+        chapterIds: chatChapterIds(row),
+        mode: (row.mode as AuthoringMode) ?? "blocked",
         subTopicId: chosen.subTopicId,
         vendor,
         messages,
@@ -763,6 +920,8 @@ export async function sendTurn(
     chatId: row.id,
     studentId: row.studentId,
     chapterId: row.chapterId ?? null,
+    chapterIds: chatChapterIds(row),
+    mode: (row.mode as AuthoringMode) ?? "blocked",
     subTopicId: row.subTopicId ?? null,
     vendor,
     messages,
@@ -812,9 +971,11 @@ export async function authorFromChat(
     .innerJoin(chapter, eq(chapter.id, topic.chapterId))
     .where(eq(subTopic.id, args.subTopicId));
   if (!st) throw new SubTopicNotFoundError(args.subTopicId);
-  // Chapter-scope guard (Slice AUTH-v2.1): the confirmed sub_topic MUST live in the
-  // chat's chosen chapter — the anchor can't escape the hierarchy the tutor picked.
-  if (row.chapterId && st.chapterId !== row.chapterId) {
+  // Chapter-scope guard (Slice AUTH-v2.1 / QA3-d): the confirmed sub_topic MUST live
+  // in ONE of the chat's chosen chapters (one for blocked, N for interleaved) — the
+  // anchor can't escape the hierarchy the tutor picked.
+  const scopeChapterIds = chatChapterIds(row);
+  if (scopeChapterIds.length > 0 && !scopeChapterIds.includes(st.chapterId)) {
     throw new SubTopicNotFoundError(args.subTopicId);
   }
   // Persist the authoring focus (also set by proposeTarget; kept in sync when
@@ -824,52 +985,24 @@ export async function authorFromChat(
     .set({ subTopicId: args.subTopicId, updatedAt: new Date() })
     .where(eq(authoringChat.id, row.id));
 
-  const los = await tx
-    .select()
-    .from(learningObjective)
-    .where(eq(learningObjective.subTopicId, args.subTopicId));
-  const conceptualLos = los
-    .filter((l) => l.axis === "conceptual" || l.axis === "both")
-    .map((l) => l.description);
-  const proceduralLos = los
-    .filter((l) => l.axis === "procedural" || l.axis === "both")
-    .map((l) => l.description);
-
   const nextOrdinal = await nextOrdinalFor(tx, args.subTopicId);
 
-  const grounding = await assembleGrounding(tx, {
-    tutorUserId: args.tutorUserId,
-    studentId: row.studentId,
-    chapterId: row.chapterId ?? null,
-  });
-  const convo = history
+  // The tutor's intent, distilled from the conversation → the worker's brief.
+  const brief = history
     .map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`)
     .join("\n\n");
 
-  const loList = (ls: string[]) =>
-    ls.length ? ls.map((d, n) => `  ${n + 1}. ${d}`).join("\n") : "  (none recorded)";
-
-  const prompt = `${grounding}
-
-===== AUTHORING BRIEF (from the conversation with the tutor) =====
-${convo || "(no conversation — author to the student's weakest areas in the grounding above)"}
-===== END BRIEF =====
-
-CHAPTER: ${st.chapterName}
-TOPIC: ${st.topicName}
-SUB-TOPIC: ${st.name}
-
-CONCEPTUAL LEARNING OBJECTIVES:
-${loList(conceptualLos)}
-
-PROCEDURAL LEARNING OBJECTIVES:
-${loList(proceduralLos)}
-
-HOW MANY: write exactly ${args.count} question${args.count === 1 ? "" : "s"}, as an ordered scaffolded sequence, AIMED AT THIS STUDENT'S WEAKNESS as established above.
-
-Author the set now. Apply §1–§6 and self-score each on the rubric (honest low on at least one axis). Return the structured JSON object with a "questions" array.`;
-
-  const drafts = await runVendoredAuthorCall(row.vendor as VendorChoice, prompt, args.subTopicId);
+  // QA3-e: spawn a FRESH scoped worker for this ONE sub_topic — it assembles its
+  // own narrow slice (method pack + raw topics.md + LOs + bank) from the brief.
+  // Replaces the in-line broad-grounding structured call (runVendoredAuthorCall).
+  const { drafts } = await spawnAuthoringWorker(tx, {
+    boardId: row.boardId,
+    chatId: row.id,
+    subTopicId: args.subTopicId,
+    vendor: row.vendor as VendorChoice,
+    count: args.count,
+    brief,
+  });
 
   // FIG-AUTH (D-FIG-5): persist as draft rows (ids for render/preview); not live.
   const persisted = await persistDrafts(tx, {
@@ -951,32 +1084,6 @@ async function runVendoredJson<T>(opts: {
   throw lastErr;
 }
 
-// Claude's strict-shape instruction for the question-authoring JSON (Gemini uses
-// geminiQuestionSchema instead). `image` is optional (null when no figure).
-const CLAUDE_AUTHOR_FORMAT = `${QUESTION_AUTHOR_SYSTEM}
-
-OUTPUT FORMAT (STRICT): respond with ONLY a single JSON object, no prose, no markdown fences, of the exact shape:
-{"questions":[{"axis":"conceptual|procedural|both","stem":"...","referenceAnswer":"...","explanation":"... or null","intent":"...","rubric":{"ar":0,"ms":0,"mr":0,"ba":0,"gl":0},"honestLowReason":"...","image":null}]}
-Every question MUST include ALL FIVE rubric axes (ar, ms, mr, ba, gl). Set "image" to null unless a figure is genuinely required; when required, use {"description":"...","shows":["..."],"hides":["..."]}.`;
-
-/** The structured question-authoring call, vendor-aware. Returns N drafts. */
-function runVendoredAuthorCall(
-  vendor: VendorChoice,
-  prompt: string,
-  label: string,
-): Promise<DraftItem[]> {
-  return runVendoredJson({
-    vendor,
-    geminiSystem: QUESTION_AUTHOR_SYSTEM,
-    geminiResponseSchema: geminiQuestionSchema,
-    claudeSystem: CLAUDE_AUTHOR_FORMAT,
-    prompt,
-    parse: (raw) => draftBatchSchema.parse(raw).questions,
-    label: `authoring-chat:${label}`,
-    endpoint: AUTHORING_CALL_ENDPOINT,
-  });
-}
-
 // ───────────────────────── proposeTarget (consent-in-chat, allowlist-bound) ─────────────────────────
 
 const PROPOSE_SYSTEM = `You help a tutor decide which ONE sub-topic to author practice questions for — for a specific student — and how many. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of the chapter's sub-topics. Pick the single sub-topic that best targets the student's genuine weakness and the tutor's stated intent. Choose a count between 1 and 8 (default 3 unless the conversation asked for a specific number). You MUST pick by the list's number — never invent a sub-topic. Return ONLY {choice, count, rationale}.`;
@@ -1035,11 +1142,13 @@ export async function proposeTarget(
   args: { tutorUserId: string; chatId: string },
 ): Promise<ProposeTargetResult> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
-  if (!row.chapterId) {
+  const scopeChapterIds = chatChapterIds(row);
+  if (scopeChapterIds.length === 0) {
     throw new ProposeTargetError("NO_CHAPTER", "this chat has no chapter scope");
   }
 
-  // The allowlist: the chosen chapter's sub_topics, in hierarchy order.
+  // The allowlist: every chosen chapter's sub_topics, in hierarchy order (one
+  // chapter for blocked, N for interleaved — Slice QA3-d).
   const subs = await tx
     .select({
       subTopicId: subTopic.id,
@@ -1050,23 +1159,27 @@ export async function proposeTarget(
     .from(subTopic)
     .innerJoin(topic, eq(topic.id, subTopic.topicId))
     .innerJoin(chapter, eq(chapter.id, topic.chapterId))
-    .where(eq(chapter.id, row.chapterId))
-    .orderBy(asc(topic.ordinal), asc(subTopic.ordinal));
+    .where(inArray(topic.chapterId, scopeChapterIds))
+    .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
   if (subs.length === 0) {
     throw new ProposeTargetError("NO_SUBTOPICS", "this chapter has no sub-topics");
   }
+  const multiChapter = scopeChapterIds.length > 1;
 
   const grounding = await assembleGrounding(tx, {
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
-    chapterId: row.chapterId ?? null,
+    chapterIds: chatChapterIds(row),
   });
   const history = parseMessages(row.messages);
   const convo = history
     .map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`)
     .join("\n\n");
   const list = subs
-    .map((s, i) => `  ${i + 1}. ${s.topicName} › ${s.subTopicName}`)
+    .map(
+      (s, i) =>
+        `  ${i + 1}. ${multiChapter ? `${s.chapterName} › ` : ""}${s.topicName} › ${s.subTopicName}`,
+    )
     .join("\n");
 
   const prompt = `${grounding}
@@ -1075,7 +1188,7 @@ export async function proposeTarget(
 ${convo || "(no conversation yet — use the grounding to pick the student's weakest area)"}
 ===== END CONVERSATION =====
 
-SUB-TOPICS IN THIS CHAPTER (choose ONE by its number):
+${multiChapter ? "SUB-TOPICS ACROSS THESE CHAPTERS" : "SUB-TOPICS IN THIS CHAPTER"} (choose ONE by its number):
 ${list}
 
 Pick the ONE sub-topic to author questions for now and how many (1–8, default 3). Return {choice, count, rationale}.`;
@@ -1110,6 +1223,345 @@ Pick the ONE sub-topic to author questions for now and how many (1–8, default 
     chapterName: chosen.chapterName,
     count,
     rationale: parsed.rationale,
+  };
+}
+
+// ───────────────────────── proposeTargetSet (interleaved fan-out, QA3-e-2) ─────────────────────────
+
+// The set proposer (interleaved authoring). Where proposeTarget picks ONE
+// sub_topic, this picks a SET (2–5) that together make a good interleaved
+// practice mix across the chat's chosen chapters — the master-side selection that
+// feeds the parallel fan-out (authorSetFromChat). Interleaved is a policy of the
+// FE (it only offers this in interleaved mode); the service stays general.
+const PROPOSE_SET_MAX = 5;
+const PROPOSE_SET_ENDPOINT = "authoring.proposeTargetSet";
+
+const PROPOSE_SET_SYSTEM = `You help a tutor assemble an INTERLEAVED practice set for a specific student — a MIX of sub-topics (from possibly different chapters) that are worth practising together so the student must DISCRIMINATE between them, not just drill one skill. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics across the chosen chapters. Pick 2–${PROPOSE_SET_MAX} sub-topics that (a) target genuine weaknesses and (b) are close enough to be confusable / benefit from being mixed. For EACH pick, choose a small count (1–4; interleaved sets are short per sub-topic — 2 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,count}], rationale} where rationale is one sentence on why this MIX.`;
+
+const proposeSetResultSchema = z.object({
+  picks: z
+    .array(z.object({ choice: z.number().int(), count: z.number().int() }))
+    .min(1),
+  rationale: z.string().default(""),
+});
+
+const geminiProposeSetSchema = {
+  type: Type.OBJECT,
+  properties: {
+    picks: {
+      type: Type.ARRAY,
+      description: "2–5 sub-topics to author as an interleaved set",
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          choice: {
+            type: Type.INTEGER,
+            description: "the 1-based number of the sub-topic, from the list",
+          },
+          count: {
+            type: Type.INTEGER,
+            description: "how many questions for this sub-topic (1–4); 2 is a sensible default",
+          },
+        },
+        required: ["choice", "count"],
+      },
+    },
+    rationale: {
+      type: Type.STRING,
+      description: "one sentence: why this MIX of sub-topics is worth interleaving",
+    },
+  },
+  required: ["picks", "rationale"],
+} as const;
+
+const CLAUDE_PROPOSE_SET_FORMAT = `${PROPOSE_SET_SYSTEM}
+
+OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"count":<1-4>}],"rationale":"..."}. No prose, no fences.`;
+
+export type ProposeSetPick = {
+  subTopicId: string;
+  subTopicName: string;
+  topicName: string;
+  chapterName: string;
+  count: number;
+};
+export type ProposeSetResult = {
+  chatId: string;
+  studentId: string;
+  rationale: string;
+  picks: ProposeSetPick[];
+};
+
+/**
+ * Propose an interleaved SET of sub-topics + per-sub-topic counts from the
+ * conversation + grounding (QA3-e-2). Like proposeTarget, the model picks BY
+ * NUMBER from the chat's chapter allowlist (index, never a raw UUID — M15), so
+ * every pick is a valid in-scope anchor. Dedups, clamps counts (1–4) and the set
+ * size (≤${PROPOSE_SET_MAX}). Reads-only/re-runnable (fork 4 preserved). The tutor
+ * confirms; authorSetFromChat then fans out.
+ */
+export async function proposeTargetSet(
+  tx: Tx,
+  args: { tutorUserId: string; chatId: string },
+): Promise<ProposeSetResult> {
+  const row = await ownedChat(tx, args.tutorUserId, args.chatId);
+  const scopeChapterIds = chatChapterIds(row);
+  if (scopeChapterIds.length === 0) {
+    throw new ProposeTargetError("NO_CHAPTER", "this chat has no chapter scope");
+  }
+
+  // The allowlist: every chosen chapter's sub_topics, in hierarchy order.
+  const subs = await tx
+    .select({
+      subTopicId: subTopic.id,
+      subTopicName: subTopic.name,
+      topicName: topic.name,
+      chapterName: chapter.name,
+    })
+    .from(subTopic)
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .where(inArray(topic.chapterId, scopeChapterIds))
+    .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
+  if (subs.length === 0) {
+    throw new ProposeTargetError("NO_SUBTOPICS", "these chapters have no sub-topics");
+  }
+  const multiChapter = scopeChapterIds.length > 1;
+
+  const grounding = await assembleGrounding(tx, {
+    tutorUserId: args.tutorUserId,
+    studentId: row.studentId,
+    chapterIds: scopeChapterIds,
+  });
+  const history = parseMessages(row.messages);
+  const convo = history
+    .map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`)
+    .join("\n\n");
+  const list = subs
+    .map(
+      (s, i) =>
+        `  ${i + 1}. ${multiChapter ? `${s.chapterName} › ` : ""}${s.topicName} › ${s.subTopicName}`,
+    )
+    .join("\n");
+
+  const prompt = `${grounding}
+
+===== CONVERSATION SO FAR =====
+${convo || "(no conversation yet — use the grounding to pick a confusable mix of the student's weakest areas)"}
+===== END CONVERSATION =====
+
+SUB-TOPICS ACROSS THESE CHAPTERS (choose 2–${PROPOSE_SET_MAX} by their numbers, as an interleaved mix):
+${list}
+
+Assemble the interleaved set now. Return {picks:[{choice,count}], rationale}.`;
+
+  const parsed = await runVendoredJson<z.infer<typeof proposeSetResultSchema>>({
+    vendor: row.vendor as VendorChoice,
+    geminiSystem: PROPOSE_SET_SYSTEM,
+    geminiResponseSchema: geminiProposeSetSchema,
+    claudeSystem: CLAUDE_PROPOSE_SET_FORMAT,
+    prompt,
+    parse: (raw) => proposeSetResultSchema.parse(raw),
+    label: `propose-set:${args.chatId}`,
+    endpoint: PROPOSE_SET_ENDPOINT,
+  });
+
+  // Clamp each choice onto a real allowlist entry, clamp counts (1–4), DEDUP by
+  // sub_topic (a repeated number collapses), and cap the set size.
+  const seen = new Set<string>();
+  const picks: ProposeSetPick[] = [];
+  for (const p of parsed.picks) {
+    const idx = Math.min(Math.max(p.choice, 1), subs.length) - 1;
+    const chosen = subs[idx]!;
+    if (seen.has(chosen.subTopicId)) continue;
+    seen.add(chosen.subTopicId);
+    picks.push({
+      subTopicId: chosen.subTopicId,
+      subTopicName: chosen.subTopicName,
+      topicName: chosen.topicName,
+      chapterName: chosen.chapterName,
+      count: Math.min(Math.max(p.count, 1), 4),
+    });
+    if (picks.length >= PROPOSE_SET_MAX) break;
+  }
+  if (picks.length === 0) {
+    // The model returned only out-of-range/dup picks — fall back to the first
+    // allowlist entry so the tutor still gets an actionable proposal.
+    const first = subs[0]!;
+    picks.push({
+      subTopicId: first.subTopicId,
+      subTopicName: first.subTopicName,
+      topicName: first.topicName,
+      chapterName: first.chapterName,
+      count: 2,
+    });
+  }
+
+  return {
+    chatId: row.id,
+    studentId: row.studentId,
+    rationale: parsed.rationale,
+    picks,
+  };
+}
+
+// ───────────────────────── authorSetFromChat (parallel fan-out, QA3-e-2) ─────────────────────────
+
+export type AuthorSetGroup = {
+  subTopicId: string;
+  subTopicName: string;
+  topicName: string;
+  chapterName: string;
+  nextOrdinal: number;
+  drafts: PersistedDraft[];
+};
+export type AuthorSetFailure = {
+  subTopicId: string;
+  subTopicName: string;
+  error: string;
+};
+export type AuthorSetResult = {
+  chatId: string;
+  studentId: string;
+  groups: AuthorSetGroup[];
+  failures: AuthorSetFailure[];
+};
+
+/**
+ * Author an interleaved SET: fan out one scoped worker PER sub_topic, in PARALLEL,
+ * each in its OWN board-scoped transaction (QA3-e-2, D-QA3-e2-1). A single Postgres
+ * tx can't run concurrent statements, so each worker opens a fresh withBoard(tx) —
+ * its own pooled connection + RLS claim — and the fan-out is Promise.allSettled so
+ * ONE sub_topic's worker failing returns the rest (fault isolation) with the
+ * failure surfaced, never silently dropped. Reuses spawnAuthoringWorker +
+ * persistDrafts VERBATIM (the worker is unchanged; only the master-side fan-out is
+ * new). The ownership + scope guards run first on the caller's tx (fail fast on a
+ * bogus/cross-scope id BEFORE spending any AI).
+ */
+export async function authorSetFromChat(
+  tx: Tx,
+  args: {
+    boardId: string;
+    tutorUserId: string;
+    chatId: string;
+    targets: { subTopicId: string; count: number }[];
+  },
+): Promise<AuthorSetResult> {
+  const row = await ownedChat(tx, args.tutorUserId, args.chatId);
+  const history = parseMessages(row.messages);
+  const brief = history
+    .map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`)
+    .join("\n\n");
+  const scopeChapterIds = chatChapterIds(row);
+
+  // Resolve + scope-guard EVERY target up front (fail fast). Dedup by sub_topic and
+  // cap the set — the fan-out concurrency must stay under the pool (D-QA3-e2-1).
+  const seen = new Set<string>();
+  const resolved: {
+    id: string;
+    name: string;
+    topicName: string;
+    chapterName: string;
+    count: number;
+  }[] = [];
+  for (const t of args.targets) {
+    if (seen.has(t.subTopicId)) continue;
+    const [st] = await tx
+      .select({
+        id: subTopic.id,
+        name: subTopic.name,
+        topicName: topic.name,
+        chapterId: chapter.id,
+        chapterName: chapter.name,
+      })
+      .from(subTopic)
+      .innerJoin(topic, eq(topic.id, subTopic.topicId))
+      .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+      .where(eq(subTopic.id, t.subTopicId));
+    if (!st) throw new SubTopicNotFoundError(t.subTopicId);
+    if (scopeChapterIds.length > 0 && !scopeChapterIds.includes(st.chapterId)) {
+      throw new SubTopicNotFoundError(t.subTopicId);
+    }
+    seen.add(t.subTopicId);
+    resolved.push({
+      id: st.id,
+      name: st.name,
+      topicName: st.topicName,
+      chapterName: st.chapterName,
+      count: Math.min(Math.max(t.count, 1), 8),
+    });
+    if (resolved.length >= PROPOSE_SET_MAX) break;
+  }
+  if (resolved.length === 0) {
+    throw new SubTopicNotFoundError("(empty set)");
+  }
+
+  // Fan out. Each worker runs in its own withBoard tx (independent connection +
+  // RLS) so the spawns are truly concurrent; the outer `tx` idles meanwhile. The
+  // worker drafts commit per-sub_topic — a later outer failure can't un-author
+  // them (they re-surface via listDrafts), which is the intended fault isolation.
+  const settled = await Promise.allSettled(
+    resolved.map((r) =>
+      withBoard(args.boardId, async (wtx) => {
+        const nextOrdinal = await nextOrdinalFor(wtx, r.id);
+        const { drafts } = await spawnAuthoringWorker(wtx, {
+          boardId: args.boardId,
+          chatId: row.id,
+          subTopicId: r.id,
+          vendor: row.vendor as VendorChoice,
+          count: r.count,
+          brief,
+        });
+        const persisted = await persistDrafts(wtx, {
+          boardId: args.boardId,
+          subTopicId: r.id,
+          targetStudentId: row.studentId,
+          drafts,
+        });
+        return {
+          subTopicId: r.id,
+          subTopicName: r.name,
+          topicName: r.topicName,
+          chapterName: r.chapterName,
+          nextOrdinal,
+          drafts: persisted,
+        } satisfies AuthorSetGroup;
+      }),
+    ),
+  );
+
+  const groups: AuthorSetGroup[] = [];
+  const failures: AuthorSetFailure[] = [];
+  settled.forEach((s, i) => {
+    if (s.status === "fulfilled") {
+      groups.push(s.value);
+    } else {
+      const r = resolved[i]!;
+      console.error(
+        `[authoring-set] ${r.id} (${r.name}) FAILED: ${String((s.reason as Error)?.message ?? s.reason).slice(0, 200)}`,
+      );
+      failures.push({
+        subTopicId: r.id,
+        subTopicName: r.name,
+        error: String((s.reason as Error)?.message ?? s.reason).slice(0, 300),
+      });
+    }
+  });
+
+  // Keep the chat's focus pointing at a real authored sub_topic (parity with the
+  // single-target paths). Only when at least one group succeeded.
+  if (groups.length > 0) {
+    await tx
+      .update(authoringChat)
+      .set({ subTopicId: groups[0]!.subTopicId, updatedAt: new Date() })
+      .where(eq(authoringChat.id, row.id));
+  }
+
+  return {
+    chatId: row.id,
+    studentId: row.studentId,
+    groups,
+    failures,
   };
 }
 
@@ -1160,7 +1612,7 @@ export async function reviseDraft(
     }
   }
 
-  const prompt = `Revise this ONE question. Keep it aimed at the same target and axis unless the instruction says otherwise; apply the tutor's instruction; keep it SUBJECTIVE and to the question-craft bar (§1–§7).
+  const prompt = `Revise this ONE question. Keep it aimed at the same target and axis unless the instruction says otherwise; apply the tutor's instruction; keep it SUBJECTIVE and to the question-craft bar.
 ${loBlock}
 EXISTING QUESTION (JSON):
 ${JSON.stringify(existingJson, null, 2)}
@@ -1169,11 +1621,18 @@ TUTOR'S REVISION INSTRUCTION: ${note}
 
 Return the revised question as a "questions" array containing EXACTLY ONE question, in the same JSON shape.`;
 
-  const drafts = await runVendoredAuthorCall(
-    row.vendor as VendorChoice,
+  // Refinement authors to the SAME method pack/bar as the worker (QA3-e).
+  const pack = await loadMethodPack();
+  const drafts = await runVendoredJson({
+    vendor: row.vendor as VendorChoice,
+    geminiSystem: pack,
+    geminiResponseSchema: geminiQuestionSchema,
+    claudeSystem: claudeSystemFor(pack),
     prompt,
-    `revise:${args.chatId}`,
-  );
+    parse: (raw) => draftBatchSchema.parse(raw).questions,
+    label: `authoring-chat:revise:${args.chatId}`,
+    endpoint: REVISE_ENDPOINT,
+  });
   const revised = drafts[0];
   if (!revised) throw new Error("revision returned no question");
   // Persist the revision in-place (recomposes pedagogical_note, logs the edit).

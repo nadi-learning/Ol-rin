@@ -1,0 +1,224 @@
+/* Slice QA3-b — admin topics.md ingest tool. All `.adm-`-scoped (dodges the
+   global revision-shell.css landmine, same discipline as .par-/.tut-/.rev-). */
+
+.adm-root {
+  min-height: 100vh;
+  padding: 28px clamp(16px, 4vw, 48px);
+  background: var(--paper, #f5f2ee);
+  color: var(--ink, #1c1a17);
+}
+
+.adm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.adm-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft, #6b6459);
+}
+.adm-title {
+  font-size: 24px;
+  font-weight: 650;
+  margin: 2px 0 0;
+}
+.adm-signout {
+  border: 1px solid var(--line, #ddd6 cc);
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.adm-error {
+  background: #fdecec;
+  border: 1px solid #f3b4b4;
+  color: #9b1c1c;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  white-space: pre-wrap;
+}
+.adm-ok {
+  background: #eaf7ee;
+  border: 1px solid #a6d9b8;
+  color: #1c6b3a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+
+.adm-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+@media (max-width: 880px) {
+  .adm-grid { grid-template-columns: 1fr; }
+}
+
+.adm-panel {
+  background: #fff;
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.adm-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft, #6b6459);
+}
+.adm-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.adm-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line, #ddd6cc);
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--blue, #2563eb);
+  cursor: pointer;
+}
+.adm-upload:hover { background: #f2f6ff; }
+.adm-filename {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  font-family: ui-monospace, monospace;
+}
+.adm-select {
+  padding: 9px 10px;
+  border: 1px solid var(--line, #ddd6cc);
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fff;
+}
+.adm-textarea {
+  min-height: 300px;
+  padding: 12px;
+  border: 1px solid var(--line, #ddd6cc);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.adm-btn {
+  align-self: flex-start;
+  background: var(--blue, #2563eb);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.adm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.adm-btn-commit {
+  margin-top: 12px;
+  background: #1c6b3a;
+}
+
+.adm-muted {
+  color: var(--ink-soft, #8a8175);
+  font-size: 14px;
+}
+.adm-invalid {
+  background: #fff7e6;
+  border: 1px solid #f0d089;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #7a5a12;
+  margin-bottom: 12px;
+}
+.adm-invalid ul { margin: 6px 0 0 18px; }
+
+.adm-preview {
+  border: 1px solid var(--line, #eee7dd);
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.adm-topic { margin-bottom: 14px; }
+.adm-topic-name {
+  font-weight: 650;
+  font-size: 15px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line, #eee7dd);
+  margin-bottom: 8px;
+}
+.adm-sub { margin: 0 0 10px 8px; }
+.adm-sub-name { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.adm-los { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.adm-los li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.adm-axis {
+  flex: none;
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 5px;
+  font-size: 11px; font-weight: 700; color: #fff;
+}
+.adm-axis-conceptual { background: #2563eb; }
+.adm-axis-procedural { background: #e87b35; }
+.adm-code { flex: none; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--ink-soft, #8a8175); }
+.adm-lo-desc { color: var(--ink, #33302b); }
+.adm-thresholds {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft, #6b6459);
+}
+
+/* Extract progress — indeterminate bar + elapsed timer (the AI call is uncapped
+   and can run a few minutes; keeps the UI from reading as frozen). */
+.adm-progress {
+  margin-top: 10px;
+}
+.adm-progress-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line, #e6e0d7);
+  overflow: hidden;
+}
+.adm-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 35%;
+  border-radius: 999px;
+  background: var(--blue, #2563eb);
+  animation: adm-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes adm-progress-slide {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+.adm-progress-hint {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-soft, #8a8175);
+}

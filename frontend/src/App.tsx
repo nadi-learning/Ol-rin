@@ -10,6 +10,7 @@ import { InsightsPage } from "./components/InsightsPage";
 import { PacePlanPage } from "./components/PacePlanPage";
 import { TutorPage } from "./components/TutorPage";
 import { ParentPage } from "./components/ParentPage";
+import { AdminPage } from "./components/AdminPage";
 import "./theme/tokens.css";
 import "./components/app-shell.css";
 import "./components/gate.css";
@@ -84,6 +85,12 @@ export function App() {
   // separately from the student shell.
   if (me.role === "parent") {
     return <ParentPage parentName={displayName} onSignOut={() => signOut()} />;
+  }
+
+  // Slice QA3-b — admins get the topics.md ingest tool (D-QA3-6), routed
+  // separately from the student/tutor/parent shells.
+  if (me.role === "admin") {
+    return <AdminPage adminName={displayName} onSignOut={() => signOut()} />;
   }
 
   const studentName = displayName;

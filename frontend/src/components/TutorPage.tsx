@@ -10,9 +10,10 @@ import "./tutor.css";
 // global revision-shell.css landmine (same discipline as .qc-/.rev-/.prac-).
 
 type Student = Awaited<ReturnType<typeof trpc.tutor.listStudents.query>>[number];
-type MasteryCard = Awaited<
-  ReturnType<typeof trpc.tutor.getStudentMastery.query>
+type ProgressChapterView = Awaited<
+  ReturnType<typeof trpc.tutor.getProgressTree.query>
 >[number];
+type AxisRollupView = ProgressChapterView["conceptual"];
 type PendingItem = Awaited<
   ReturnType<typeof trpc.tutor.listPendingStage2.query>
 >[number];
@@ -120,7 +121,6 @@ function StudentDetail({
   student: Student;
   onBack: () => void;
 }) {
-  const [mastery, setMastery] = useState<MasteryCard[] | null>(null);
   const [pending, setPending] = useState<PendingItem[] | null>(null);
   const [due, setDue] = useState<DueGroup[] | null>(null);
   const [assignments, setAssignments] = useState<AssignmentView[] | null>(null);
@@ -131,13 +131,11 @@ function StudentDetail({
   const reload = useCallback(() => {
     setError(null);
     Promise.all([
-      trpc.tutor.getStudentMastery.query({ studentId: student.studentId }),
       trpc.tutor.listPendingStage2.query({ studentId: student.studentId }),
       trpc.tutor.getDueQueue.query({ studentId: student.studentId }),
       trpc.tutor.listAssignments.query({ studentId: student.studentId }),
     ])
-      .then(([m, p, d, a]) => {
-        setMastery(m);
+      .then(([p, d, a]) => {
         setPending(p);
         setDue(d);
         setAssignments(a);
@@ -146,7 +144,6 @@ function StudentDetail({
   }, [student.studentId]);
 
   useEffect(() => {
-    setMastery(null);
     setPending(null);
     setDue(null);
     setAssignments(null);
@@ -185,7 +182,6 @@ function StudentDetail({
       <nav className="tut-tabs" role="tablist">
         <TutorTabButton id="assess" tab={tab} onPick={setTab} label="Assess" badge={pendingCount} />
         <TutorTabButton id="assign" tab={tab} onPick={setTab} label="Assign" badge={dueCount} />
-        <TutorTabButton id="mastery" tab={tab} onPick={setTab} label="Mastery" />
         <TutorTabButton id="reports" tab={tab} onPick={setTab} label="Reports" />
         <TutorTabButton id="author" tab={tab} onPick={setTab} label="Author" />
       </nav>
@@ -228,13 +224,6 @@ function StudentDetail({
         </>
       )}
 
-      {tab === "mastery" && (
-        <section className="tut-section">
-          <h3 className="tut-section-title">Certified mastery</h3>
-          <MasteryList mastery={mastery} />
-        </section>
-      )}
-
       {tab === "reports" && (
         <section className="tut-section">
           <h3 className="tut-section-title">Progress reports (parent sign-off)</h3>
@@ -242,12 +231,350 @@ function StudentDetail({
         </section>
       )}
 
-      {tab === "author" && <AuthorChat student={student} nav={nav} />}
+      {tab === "author" && <AuthorTab student={student} nav={nav} />}
     </div>
   );
 }
 
-type TutorTab = "assess" | "assign" | "mastery" | "reports" | "author";
+type TutorTab = "assess" | "assign" | "reports" | "author";
+
+// Slice QA3-c: the Author tab is PROGRESS-FIRST (D-QA3-1), a two-level drill-down
+// (eyeball feedback): (1) chapter list — each chapter + its two-axis rollup;
+// (2) click a chapter → detail (topics → sub-topics) with a Start-authoring CTA
+// that opens the chat PRE-SCOPED to that chapter (no global "author anything").
+function AuthorTab({ student, nav }: { student: Student; nav: Nav | null }) {
+  const [tree, setTree] = useState<ProgressChapterView[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openChapterId, setOpenChapterId] = useState<string | null>(null);
+  const [authorChapterId, setAuthorChapterId] = useState<string | null>(null);
+  // QA3-d: the L0 launcher (model → mode → chapter(s)) and the launched chat scope.
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [launch, setLaunch] = useState<LaunchConfig | null>(null);
+  // A past chat the tutor chose to resume straight from the landing (no new launch).
+  const [resumeChatId, setResumeChatId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTree(null);
+    setError(null);
+    setOpenChapterId(null);
+    setAuthorChapterId(null);
+    setLauncherOpen(false);
+    setLaunch(null);
+    setResumeChatId(null);
+    trpc.tutor.getProgressTree
+      .query({ studentId: student.studentId })
+      .then(setTree)
+      .catch((e) => setError(String(e?.message ?? e)));
+  }, [student.studentId]);
+
+  // (0a) resume a past chat picked from the landing history dropdown.
+  if (resumeChatId) {
+    return (
+      <div className="tut-authwrap">
+        <button className="tut-back" onClick={() => setResumeChatId(null)}>
+          ← Back to progress
+        </button>
+        <AuthorChat student={student} nav={nav} resumeChatId={resumeChatId} />
+      </div>
+    );
+  }
+
+  // (0) a launched chat (QA3-d) — scoped to {model, mode, chapters} from the modal.
+  if (launch) {
+    return (
+      <div className="tut-authwrap">
+        <button className="tut-back" onClick={() => setLaunch(null)}>
+          ← Back to progress
+        </button>
+        <AuthorChat student={student} nav={nav} launch={launch} />
+      </div>
+    );
+  }
+
+  // (3) authoring, scoped to the chapter the tutor drilled into (fast path = blocked)
+  if (authorChapterId) {
+    return (
+      <div className="tut-authwrap">
+        <button className="tut-back" onClick={() => setAuthorChapterId(null)}>
+          ← Back to progress
+        </button>
+        <AuthorChat student={student} nav={nav} initialChapterId={authorChapterId} />
+      </div>
+    );
+  }
+
+  // (2) chapter detail
+  if (openChapterId) {
+    const ch = tree?.find((c) => c.chapterId === openChapterId) ?? null;
+    return (
+      <ChapterDetail
+        studentName={student.name ?? "the student"}
+        chapter={ch}
+        onBack={() => setOpenChapterId(null)}
+        onAuthor={() => setAuthorChapterId(openChapterId)}
+      />
+    );
+  }
+
+  // (1) chapter list + the L0 "Author questions" launcher (multi-chapter / mode)
+  return (
+    <section className="tut-section">
+      <div className="tut-author-head">
+        <div>
+          <h3 className="tut-section-title">Where is {student.name ?? "the student"}?</h3>
+          <p className="tut-muted">
+            Pick a chapter to drill in, or launch an authoring session across one or
+            more chapters.
+          </p>
+        </div>
+        <div className="tut-author-head-actions">
+          <HistoryPicker
+            studentId={student.studentId}
+            activeChatId={null}
+            onResume={(chatId) => setResumeChatId(chatId)}
+          />
+          <button
+            className="tut-btn-primary"
+            onClick={() => setLauncherOpen(true)}
+            disabled={nav === null || nav.length === 0}
+          >
+            Author questions →
+          </button>
+        </div>
+      </div>
+      <ChapterList tree={tree} error={error} onOpen={setOpenChapterId} />
+      {launcherOpen && (
+        <AuthorLauncher
+          chapters={nav ?? []}
+          onClose={() => setLauncherOpen(false)}
+          onConfirm={(cfg) => {
+            setLauncherOpen(false);
+            setLaunch(cfg);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+// QA3-d launcher config: the {model, mode, chapters} the modal collects → seeds a
+// scoped AuthorChat.
+type LaunchConfig = {
+  vendor: VendorChoice;
+  mode: "blocked" | "interleaved";
+  chapterIds: string[];
+};
+
+// The L0 "Author questions" modal (QA3-d): model → mode → chapter(s). Blocked =
+// single-select (one chapter); interleaved = multi-select (grounded across the set).
+function AuthorLauncher({
+  chapters,
+  onClose,
+  onConfirm,
+}: {
+  chapters: Nav;
+  onClose: () => void;
+  onConfirm: (cfg: LaunchConfig) => void;
+}) {
+  const [vendor, setVendor] = useState<VendorChoice>("gemini_api");
+  const [mode, setMode] = useState<"blocked" | "interleaved">("blocked");
+  const [picked, setPicked] = useState<string[]>([]);
+  // Chapter picker is now a searchable dropdown: `ddOpen` toggles the panel,
+  // `query` filters the option list by chapter name.
+  const [ddOpen, setDdOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ddRef = useRef<HTMLDivElement>(null);
+
+  // Switching to blocked collapses any multi-selection to at most one chapter.
+  function selectMode(m: "blocked" | "interleaved") {
+    setMode(m);
+    if (m === "blocked") setPicked((p) => (p.length > 1 ? [p[0]!] : p));
+  }
+  function toggleChapter(id: string) {
+    if (mode === "blocked") {
+      setPicked([id]);
+      // Blocked = single pick → close the dropdown once chosen.
+      setDdOpen(false);
+      setQuery("");
+    } else {
+      setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+    }
+  }
+
+  // Close the dropdown on outside-click / Escape (without closing the modal).
+  useEffect(() => {
+    if (!ddOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (ddRef.current && !ddRef.current.contains(e.target as Node)) setDdOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setDdOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [ddOpen]);
+
+  const q = query.trim().toLowerCase();
+  const filteredChapters = q
+    ? chapters.filter((c) => c.name.toLowerCase().includes(q))
+    : chapters;
+  const pickedNames = chapters.filter((c) => picked.includes(c.id)).map((c) => c.name);
+  const ddSummary =
+    picked.length === 0
+      ? mode === "blocked"
+        ? "Select a chapter"
+        : "Select chapters"
+      : mode === "blocked"
+        ? pickedNames[0]
+        : `${picked.length} chapter${picked.length > 1 ? "s" : ""} selected`;
+
+  const ready = picked.length >= 1 && (mode === "blocked" ? picked.length === 1 : true);
+
+  return (
+    <div className="tut-launch-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="tut-launch-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="tut-launch-head">
+          <h4 className="tut-launch-title">Author questions</h4>
+          <button className="tut-launch-x" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        <div className="tut-launch-field">
+          <span className="tut-chat-vendorlabel">Model</span>
+          <div className="tut-chat-vendortoggle" role="tablist">
+            {(["gemini_api", "claude_cli"] as VendorChoice[]).map((v) => (
+              <button
+                key={v}
+                role="tab"
+                aria-selected={vendor === v}
+                className={`tut-chat-vendoropt${vendor === v ? " is-on" : ""}`}
+                onClick={() => setVendor(v)}
+              >
+                {VENDOR_LABEL[v]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="tut-launch-field">
+          <span className="tut-chat-vendorlabel">Mode</span>
+          <div className="tut-chat-vendortoggle" role="tablist">
+            {(
+              [
+                ["blocked", "Blocked"],
+                ["interleaved", "Interleaved"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={mode === m}
+                className={`tut-chat-vendoropt${mode === m ? " is-on" : ""}`}
+                onClick={() => selectMode(m)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="tut-launch-field">
+          <span className="tut-chat-vendorlabel">
+            {mode === "blocked" ? "Chapter" : "Chapters"}
+          </span>
+          <div className="tut-launch-dd" ref={ddRef}>
+            <button
+              type="button"
+              className={`tut-launch-dd-trigger${ddOpen ? " is-open" : ""}`}
+              aria-expanded={ddOpen}
+              onClick={() => setDdOpen((o) => !o)}
+            >
+              <span
+                className={`tut-launch-dd-value${picked.length === 0 ? " is-placeholder" : ""}`}
+              >
+                {ddSummary}
+              </span>
+              <span className="tut-launch-dd-caret" aria-hidden>
+                ▾
+              </span>
+            </button>
+            {mode === "interleaved" && picked.length > 0 && (
+              <div className="tut-launch-dd-chips">
+                {chapters
+                  .filter((c) => picked.includes(c.id))
+                  .map((c) => (
+                    <span key={c.id} className="tut-launch-dd-chip">
+                      {c.name}
+                      <button
+                        type="button"
+                        className="tut-launch-dd-chip-x"
+                        aria-label={`Remove ${c.name}`}
+                        onClick={() => toggleChapter(c.id)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+              </div>
+            )}
+            {ddOpen && (
+              <div className="tut-launch-dd-panel">
+                <input
+                  className="tut-launch-dd-search"
+                  type="text"
+                  placeholder="Search chapters…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  autoFocus
+                />
+                <div className="tut-launch-chlist">
+                  {filteredChapters.length === 0 ? (
+                    <div className="tut-launch-dd-empty">No chapters match</div>
+                  ) : (
+                    filteredChapters.map((c) => {
+                      const on = picked.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`tut-launch-chopt${on ? " is-on" : ""}`}
+                          onClick={() => toggleChapter(c.id)}
+                        >
+                          <span className="tut-launch-chmark" aria-hidden>
+                            {on ? (mode === "blocked" ? "●" : "✓") : ""}
+                          </span>
+                          {c.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="tut-launch-actions">
+          <button className="tut-back" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn-solid"
+            disabled={!ready}
+            onClick={() => onConfirm({ vendor, mode, chapterIds: picked })}
+          >
+            Start authoring →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function TutorTabButton({
   id,
@@ -863,36 +1190,195 @@ function Observations({
   );
 }
 
-function MasteryList({ mastery }: { mastery: MasteryCard[] | null }) {
-  if (mastery === null) return <p className="tut-muted">Loading…</p>;
-  if (mastery.length === 0)
-    return (
-      <p className="tut-muted">
-        No certified mastery yet — this student hasn’t been assessed.
-      </p>
-    );
+// ── Slice QA3-c: progress-first two-axis view (D-QA3-1/2), two-level drill-down.
+// Derived nodes show the WEAKEST-LINK (min of descendant sub_topic levels) as the
+// headline chip + a spread bar. All `.tut-pt-`-scoped.
+function ProgressLegend() {
   return (
-    <div className="tut-mastery-grid">
-      {mastery.map((m) => (
-        <div key={m.subTopicId} className="tut-mastery-card">
-          <div className="tut-crumb">
-            {m.chapterName} · {m.topicName}
-          </div>
-          <div className="tut-mastery-st">{m.subTopicName}</div>
-          <div className="tut-levels">
-            <span className="tut-axislevel">
-              <span className="tut-axislabel">Conceptual</span>
-              <span className="tut-axisnum">{m.conceptualLevel}</span>
-            </span>
-            <span className="tut-axislevel">
-              <span className="tut-axislabel">Procedural</span>
-              <span className="tut-axisnum">{m.proceduralLevel}</span>
-            </span>
-          </div>
-          <p className="tut-desc">{m.description}</p>
-        </div>
-      ))}
+    <div className="tut-pt-legend">
+      <span className="tut-pt-legend-scale">
+        <span className="tut-pt-legend-cap">C</span>onceptual ·{" "}
+        <span className="tut-pt-legend-cap">P</span>rocedural · level
+        {[0, 1, 2, 3, 4, 5].map((n) => (
+          <span key={n} className={`tut-pt-chip tut-lvl-${n} tut-pt-legend-lvl`}>
+            {n}
+          </span>
+        ))}
+      </span>
+      <span className="tut-pt-legend-note">
+        headline = weakest sub-topic · bar = spread across levels 0–5
+      </span>
     </div>
+  );
+}
+
+// (1) master view — one row per chapter with its two-axis rollup; click → detail.
+function ChapterList({
+  tree,
+  error,
+  onOpen,
+}: {
+  tree: ProgressChapterView[] | null;
+  error: string | null;
+  onOpen: (chapterId: string) => void;
+}) {
+  if (error) return <p className="tut-error">{error}</p>;
+  if (tree === null) return <p className="tut-muted">Loading…</p>;
+  if (tree.length === 0)
+    return <p className="tut-muted">No chapters for this board yet.</p>;
+  return (
+    <div className="tut-pt">
+      <ProgressLegend />
+      <div className="tut-pt-chlist">
+        {tree.map((ch) => (
+          <button
+            key={ch.chapterId}
+            className="tut-pt-chrow"
+            onClick={() => onOpen(ch.chapterId)}
+          >
+            <span className="tut-pt-name">{ch.name}</span>
+            <AxisPair conceptual={ch.conceptual} procedural={ch.procedural} />
+            <span className="tut-pt-chev" aria-hidden>
+              ›
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// (2) detail view — one chapter's topics → sub-topics + the Start-authoring CTA.
+function ChapterDetail({
+  studentName,
+  chapter,
+  onBack,
+  onAuthor,
+}: {
+  studentName: string;
+  chapter: ProgressChapterView | null;
+  onBack: () => void;
+  onAuthor: () => void;
+}) {
+  if (!chapter) {
+    return (
+      <div>
+        <button className="tut-back" onClick={onBack}>
+          ← All chapters
+        </button>
+        <p className="tut-muted">Chapter not found.</p>
+      </div>
+    );
+  }
+  return (
+    <section className="tut-section">
+      <button className="tut-back" onClick={onBack}>
+        ← All chapters
+      </button>
+      <div className="tut-author-head">
+        <div>
+          <h3 className="tut-section-title">{chapter.name}</h3>
+          <p className="tut-muted">
+            {studentName}&rsquo;s topic breakdown — pick the weak spots, then author.
+          </p>
+          <div className="tut-pt-detailrollup">
+            <AxisPair conceptual={chapter.conceptual} procedural={chapter.procedural} />
+          </div>
+        </div>
+        <button className="tut-btn-primary" onClick={onAuthor}>
+          Start authoring →
+        </button>
+      </div>
+      <ProgressLegend />
+      <div className="tut-pt">
+        {chapter.topics.map((tp) => (
+          <div key={tp.topicId} className="tut-pt-node tut-pt-topic-block">
+            <div className="tut-pt-row tut-pt-toprow">
+              <span className="tut-pt-name">{tp.name}</span>
+              <AxisPair conceptual={tp.conceptual} procedural={tp.procedural} />
+            </div>
+            <div className="tut-pt-leaves">
+              {tp.subTopics.map((st) => (
+                <div
+                  key={st.subTopicId}
+                  className={`tut-pt-leaf${st.hasMastery ? "" : " tut-pt-untaught"}`}
+                >
+                  <div className="tut-pt-leaf-head">
+                    <span className="tut-pt-name">{st.name}</span>
+                    {st.hasMastery ? (
+                      <span className="tut-pt-leaf-levels">
+                        <LevelChip axis="c" level={st.conceptualLevel} />
+                        <LevelChip axis="p" level={st.proceduralLevel} />
+                      </span>
+                    ) : (
+                      <span className="tut-pt-tag">untaught</span>
+                    )}
+                  </div>
+                  {st.description && <p className="tut-pt-desc">{st.description}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AxisPair({
+  conceptual,
+  procedural,
+}: {
+  conceptual: AxisRollupView;
+  procedural: AxisRollupView;
+}) {
+  return (
+    <span className="tut-pt-axes">
+      <AxisRollupBadge axis="c" roll={conceptual} />
+      <AxisRollupBadge axis="p" roll={procedural} />
+    </span>
+  );
+}
+
+function AxisRollupBadge({ axis, roll }: { axis: "c" | "p"; roll: AxisRollupView }) {
+  return (
+    <span className="tut-pt-badge">
+      <LevelChip axis={axis} level={roll.level} weak />
+      <span
+        className="tut-pt-spread"
+        title={`spread ${roll.spread.join("/")} (levels 0–5, left→right)`}
+      >
+        {roll.spread.map((n, i) => (
+          <span
+            key={i}
+            className={`tut-pt-seg tut-pt-seg-${i}`}
+            style={{ flexGrow: n, display: n ? undefined : "none" }}
+          />
+        ))}
+      </span>
+    </span>
+  );
+}
+
+function LevelChip({
+  axis,
+  level,
+  weak,
+}: {
+  axis: "c" | "p";
+  level: number;
+  weak?: boolean;
+}) {
+  // Both axes score 0–5. Colour the pill by level (grey→red→orange→yellow→lime→
+  // green, matching the spread-bar palette); the C/P letter still marks the axis.
+  const lvl = Math.max(0, Math.min(5, Math.round(level ?? 0)));
+  return (
+    <span
+      className={`tut-pt-chip tut-lvl-${lvl}`}
+      title={weak ? "weakest sub-topic (min of children)" : undefined}
+    >
+      {axis === "c" ? "C" : "P"} {lvl}
+    </span>
   );
 }
 
@@ -1105,6 +1591,13 @@ type AuthorDraftItem = AuthorDraft["drafts"][number];
 type ProposeResult = Awaited<
   ReturnType<typeof trpc.tutor.proposeAuthoringTarget.mutate>
 >;
+// QA3-e-2: the interleaved set proposal + the fan-out result.
+type ProposeSetResult = Awaited<
+  ReturnType<typeof trpc.tutor.proposeAuthoringSet.mutate>
+>;
+type AuthorSetResult = Awaited<
+  ReturnType<typeof trpc.tutor.authorSetFromChat.mutate>
+>;
 type AuthoredQuestion = Awaited<
   ReturnType<typeof trpc.tutor.listAuthoredQuestions.query>
 >[number];
@@ -1117,6 +1610,11 @@ type ChatSummary = Awaited<
 type ImageSpec = NonNullable<AuthorDraftItem["image"]>;
 type DraftCard = {
   id: string;
+  // QA3-e-2: each card carries its sub_topic so a multi-target (interleaved fan-out)
+  // review can group cards under a per-sub_topic header. Single-target flows pass
+  // the one target's identity; the fan-out passes each group's.
+  subTopicId: string;
+  subTopicName: string;
   axis: "conceptual" | "procedural" | "both";
   stem: string;
   referenceAnswer: string;
@@ -1125,8 +1623,14 @@ type DraftCard = {
   imageId: string | null;
   verifierLabel: string | null;
 };
-const toCard = (d: AuthorDraftItem): DraftCard => ({
+const toCard = (
+  d: AuthorDraftItem,
+  subTopicId: string,
+  subTopicName: string,
+): DraftCard => ({
   id: d.id,
+  subTopicId,
+  subTopicName,
   axis: d.axis as DraftCard["axis"],
   stem: d.stem,
   referenceAnswer: d.referenceAnswer,
@@ -1159,14 +1663,27 @@ const CHAT_STORE_KEY = (studentId: string) => `b2c.authchat.${studentId}`;
 function AuthorChat({
   student,
   nav,
+  initialChapterId,
+  launch,
+  resumeChatId,
 }: {
   student: Student;
   nav: Nav | null;
+  initialChapterId?: string;
+  // QA3-d: when set, auto-start a chat scoped to {model, mode, chapters} and skip
+  // both localStorage rehydrate and the internal single-chapter start gate.
+  launch?: LaunchConfig;
+  // When set, open directly onto this existing chat (resumed from the landing
+  // history dropdown) — skips the launch auto-start, the localStorage rehydrate,
+  // and the internal start gate.
+  resumeChatId?: string;
 }) {
   // Claude is the default author (hybrid model): Claude uses the button→propose→
   // form flow; Gemini additionally authors in-chat via the author_questions tool.
   const [vendor, setVendor] = useState<VendorChoice>("claude_cli");
-  const [startChapterId, setStartChapterId] = useState("");
+  // Pre-scoped to the chapter the tutor drilled into on the progress view
+  // (QA3-c) — no re-picking; the picker stays editable if they change their mind.
+  const [startChapterId, setStartChapterId] = useState(initialChapterId ?? "");
   const [chat, setChat] = useState<ChatView | null>(null);
   const [rehydrating, setRehydrating] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -1186,6 +1703,18 @@ function AuthorChat({
   const [proposal, setProposal] = useState<ProposeResult | null>(null);
   const [proposeCount, setProposeCount] = useState(3);
   const [proposing, setProposing] = useState(false);
+
+  // QA3-e-2: the interleaved SET proposal (a mix of sub-topics + per-sub-topic
+  // counts), awaiting the tutor's go-ahead. Counts stay editable before confirm.
+  // `setFailures` surfaces any sub-topic whose worker failed in the fan-out (loud,
+  // never silently dropped). Interleaved mode only.
+  const [proposalSet, setProposalSet] = useState<ProposeSetResult | null>(null);
+  const [setCounts, setSetCounts] = useState<Record<string, number>>({});
+  const [proposingSet, setProposingSet] = useState(false);
+  const [authoringSet, setAuthoringSet] = useState(false);
+  const [setFailures, setSetFailures] = useState<
+    AuthorSetResult["failures"] | null
+  >(null);
 
   // Drafts (the structured authoring output the tutor edits + saves).
   const [target, setTarget] = useState<Target | null>(null);
@@ -1240,6 +1769,10 @@ function AuthorChat({
     setChat(null);
     setProposal(null);
     setProposing(false);
+    setProposalSet(null);
+    setSetCounts({});
+    setProposingSet(false);
+    setSetFailures(null);
     setTarget(null);
     setCards(null);
     setPreviewMinimized(false);
@@ -1249,9 +1782,41 @@ function AuthorChat({
     setInput("");
   }
 
-  // Rehydrate the active chat for this student on mount / student change.
+  // Rehydrate the active chat for this student on mount / student change. In launch
+  // mode (QA3-d) the tutor explicitly chose a fresh scope in the modal, so we ignore
+  // any stored handle and auto-start with the launch params instead.
   useEffect(() => {
     resetAll();
+    if (launch) {
+      setRehydrating(false);
+      doStart({
+        vendor: launch.vendor,
+        mode: launch.mode,
+        chapterIds: launch.chapterIds,
+      });
+      return;
+    }
+    // Resume-from-landing: load the chosen chat directly, ignoring any stored handle.
+    if (resumeChatId) {
+      setRehydrating(true);
+      let alive = true;
+      trpc.tutor.getAuthoringChat
+        .query({ chatId: resumeChatId })
+        .then((c) => {
+          if (!alive) return;
+          setChat(c);
+          localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+        })
+        .catch((e) => {
+          if (alive) setError(String(e?.message ?? e));
+        })
+        .finally(() => {
+          if (alive) setRehydrating(false);
+        });
+      return () => {
+        alive = false;
+      };
+    }
     setRehydrating(true);
     const saved = localStorage.getItem(CHAT_STORE_KEY(student.studentId));
     if (!saved) {
@@ -1270,7 +1835,7 @@ function AuthorChat({
           studentId: student.studentId,
         });
         if (!live || drafts.length === 0) return;
-        setCards(drafts.map(toCard));
+        setCards(drafts.map((d) => toCard(d, d.subTopicId, d.subTopicName)));
         setPreviewMinimized(false);
         const first = drafts[0]!;
         setTarget({
@@ -1290,7 +1855,7 @@ function AuthorChat({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student.studentId]);
+  }, [student.studentId, launch, resumeChatId]);
 
   // Keep the newest turn in view: on resume/load, after every turn, and while the
   // AI is thinking or a consent card appears (Eyeball feedback #3a / D-AUTHUI-2).
@@ -1300,18 +1865,20 @@ function AuthorChat({
   useEffect(() => {
     const el = canvasRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [chat?.chatId, chat?.messages.length, sending, proposal, authTab]);
+  }, [chat?.chatId, chat?.messages.length, sending, proposal, proposalSet, authTab]);
 
-  function startChat() {
-    if (!startChapterId) return;
+  // The one start path — used by the internal gate (blocked, one chapter) and the
+  // QA3-d launch auto-start (blocked or interleaved, one or many chapters).
+  function doStart(params: {
+    vendor: VendorChoice;
+    mode?: "blocked" | "interleaved";
+    chapterId?: string;
+    chapterIds?: string[];
+  }) {
     setError(null);
     setStarting(true);
     trpc.tutor.startAuthoringChat
-      .mutate({
-        studentId: student.studentId,
-        vendor,
-        chapterId: startChapterId,
-      })
+      .mutate({ studentId: student.studentId, ...params })
       .then((c) => {
         setChat(c);
         localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
@@ -1320,12 +1887,26 @@ function AuthorChat({
       .finally(() => setStarting(false));
   }
 
+  function startChat() {
+    if (!startChapterId) return;
+    doStart({ vendor, mode: "blocked", chapterId: startChapterId });
+  }
+
   // New chat = the ONLY way to switch model/chapter (vendor is thread-locked;
-  // D-AUTH2-1). Clears the stored handle and returns to the start gate.
+  // D-AUTH2-1). Clears the stored handle. In launch mode it re-starts a fresh chat
+  // with the SAME launched scope; otherwise it returns to the internal start gate.
   function newChat() {
     localStorage.removeItem(CHAT_STORE_KEY(student.studentId));
     resetAll();
-    setStartChapterId("");
+    if (launch) {
+      doStart({
+        vendor: launch.vendor,
+        mode: launch.mode,
+        chapterIds: launch.chapterIds,
+      });
+    } else {
+      setStartChapterId("");
+    }
   }
 
   // Resume a past chat from the history picker (Eyeball-#2 item #3).
@@ -1374,7 +1955,7 @@ function AuthorChat({
             subTopicName: d.subTopicName,
             nextOrdinal: d.nextOrdinal,
           });
-          setCards(d.drafts.map(toCard));
+          setCards(d.drafts.map((x) => toCard(x, d.subTopicId, d.subTopicName)));
           setPreviewMinimized(false);
         }
       })
@@ -1429,11 +2010,79 @@ function AuthorChat({
           subTopicName: r.subTopicName,
           nextOrdinal: r.nextOrdinal,
         });
-        setCards(r.drafts.map(toCard));
+        setCards(r.drafts.map((x) => toCard(x, r.subTopicId, r.subTopicName)));
         setPreviewMinimized(false);
       })
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setAuthoring(false));
+  }
+
+  // QA3-e-2: ask the AI to propose an INTERLEAVED SET (a mix of sub-topics + counts)
+  // from the conversation + grounding. Interleaved mode only. The tutor confirms.
+  function proposeSet() {
+    if (!chat || proposingSet) return;
+    setError(null);
+    setSaved(null);
+    setProposingSet(true);
+    trpc.tutor.proposeAuthoringSet
+      .mutate({ chatId: chat.chatId })
+      .then((p) => {
+        setProposalSet(p);
+        setSetCounts(
+          Object.fromEntries(p.picks.map((pk) => [pk.subTopicId, pk.count])),
+        );
+      })
+      .catch((e) => {
+        const msg = String(e?.message ?? e);
+        if (/NO_SUBTOPICS/.test(msg))
+          setError("These chapters have no sub-topics to author for.");
+        else setError(msg);
+      })
+      .finally(() => setProposingSet(false));
+  }
+
+  // The tutor accepted the set → fan out one worker PER sub-topic (parallel, server
+  // side). Drafts across all sub-topics land in the SAME review, grouped. Any
+  // sub-topic whose worker failed is surfaced (setFailures), not silently dropped.
+  function authorSetConfirmed() {
+    if (!chat || !proposalSet) return;
+    const picks = proposalSet.picks;
+    setError(null);
+    setSaved(null);
+    setProposalSet(null);
+    setSetFailures(null);
+    setAuthoringSet(true);
+    trpc.tutor.authorSetFromChat
+      .mutate({
+        chatId: chat.chatId,
+        targets: picks.map((p) => ({
+          subTopicId: p.subTopicId,
+          count: Math.max(1, Math.min(8, setCounts[p.subTopicId] ?? p.count)),
+        })),
+      })
+      .then((r) => {
+        const cs = r.groups.flatMap((g) =>
+          g.drafts.map((d) => toCard(d, g.subTopicId, g.subTopicName)),
+        );
+        if (cs.length > 0) {
+          const first = r.groups[0]!;
+          setTarget({
+            subTopicId: first.subTopicId,
+            subTopicName: first.subTopicName,
+            nextOrdinal: first.nextOrdinal,
+          });
+          setCards(cs);
+          setPreviewMinimized(false);
+        }
+        setSetFailures(r.failures.length > 0 ? r.failures : null);
+        if (cs.length === 0 && r.failures.length > 0) {
+          setError(
+            `Authoring failed for all ${r.failures.length} sub-topic${r.failures.length === 1 ? "" : "s"}. Try again.`,
+          );
+        }
+      })
+      .catch((e) => setError(String(e?.message ?? e)))
+      .finally(() => setAuthoringSet(false));
   }
 
   const patch = (i: number, p: Partial<DraftCard>) =>
@@ -1493,7 +2142,7 @@ function AuthorChat({
           refinementNote: note,
         }),
       )
-      .then((d) => patch(i, toCard(d)))
+      .then((d) => patch(i, toCard(d, card.subTopicId, card.subTopicName)))
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setRevisingIdx(null));
   }
@@ -1517,6 +2166,7 @@ function AuthorChat({
       );
       setCards(null);
       setTarget(null);
+      setSetFailures(null);
       setSavedReload((k) => k + 1); // refresh the review panel
     } catch (e) {
       setError(String((e as { message?: string })?.message ?? e));
@@ -1568,6 +2218,21 @@ function AuthorChat({
           error={savedError}
           studentLabel={student.name ?? student.email}
         />
+      </div>
+    );
+  }
+
+  // Launch mode (QA3-d): the scope was chosen in the modal — never show the internal
+  // single-chapter gate; show a starting placeholder until the auto-started chat lands.
+  if (launch && !chat) {
+    return (
+      <div className="tut-authwrap">
+        {segmented}
+        {error ? (
+          <p className="tut-error">{error}</p>
+        ) : (
+          <p className="tut-muted">Starting chat…</p>
+        )}
       </div>
     );
   }
@@ -1683,14 +2348,39 @@ function AuthorChat({
         {/* Kept MOUNTED when minimized (hidden via CSS, not unmounted) so an
             in-flight figure generate/poll + any in-progress edits survive a
             minimize → re-expand (D-AUTHUI-1). */}
-        {cards && target && (
+        {cards && target && (() => {
+          // QA3-e-2: group the flat card list by sub_topic (first-seen order),
+          // preserving each card's ORIGINAL index so patch/commit/revise/discard
+          // still address the flat array. A single-target review has one group
+          // (renders exactly as before); a fan-out review has several.
+          const groups: { subTopicId: string; subTopicName: string; entries: { card: DraftCard; i: number }[] }[] = [];
+          cards.forEach((card, i) => {
+            let g = groups.find((x) => x.subTopicId === card.subTopicId);
+            if (!g) {
+              g = { subTopicId: card.subTopicId, subTopicName: card.subTopicName, entries: [] };
+              groups.push(g);
+            }
+            g.entries.push({ card, i });
+          });
+          const multi = groups.length > 1;
+          return (
           <div className={`tut-chat-preview${previewMinimized ? " is-hidden" : ""}`}>
             <div className="tut-chat-preview-head">
               <div className="tut-chat-preview-title">
-                Drafted {cards.length} question{cards.length === 1 ? "" : "s"} for{" "}
-                {target.subTopicName} — review, edit, add a figure, then approve
-                (private to {student.name ?? student.email}; slotting at #
-                {target.nextOrdinal + 1}).
+                {multi ? (
+                  <>
+                    Drafted {cards.length} question{cards.length === 1 ? "" : "s"} across{" "}
+                    {groups.length} sub-topics — review, edit, add figures, then approve
+                    (private to {student.name ?? student.email}).
+                  </>
+                ) : (
+                  <>
+                    Drafted {cards.length} question{cards.length === 1 ? "" : "s"} for{" "}
+                    {target.subTopicName} — review, edit, add a figure, then approve
+                    (private to {student.name ?? student.email}; slotting at #
+                    {target.nextOrdinal + 1}).
+                  </>
+                )}
               </div>
               <button
                 className="tut-chat-preview-min"
@@ -1700,26 +2390,44 @@ function AuthorChat({
                 Minimize ⟨
               </button>
             </div>
+            {setFailures && setFailures.length > 0 && (
+              <p className="tut-chat-set-failures">
+                ⚠ Couldn't author {setFailures.map((f) => f.subTopicName).join(", ")}
+                {" "}— the drafts above are for the sub-topics that succeeded. Retry the set to try again.
+              </p>
+            )}
             <div className="tut-auth-cards">
-              {cards.map((c, i) => (
-                <AuthorCardForm
-                  key={c.id}
-                  n={i + 1}
-                  card={c}
-                  onPatch={(p) => patch(i, p)}
-                  onCommit={() => commit(i)}
-                  onRevise={(note) => revise(i, note)}
-                  onDiscard={() => discardCard(i)}
-                  revising={revisingIdx === i}
-                  disabled={saving || revisingIdx !== null}
-                />
+              {groups.map((g) => (
+                <div key={g.subTopicId} className="tut-auth-group">
+                  {multi && (
+                    <div className="tut-auth-group-head">
+                      {g.subTopicName}
+                      <span className="tut-auth-group-count">
+                        {g.entries.length}
+                      </span>
+                    </div>
+                  )}
+                  {g.entries.map(({ card, i }, n) => (
+                    <AuthorCardForm
+                      key={card.id}
+                      n={multi ? n + 1 : i + 1}
+                      card={card}
+                      onPatch={(p) => patch(i, p)}
+                      onCommit={() => commit(i)}
+                      onRevise={(note) => revise(i, note)}
+                      onDiscard={() => discardCard(i)}
+                      revising={revisingIdx === i}
+                      disabled={saving || revisingIdx !== null}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
             <div className="tut-auth-savebar">
               <button
                 className="btn-solid"
                 onClick={approve}
-                disabled={saving || authoring || revisingIdx !== null}
+                disabled={saving || authoring || authoringSet || revisingIdx !== null}
               >
                 {saving
                   ? "Approving…"
@@ -1727,7 +2435,8 @@ function AuthorChat({
               </button>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         <div className="tut-chat-main">
       <div className="tut-chat-canvas" ref={canvasRef}>
@@ -1802,8 +2511,67 @@ function AuthorChat({
           </div>
         )}
 
+        {/* Consent card — the AI proposes an interleaved SET (QA3-e-2); the tutor
+            edits per-sub-topic counts + confirms, then a parallel fan-out authors. */}
+        {proposalSet && (
+          <div className="tut-chat-consent tut-chat-consent--set">
+            <div className="tut-chat-consent-head">
+              Suggested interleaved set ({proposalSet.picks.length} sub-topics)
+            </div>
+            <p className="tut-chat-consent-why">{proposalSet.rationale}</p>
+            <div className="tut-chat-set-picks">
+              {proposalSet.picks.map((pk) => (
+                <div key={pk.subTopicId} className="tut-chat-set-pick">
+                  <span className="tut-chat-set-pick-name">
+                    {pk.chapterName} › {pk.subTopicName}
+                  </span>
+                  <label className="tut-chat-consent-count">
+                    <span>×</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={setCounts[pk.subTopicId] ?? pk.count}
+                      onChange={(e) =>
+                        setSetCounts((m) => ({
+                          ...m,
+                          [pk.subTopicId]: Math.max(1, Math.min(8, Number(e.target.value) || 1)),
+                        }))
+                      }
+                      disabled={authoringSet}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+            <div className="tut-chat-consent-actions">
+              <button
+                className="btn-solid"
+                onClick={authorSetConfirmed}
+                disabled={authoringSet}
+              >
+                {authoringSet
+                  ? "Authoring the set…"
+                  : `Author set (${proposalSet.picks.reduce((n, p) => n + (setCounts[p.subTopicId] ?? p.count), 0)} questions) →`}
+              </button>
+              <button
+                className="tut-chat-consent-dismiss"
+                onClick={() => setProposalSet(null)}
+                disabled={authoringSet}
+              >
+                Not yet
+              </button>
+            </div>
+          </div>
+        )}
+
         {authoring && !proposal && (
           <p className="tut-muted tut-chat-authmeta">Authoring the questions… (~10–30s)</p>
+        )}
+        {authoringSet && !proposalSet && (
+          <p className="tut-muted tut-chat-authmeta">
+            Authoring the set in parallel — one worker per sub-topic… (~20–40s)
+          </p>
         )}
       </div>
 
@@ -1832,6 +2600,18 @@ function AuthorChat({
         >
           {proposing ? "Thinking…" : "Suggest what to work on"}
         </button>
+        {/* QA3-e-2: the interleaved fan-out entry — only in interleaved mode (a set
+            spans the chat's chosen chapters). Blocked chats keep the single flow. */}
+        {chat.mode === "interleaved" && (
+          <button
+            className="tut-chat-suggest"
+            onClick={proposeSet}
+            disabled={proposingSet || authoringSet || !!proposalSet}
+            title="Ask the AI to propose an interleaved MIX of sub-topics to author across the chosen chapters"
+          >
+            {proposingSet ? "Thinking…" : "Suggest an interleaved set"}
+          </button>
+        )}
         <button
           className="tut-chat-send"
           onClick={send}

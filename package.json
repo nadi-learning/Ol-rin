@@ -21,6 +21,7 @@
     "seed:practice": "bun scripts/seed_practice.ts",
     "seed:tutor": "bun scripts/seed_tutor.ts",
     "seed:parent": "bun scripts/seed_parent.ts",
+    "seed:admin": "bun scripts/seed_admin.ts",
     "seed:pace": "bun scripts/seed_pace.ts",
     "seed:registry": "bun scripts/seed_topic_registry.ts",
     "probe:pace": "bun scripts/probe_pace_plan.ts",
@@ -57,7 +58,13 @@
     "probe:chatlist": "bun scripts/probe_authoring_chat_list.ts",
     "probe:figauth": "bun scripts/probe_fig_auth.ts",
     "probe:voice": "bun scripts/probe_voice.ts",
-    "probe:voicerelay": "bun scripts/probe_voicerelay.ts"
+    "probe:voicerelay": "bun scripts/probe_voicerelay.ts",
+    "probe:qa3": "bun scripts/probe_qa3_schema.ts",
+    "probe:adminingest": "bun scripts/probe_admin_ingest.ts",
+    "probe:progress": "bun scripts/probe_progress_tree.ts",
+    "probe:launcher": "bun scripts/probe_author_launcher.ts",
+    "probe:worker": "bun scripts/probe_authoring_worker.ts",
+    "probe:set": "bun scripts/probe_authoring_set.ts"
   },
   "dependencies": {
     "@b2c/kernel": "workspace:*",

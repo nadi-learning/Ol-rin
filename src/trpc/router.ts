@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
+  adminProcedure,
   authedProcedure,
   parentProcedure,
   protectedProcedure,
@@ -8,6 +9,15 @@ import {
   router,
   tutorProcedure,
 } from "./init";
+import {
+  ChapterHasDependentDataError,
+  ChapterNotFoundError,
+  commitTopicsMd,
+  extractedTopicsMdSchema,
+  extractTopicsMd,
+  listChaptersForAdmin,
+  TopicsMdInvalidError,
+} from "../services/admin_ingest";
 import { NotWhitelistedError, resolveMembership } from "../services/membership";
 import {
   checkAnswer,
@@ -30,6 +40,7 @@ import {
 } from "../services/practice";
 import {
   getObservations,
+  getProgressTree,
   getStudentMastery,
   listPendingStage2,
   listStudents,
@@ -100,9 +111,12 @@ import {
 import {
   AuthoringChatNotFoundError,
   authorFromChat,
+  authorSetFromChat,
+  ChapterNotInBoardError,
   getChat,
   listAuthoringChats,
   proposeTarget,
+  proposeTargetSet,
   ProposeTargetError,
   reviseDraft,
   sendTurn,
@@ -546,6 +560,24 @@ export const appRouter = router({
         }
       }),
 
+    // Slice QA3-c: the progress-first two-axis tree (chapter → topic →
+    // sub_topic; weakest-link + spread). The authoring entry surface (D-QA3-1/2).
+    getProgressTree: tutorProcedure
+      .input(z.object({ studentId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getProgressTree(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
     listPendingStage2: tutorProcedure
       .input(z.object({ studentId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
@@ -897,8 +929,12 @@ export const appRouter = router({
           studentId: z.string().uuid(),
           vendor: VendorChoice,
           // Slice AUTH-v2.1: the chapter chosen upfront (scopes proposeTarget's
-          // sub_topic allowlist). Optional for back-compat; the v2.1 FE always sends it.
+          // sub_topic allowlist). Optional for back-compat; the fast path sends it.
           chapterId: z.string().uuid().optional(),
+          // Slice QA3-d: the mode + multi-chapter scope. blocked = 1 chapter,
+          // interleaved = N chapters (grounded across the set). Defaults to blocked.
+          mode: z.enum(["blocked", "interleaved"]).optional(),
+          chapterIds: z.array(z.string().uuid()).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -908,11 +944,16 @@ export const appRouter = router({
             tutorUserId: ctx.membership.userId,
             studentId: input.studentId,
             vendor: input.vendor,
+            mode: input.mode,
             chapterId: input.chapterId ?? null,
+            chapterIds: input.chapterIds,
           });
         } catch (e) {
           if (e instanceof StudentNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof ChapterNotInBoardError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
           }
           throw e;
         }
@@ -996,6 +1037,67 @@ export const appRouter = router({
           if (e instanceof ProposeTargetError) {
             // no chapter / no sub-topics → the FE prompts "pick a chapter first".
             throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // QA3-e-2: propose an INTERLEAVED SET of sub_topics + per-sub_topic counts from
+    // the conversation (the master-side selection for the parallel fan-out). The
+    // tutor confirms, then authorSetFromChat fans out. Interleaved is an FE policy;
+    // the service is general (works for any chat with sub-topics in scope).
+    proposeAuthoringSet: tutorProcedure
+      .input(z.object({ chatId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await proposeTargetSet(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            chatId: input.chatId,
+          });
+        } catch (e) {
+          if (e instanceof AuthoringChatNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof ProposeTargetError) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // QA3-e-2: author the confirmed SET — fan out one scoped worker per sub_topic
+    // in PARALLEL (each in its own board tx), collect into a multi-target review.
+    // Fault-isolated: returns { groups, failures } — a partial failure never sinks
+    // the batch. Max 5 targets (fan-out concurrency stays under the pool).
+    authorSetFromChat: tutorProcedure
+      .input(
+        z.object({
+          chatId: z.string().uuid(),
+          targets: z
+            .array(
+              z.object({
+                subTopicId: z.string().uuid(),
+                count: z.number().int().min(1).max(8),
+              }),
+            )
+            .min(1)
+            .max(5),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await authorSetFromChat(ctx.tx, {
+            boardId: ctx.board.id,
+            tutorUserId: ctx.membership.userId,
+            chatId: input.chatId,
+            targets: input.targets,
+          });
+        } catch (e) {
+          if (
+            e instanceof AuthoringChatNotFoundError ||
+            e instanceof SubTopicNotFoundError
+          ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;
         }
@@ -1266,6 +1368,54 @@ export const appRouter = router({
         } catch (e) {
           if (e instanceof ChildNotFoundError || e instanceof ReportNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+  }),
+
+  // Slice QA3-b: the admin topics.md ingest tool (D-QA3-6) — the SOLE prod
+  // write-path for a chapter's curriculum spine + raw topics.md. adminProcedure
+  // (role='admin', board-scoped). extract = one AI call → normalized preview
+  // (D-QA3-b-1); commit = refuse-if-dependent → upsert spine + store blob.
+  admin: router({
+    // Chapter picker for the ingest UI (board-scoped via RLS).
+    listChapters: adminProcedure.query(({ ctx }) => listChaptersForAdmin(ctx.tx)),
+
+    // A MUTATION (one AI call, not cacheable). Runs INLINE — the admin waits for
+    // the extraction, then reviews the preview before committing (D-QA3-b-1). Does
+    // not write; returns { extracted, validation } so the FE can gate Confirm.
+    extractTopicsMd: adminProcedure
+      .input(z.object({ rawMd: z.string().min(1) }))
+      .mutation(({ input }) => extractTopicsMd(input.rawMd)),
+
+    // Commit the reviewed skeleton: re-validate → refuse-if-dependent → upsert
+    // spine by slug → store the raw blob in chapter.metadata.topicsMd.
+    commitTopicsMd: adminProcedure
+      .input(
+        z.object({
+          chapterId: z.string().uuid(),
+          rawMd: z.string().min(1),
+          extracted: extractedTopicsMdSchema,
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await commitTopicsMd(ctx.tx, {
+            boardId: ctx.board.id,
+            chapterId: input.chapterId,
+            rawMd: input.rawMd,
+            extracted: input.extracted,
+          });
+        } catch (e) {
+          if (e instanceof ChapterNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof TopicsMdInvalidError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.errors.join("; ") });
+          }
+          if (e instanceof ChapterHasDependentDataError) {
+            throw new TRPCError({ code: "CONFLICT", message: e.message });
           }
           throw e;
         }

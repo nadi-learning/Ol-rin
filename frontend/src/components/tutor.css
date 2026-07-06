@@ -1036,9 +1036,16 @@
   word-break: break-word;
 }
 .tut-chat-bubble--ai {
-  background: var(--periwinkle);
-  color: #1f2545;
-  border-bottom-left-radius: 5px;
+  /* AI replies read as plain text on the canvas (no purple bubble). `normal`
+     white-space lets the markdown block margins own the spacing — the base
+     `pre-wrap` was preserving the source blank lines ON TOP of the <p> margins,
+     which is what doubled every gap. */
+  background: transparent;
+  color: var(--ink, #1f2545);
+  max-width: 100%;
+  padding: 2px 0;
+  border-radius: 0;
+  white-space: normal;
 }
 .tut-chat-bubble--tutor {
   background: var(--lilac);
@@ -1211,6 +1218,78 @@
   color: var(--ink);
 }
 
+/* QA3-e-2: the interleaved SET consent card (a mix of sub-topics + per-sub-topic
+   counts) + the fan-out review group headers + the partial-failure note. */
+.tut-chat-set-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+.tut-chat-set-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-sunk);
+}
+.tut-chat-set-pick-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tut-chat-set-pick .tut-chat-consent-count {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.tut-chat-set-pick .tut-chat-consent-count input {
+  width: 56px;
+}
+.tut-chat-set-failures {
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--yellow);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--yellow) 18%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.tut-auth-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tut-auth-group + .tut-auth-group {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+.tut-auth-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+.tut-auth-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 /* The consent trigger, sitting in the input bar beside Send. */
 .tut-chat-suggest {
   flex: none;
@@ -1360,9 +1439,10 @@
   flex-direction: column;
   gap: 12px;
   /* Bound the whole Author area to the viewport so the chat input pins to the
-     bottom (the segmented control sits inside, above the chat). */
-  height: calc(100vh - 200px);
-  min-height: 520px;
+     bottom. The reserve covers the chrome above this wrapper (student header +
+     tab capsule + Chat/Authored subtabs); dvh keeps it honest on mobile. */
+  height: calc(100dvh - 280px);
+  min-height: 460px;
 }
 .tut-auth-modes {
   display: inline-flex;
@@ -1871,4 +1951,325 @@
 .tut-auth-discard:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* ── Slice QA3-c: progress-first two-axis tree (all .tut-pt-/.tut-author- scoped) ── */
+.tut-author-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.tut-author-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.tut-btn-primary {
+  border: none;
+  background: var(--primary, #2f63ff);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s ease-out, transform 0.15s ease-out;
+}
+.tut-btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); }
+
+.tut-pt-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12.5px;
+  color: var(--muted, #6b6f80);
+  margin-bottom: 10px;
+}
+.tut-pt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.tut-pt-swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.tut-pt-c-bg { background: var(--primary, #2f63ff); }
+.tut-pt-p-bg { background: var(--accent, #e87b35); }
+.tut-pt-legend-note { font-style: italic; }
+
+.tut-pt-node { border: 1px solid var(--line, #e4e6ee); border-radius: 10px; background: var(--surface, #fff); }
+
+/* (1) chapter list — clickable master rows */
+.tut-pt-chlist { display: flex; flex-direction: column; gap: 8px; }
+.tut-pt-chrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 13px 16px;
+  border: 1px solid var(--line, #e4e6ee);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s ease-out, transform 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.tut-pt-chrow:hover { border-color: var(--primary, #2f63ff); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(20, 22, 43, 0.06); }
+.tut-pt-chrow .tut-pt-name { font-weight: 700; font-size: 14.5px; }
+.tut-pt-chev { color: var(--muted, #9a9db0); font-size: 18px; flex-shrink: 0; }
+
+/* (2) detail — topic blocks (no collapse; single chapter) */
+.tut-pt-detailrollup { margin-top: 10px; }
+.tut-pt-topic-block { margin-bottom: 10px; overflow: hidden; }
+.tut-pt-toprow { background: var(--surface-sunk, #f7f8fb); border-bottom: 1px solid var(--line, #eef0f3); }
+.tut-pt-toprow .tut-pt-name { font-weight: 600; font-size: 13.5px; color: var(--ink-soft, #45485c); }
+
+.tut-pt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+}
+.tut-pt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.tut-pt-axes { display: inline-flex; gap: 14px; flex-shrink: 0; }
+.tut-pt-badge { display: inline-flex; align-items: center; gap: 7px; }
+
+.tut-pt-chip {
+  font-weight: 700;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  white-space: nowrap;
+}
+.tut-pt-c { background: var(--primary, #2f63ff); }
+.tut-pt-p { background: var(--accent, #e87b35); }
+.tut-pt-zero { background: var(--surface-sunk, #f0f1f6); color: var(--muted, #9a9db0); border: 1px solid var(--line, #d9dbe4); }
+/* Level-coloured pills (0–5) — same scale as the spread bar (.tut-pt-seg-*). The
+   C/P letter marks the axis; the colour marks the level. */
+.tut-lvl-0 { background: #e9ebf0; color: #6b7280; border: 1px solid var(--line, #d9dbe4); }
+.tut-lvl-1 { background: #e5657a; color: #fff; }
+.tut-lvl-2 { background: #eaa04a; color: #fff; }
+.tut-lvl-3 { background: #e6c34a; color: #3d3100; }
+.tut-lvl-4 { background: #86c06a; color: #17351b; }
+.tut-lvl-5 { background: #3fa564; color: #fff; }
+.tut-pt-legend-scale { display: inline-flex; align-items: center; gap: 5px; }
+.tut-pt-legend-cap { font-weight: 700; }
+.tut-pt-legend-lvl { font-size: 11px; padding: 1px 7px; }
+
+.tut-pt-spread {
+  display: inline-flex;
+  width: 64px;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-sunk, #f0f1f6);
+  gap: 1px;
+}
+.tut-pt-seg { height: 100%; min-width: 2px; }
+.tut-pt-seg-0 { background: #c7ccd6; }
+.tut-pt-seg-1 { background: #e5657a; }
+.tut-pt-seg-2 { background: #eaa04a; }
+.tut-pt-seg-3 { background: #e6c34a; }
+.tut-pt-seg-4 { background: #86c06a; }
+.tut-pt-seg-5 { background: #3fa564; }
+
+.tut-pt-leaves { padding: 4px 14px 12px 28px; display: flex; flex-direction: column; gap: 8px; }
+.tut-pt-leaf { padding: 9px 12px; border: 1px solid var(--line, #eef0f3); border-radius: 8px; background: var(--surface, #fff); }
+.tut-pt-untaught { background: var(--surface-sunk, #f7f8fb); border-style: dashed; }
+.tut-pt-leaf-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tut-pt-leaf-levels { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.tut-pt-tag { font-size: 11.5px; font-weight: 600; color: var(--muted, #9a9db0); text-transform: uppercase; letter-spacing: 0.04em; }
+.tut-pt-desc { margin: 6px 0 0; font-size: 12.5px; color: var(--ink-soft, #45485c); line-height: 1.45; }
+
+/* --- QA3-d author launcher modal (model → mode → chapter(s)) --- */
+.tut-launch-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(21, 22, 43, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 60;
+}
+.tut-launch-modal {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(21, 22, 43, 0.22);
+  width: min(480px, 100%);
+  max-height: 84vh;
+  overflow-y: auto;
+  padding: 20px 22px 18px;
+}
+.tut-launch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.tut-launch-title {
+  margin: 0;
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-size: 18px;
+  color: var(--ink, #15162b);
+}
+.tut-launch-x {
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted, #6b6f80);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tut-launch-x:hover { color: var(--ink, #15162b); }
+.tut-launch-field { margin-bottom: 16px; }
+.tut-launch-field .tut-chat-vendorlabel {
+  display: block;
+  margin-bottom: 7px;
+}
+.tut-launch-field .tut-chat-vendortoggle { flex-wrap: wrap; }
+
+/* Chapter picker: searchable dropdown (QA3-d eyeball) */
+.tut-launch-dd { position: relative; }
+.tut-launch-dd-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 9px;
+  background: var(--surface, #fff);
+  color: var(--ink, #15162b);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease-out;
+}
+.tut-launch-dd-trigger:hover,
+.tut-launch-dd-trigger.is-open { border-color: var(--primary, #2f63ff); }
+.tut-launch-dd-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tut-launch-dd-value.is-placeholder { color: var(--muted, #6b6f80); }
+.tut-launch-dd-caret {
+  flex-shrink: 0;
+  color: var(--muted, #6b6f80);
+  font-size: 12px;
+}
+.tut-launch-dd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.tut-launch-dd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--r-pill, 999px);
+  background: color-mix(in srgb, var(--primary, #2f63ff) 10%, var(--surface, #fff));
+  border: 1px solid color-mix(in srgb, var(--primary, #2f63ff) 30%, var(--surface, #fff));
+  color: var(--primary, #2f63ff);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tut-launch-dd-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--primary, #2f63ff);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tut-launch-dd-chip-x:hover {
+  background: color-mix(in srgb, var(--primary, #2f63ff) 20%, var(--surface, #fff));
+}
+.tut-launch-dd-panel {
+  margin-top: 6px;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  box-shadow: 0 8px 24px rgba(21, 22, 43, 0.12);
+  padding: 8px;
+}
+.tut-launch-dd-search {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink, #15162b);
+  background: var(--surface-sunk, #f5f6fa);
+}
+.tut-launch-dd-search:focus {
+  outline: none;
+  border-color: var(--primary, #2f63ff);
+}
+.tut-launch-dd-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--muted, #6b6f80);
+  font-size: 13px;
+}
+.tut-launch-chlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.tut-launch-chopt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 9px;
+  background: var(--surface, #fff);
+  color: var(--ink, #15162b);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease-out, background 0.15s ease-out;
+}
+.tut-launch-chopt:hover { border-color: var(--primary, #2f63ff); }
+.tut-launch-chopt.is-on {
+  border-color: var(--primary, #2f63ff);
+  background: color-mix(in srgb, var(--primary, #2f63ff) 8%, var(--surface, #fff));
+}
+.tut-launch-chmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--primary, #2f63ff);
+  font-size: 12px;
+}
+.tut-launch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
 }

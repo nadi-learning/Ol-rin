@@ -165,6 +165,162 @@ export async function getStudentMastery(
     .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
 }
 
+// ── Slice QA3-c: progress-first two-axis tree (D-QA3-1/2) ──────────────────
+// The authoring entry surface: a navigable chapter → topic → sub_topic tree of
+// the student's certified mastery, both axes at every level. Derived nodes
+// (chapter, topic) show the WEAKEST-LINK (min of descendant sub_topic levels)
+// as the headline + a spread histogram; leaves show their raw levels. Read-time
+// aggregation only — nothing new is stored (D-QA3-2).
+
+export type AxisRollup = {
+  /** Weakest-link = min of descendant sub_topic levels for this axis. An
+   *  UNTAUGHT sub_topic counts as 0 (D-QA3-c-1: the honest "author this next"
+   *  signal), so any hole drags the headline down. 0 for an empty node too. */
+  level: number;
+  /** Histogram: index 0–5 = count of descendant sub_topics at that level (the
+   *  bar behind the headline — shows WHERE the hole is). */
+  spread: [number, number, number, number, number, number];
+};
+
+export type ProgressSubTopic = {
+  subTopicId: string;
+  name: string;
+  conceptualLevel: number; // raw; 0 when untaught
+  proceduralLevel: number; // raw; 0 when untaught
+  hasMastery: boolean; // false = no mastery_state yet (untaught leaf)
+  description: string | null; // user-visible blob (never the internal log)
+};
+
+export type ProgressTopic = {
+  topicId: string;
+  name: string;
+  conceptual: AxisRollup;
+  procedural: AxisRollup;
+  subTopics: ProgressSubTopic[];
+};
+
+export type ProgressChapter = {
+  chapterId: string;
+  name: string;
+  conceptual: AxisRollup;
+  procedural: AxisRollup;
+  topics: ProgressTopic[];
+};
+
+/** Weakest-link + spread over a flat set of descendant leaf levels (D-QA3-2).
+ *  Untaught leaves arrive as 0 (D-QA3-c-1). Clamps to 0–5 defensively. */
+function rollupAxis(levels: number[]): AxisRollup {
+  const spread: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
+  for (const l of levels) {
+    const b = Math.max(0, Math.min(5, l));
+    spread[b] = (spread[b] ?? 0) + 1;
+  }
+  return { level: levels.length ? Math.min(...levels) : 0, spread };
+}
+
+/**
+ * A linked student's full two-axis progress tree (QA3-c). LEFT-joins the spine
+ * tree with mastery_state so UNTAUGHT sub_topics still appear (they're the
+ * gaps that drive authoring); the studentId lives in the join condition (not a
+ * WHERE) so the outer join keeps those rows. Chapter/topic rollups are computed
+ * over their descendant LEAF sub_topics (min-of-leaves == min-of-topic-mins).
+ */
+export async function getProgressTree(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string },
+): Promise<ProgressChapter[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  const rows = await tx
+    .select({
+      chapterId: chapter.id,
+      chapterName: chapter.name,
+      topicId: topic.id,
+      topicName: topic.name,
+      subTopicId: subTopic.id,
+      subTopicName: subTopic.name,
+      conceptualLevel: masteryState.conceptualLevel,
+      proceduralLevel: masteryState.proceduralLevel,
+      description: masteryState.description,
+    })
+    .from(subTopic)
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .leftJoin(
+      masteryState,
+      and(
+        eq(masteryState.subTopicId, subTopic.id),
+        eq(masteryState.studentId, args.studentId),
+      ),
+    )
+    .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
+
+  // Fold ordinal-ordered rows → chapter → topic → sub_topic (getChapterNav
+  // style), collecting leaf levels per node to roll up after the fold.
+  const chapters: ProgressChapter[] = [];
+  const chById = new Map<string, ProgressChapter>();
+  const tpById = new Map<string, ProgressTopic>();
+  // Per node: accumulate leaf levels for the rollup.
+  const leaves = new Map<string, { c: number[]; p: number[] }>();
+  const bucket = (id: string) => {
+    let b = leaves.get(id);
+    if (!b) leaves.set(id, (b = { c: [], p: [] }));
+    return b;
+  };
+
+  for (const r of rows) {
+    let ch = chById.get(r.chapterId);
+    if (!ch) {
+      ch = {
+        chapterId: r.chapterId,
+        name: r.chapterName,
+        conceptual: rollupAxis([]),
+        procedural: rollupAxis([]),
+        topics: [],
+      };
+      chById.set(r.chapterId, ch);
+      chapters.push(ch);
+    }
+    let tp = tpById.get(r.topicId);
+    if (!tp) {
+      tp = {
+        topicId: r.topicId,
+        name: r.topicName,
+        conceptual: rollupAxis([]),
+        procedural: rollupAxis([]),
+        subTopics: [],
+      };
+      tpById.set(r.topicId, tp);
+      ch.topics.push(tp);
+    }
+    const cl = r.conceptualLevel ?? 0;
+    const pl = r.proceduralLevel ?? 0;
+    tp.subTopics.push({
+      subTopicId: r.subTopicId,
+      name: r.subTopicName,
+      conceptualLevel: cl,
+      proceduralLevel: pl,
+      hasMastery: r.conceptualLevel !== null,
+      description: r.description,
+    });
+    bucket(r.topicId).c.push(cl);
+    bucket(r.topicId).p.push(pl);
+    bucket(r.chapterId).c.push(cl);
+    bucket(r.chapterId).p.push(pl);
+  }
+
+  for (const ch of chapters) {
+    const cb = bucket(ch.chapterId);
+    ch.conceptual = rollupAxis(cb.c);
+    ch.procedural = rollupAxis(cb.p);
+    for (const tp of ch.topics) {
+      const tb = bucket(tp.topicId);
+      tp.conceptual = rollupAxis(tb.c);
+      tp.procedural = rollupAxis(tb.p);
+    }
+  }
+  return chapters;
+}
+
 /**
  * The worklist: per sub_topic, this student's Stage-1 observations not yet
  * certified (newer than the last finalize). Folded in JS (rows already small;

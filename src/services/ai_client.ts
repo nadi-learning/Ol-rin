@@ -44,7 +44,7 @@ const DEFAULT_VENDOR: VendorId = "claude_cli";
  * to a fresh / stitched-history path rather than resume into a session authored
  * under a different system prompt.
  */
-function computeSessionFingerprint(req: VendorCompletionRequest): string {
+export function computeSessionFingerprint(req: VendorCompletionRequest): string {
   const slotComponent = req.slotId ?? req.endpoint;
   return createHash("sha256")
     .update(req.systemPrompt)

@@ -19,6 +19,7 @@ import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   authoringChat,
+  authoringWorker,
   board,
   chapter,
   eventLog,
@@ -286,6 +287,7 @@ async function main() {
   // ── cleanup (FK-safe) ──
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
+    await tx.delete(authoringWorker).where(eq(authoringWorker.boardId, P.id));
     await tx.delete(authoringChat).where(eq(authoringChat.boardId, P.id));
     await tx.delete(eventLog).where(eq(eventLog.boardId, P.id));
     await tx.delete(observation).where(eq(observation.boardId, P.id));

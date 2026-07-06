@@ -230,6 +230,14 @@ export const chapter = pgTable(
     // slug to Starkhorn's stable content key; ingestion resolves the target
     // chapter by this. Nullable — set only for chapters with pulled content.
     contentModuleKey: text("content_module_key"),
+    // Question-Authoring v3 (D-QA3-5): the raw human-authored `topics.md`,
+    // stored VERBATIM at chapter grain (under key `topicsMd`). The normalized
+    // spine rows (topic/sub_topic/learning_objective) are the platform/UI read
+    // path; every LLM-facing use (authoring worker, grounding) reads THIS raw
+    // blob, not the reassembled rows. jsonb (not text) leaves room for other
+    // chapter-level metadata. Nullable — set only via the admin ingest tool
+    // (D-QA3-6, the sole prod write path); existing chapters stay null.
+    metadata: jsonb("metadata"),
     createdAt: createdAt(),
   },
   (t) => [unique().on(t.subjectId, t.slug)],
@@ -533,6 +541,12 @@ export const question = pgTable("question", {
   // later when the render pipeline runs. NULL = no figure. Additive — existing
   // rows stay null.
   image: jsonb("image"),
+  // Question-Authoring v3 (D-QA3-9): the method's V0-kept difficulty tag. Fed
+  // as authoring context (coherence + dedup from the existing bank) and set by
+  // the author; assessor/selection may read it later. text (not a pg enum) to
+  // match the axis/kind/status convention + dodge the enum-seed-in-migration
+  // hazard (M23). Nullable — existing/seeded rows stay valid.
+  difficulty: text("difficulty"), // e.g. 'easy'|'medium'|'hard' (loose V0 tag)
   createdAt: createdAt(),
 });
 
@@ -676,6 +690,15 @@ export const authoringChat = pgTable("authoring_chat", {
   // from the conversation WITHIN this chapter's allowlist. Nullable (additive;
   // pre-v2.1 rows have none), but the v2.1 flow always sets it.
   chapterId: uuid("chapter_id").references(() => chapter.id),
+  // Slice QA3-d: the mode + multi-chapter scope. `mode` is 'blocked' (one chapter,
+  // chapter_id set) or 'interleaved' (grounded across several chapters, chapter_id
+  // null). `chapterIds` is the selected chapter list — blocked writes [the one]
+  // AND keeps chapter_id set; interleaved writes the N with chapter_id null. Both
+  // nullable/text (M23 — no pg enum; assignment.mode precedent). Pre-QA3-d rows
+  // have mode/chapterIds null → the effective-chapters helper falls back to
+  // chapter_id, so legacy chats read as single-chapter blocked.
+  mode: text("mode"), // 'blocked' | 'interleaved' | null (legacy)
+  chapterIds: jsonb("chapter_ids"), // string[] of selected chapter ids
   subTopicId: uuid("sub_topic_id").references(() => subTopic.id), // resolved focus; set by proposeTarget
   vendor: text("vendor").notNull(), // per-thread lock: 'claude_cli' | 'gemini_api'
   messages: jsonb("messages").notNull().default([]), // ChatMessage[]
@@ -683,6 +706,33 @@ export const authoringChat = pgTable("authoring_chat", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+});
+
+// Slice QA3-e: one row per SPAWNED authoring worker (D-QA3-8 — master + worker
+// session persistence). The master chat (authoring_chat) orchestrates the tutor
+// dialogue; when it authors, it spawns a FRESH scoped worker session for ONE
+// sub_topic. This row is that spawn's audit/resume log: which chat + sub_topic,
+// which vendor, the vendor session id (Claude only — Gemini is a stateless
+// structured call, so ai_session_id null), the resume fingerprint, the scoped
+// brief the worker was given, and a compact record of what it returned. Keyed to
+// the master turn by chat_id. Tenant-scoped (board_id) + RLS.
+export const authoringWorker = pgTable("authoring_worker", {
+  id: id(),
+  boardId: uuid("board_id")
+    .notNull()
+    .references(() => board.id),
+  chatId: uuid("chat_id")
+    .notNull()
+    .references(() => authoringChat.id),
+  subTopicId: uuid("sub_topic_id")
+    .notNull()
+    .references(() => subTopic.id),
+  vendor: text("vendor").notNull(), // 'claude_cli' | 'gemini_api'
+  aiSessionId: text("ai_session_id"), // Claude CLI session id (resume/audit); null for Gemini
+  sessionFingerprint: text("session_fingerprint"), // resume guard (sha256 of the pack + slot)
+  brief: text("brief").notNull(), // the scoped prompt the worker was given (audit + resume context)
+  output: jsonb("output"), // compact record of the spawn's result: { draftIds: string[], count }
+  createdAt: createdAt(),
 });
 
 // A RENDERED figure for a question (Slice IMG). The AI authors a figure SPEC on
@@ -824,6 +874,7 @@ export const TENANT_SCOPED_TABLES = [
   "assignment",
   "report",
   "authoring_chat",
+  "authoring_worker",
   "question_image",
   "pace_plan",
   "voice_session",
