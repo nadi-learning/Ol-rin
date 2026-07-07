@@ -37,11 +37,30 @@ import {
   skip,
   startSession,
   submitAttempt,
+  submitPhotoAttempt,
 } from "../services/practice";
+import {
+  AttemptFeedbackNotFoundError,
+  getAnswerFeedback,
+  NotEvaluableError,
+} from "../services/answer_feedback";
+import {
+  AiBadJsonError,
+  AiEmptyResponseError,
+  AiNotConfiguredError,
+} from "../services/ai/gemini";
+import {
+  getUploadStatus as getUploadSlotStatus,
+  mintUploadToken,
+  UploadNotReadyError,
+  UploadSlotInvalidError,
+} from "../services/upload";
+import { env } from "../config/env";
 import {
   getObservations,
   getProgressTree,
   getStudentMastery,
+  getStudentPacePlan,
   listPendingStage2,
   listStudents,
   StudentNotFoundError,
@@ -352,6 +371,130 @@ export const appRouter = router({
           throw e;
         }
       }),
+
+    // ── Cross-Device Upload (Slice Q3 — answer-photo capture) ──────────────
+    // The student answered on paper: mint a token → show its QR → the phone
+    // uploads photos to the unauth /upload/:token route → poll → submit.
+
+    // Mint (or reuse) an upload token for the current answer slot; returns the
+    // absolute URL the desktop QR encodes ({base}/upload/{token}).
+    createUploadToken: protectedProcedure
+      .input(
+        z.object({
+          sessionId: z.string().uuid(),
+          questionId: z.string().uuid(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const { token, expiresAt } = await mintUploadToken(ctx.tx, {
+            boardId: ctx.board.id,
+            appUserId: ctx.membership.userId,
+            sessionId: input.sessionId,
+            questionId: input.questionId,
+          });
+          const base = env.PUBLIC_UPLOAD_BASE_URL ?? env.FRONTEND_URL;
+          // Option B (Q3-3): the QR points at the FE PAGE path `/u/:token` (the
+          // React capture page), NOT the backend JSON API which stays at
+          // `/upload/:token`. Distinct paths so page-navigation and the JSON
+          // API never collide on a shared prod origin behind nginx.
+          return {
+            token,
+            uploadUrl: `${base}/u/${token}`,
+            expiresAt,
+          };
+        } catch (e) {
+          if (e instanceof UploadSlotInvalidError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Desktop's 3s poll: has the phone uploaded yet?
+    getUploadStatus: protectedProcedure
+      .input(
+        z.object({
+          sessionId: z.string().uuid(),
+          questionId: z.string().uuid(),
+        }),
+      )
+      .query(({ ctx, input }) =>
+        getUploadSlotStatus(ctx.tx, {
+          sessionId: input.sessionId,
+          questionId: input.questionId,
+          appUserId: ctx.membership.userId,
+        }),
+      ),
+
+    // Consume the uploaded token into a photo attempt (the answer IS the photos;
+    // confidence + timing still ride along from the desktop).
+    submitPhotoAttempt: protectedProcedure
+      .input(
+        z.object({
+          sessionId: z.string().uuid(),
+          questionId: z.string().uuid(),
+          uploadToken: z.string().min(1),
+          confidence: z.number().int().min(1).max(5),
+          timeMs: z.number().int().min(0),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await submitPhotoAttempt(ctx.tx, {
+            boardId: ctx.board.id,
+            appUserId: ctx.membership.userId,
+            ...input,
+          });
+        } catch (e) {
+          if (e instanceof PracticeSessionNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (
+            e instanceof SessionCompletedError ||
+            e instanceof QuestionMismatchError ||
+            e instanceof UploadNotReadyError
+          ) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // ── Immediate answer feedback (Slice T1) ──────────────────────────────
+    // On demand after a typed submit: compute (or return the cached) student-
+    // facing eval of THIS answer. Qualitative only (Fork B, no grade); never
+    // moves mastery (D1 v0). A mutation because it does an AI call + caches on
+    // first hit. An AI failure maps to a soft error the FE swallows — the reveal
+    // + model answer are already shown, so feedback is strictly additive.
+    getAnswerFeedback: protectedProcedure
+      .input(z.object({ attemptId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await getAnswerFeedback(ctx.tx, {
+            appUserId: ctx.membership.userId,
+            attemptId: input.attemptId,
+          });
+        } catch (e) {
+          if (e instanceof AttemptFeedbackNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof NotEvaluableError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          if (
+            e instanceof AiNotConfiguredError ||
+            e instanceof AiEmptyResponseError ||
+            e instanceof AiBadJsonError
+          ) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "AI_FEEDBACK_FAILED",
+            });
+          }
+          throw e;
+        }
+      }),
   }),
 
   // Slice VOICE-1: spoken AI tutoring on a revision slide. Backend spine only —
@@ -610,6 +753,29 @@ export const appRouter = router({
           });
         } catch (e) {
           if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Slice T6: the tutor Pace-Plan view (read-only). listSubjects for the
+    // subject picker; getStudentPacePlan → a linked student's derive-at-read
+    // Pace Plan (the SAME view the student sees). NO writes. Ownership-guarded
+    // (foreign student → NOT_FOUND); unknown/cross-board subject → NOT_FOUND.
+    listSubjects: tutorProcedure.query(({ ctx }) => listSubjects(ctx.tx)),
+
+    getStudentPacePlan: tutorProcedure
+      .input(z.object({ studentId: z.string().uuid(), subjectId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getStudentPacePlan(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+            subjectId: input.subjectId,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError || e instanceof PaceSubjectNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;

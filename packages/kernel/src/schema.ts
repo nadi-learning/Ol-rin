@@ -597,6 +597,12 @@ export const attempt = pgTable(
     confidence: smallint("confidence"), // 1–5, null on skip
     timeMs: integer("time_ms"), // null on skip
     skipReason: text("skip_reason"), // set on skip
+    // Slice T1 — the student-facing immediate feedback on THIS answer (verdict +
+    // prose + strengths/improvements; Fork B, NO numeric grade). null until
+    // practice.getAnswerFeedback runs; computed once then cached here (idempotent,
+    // refresh-safe). Separate from the blind Stage-1 `observation` pipeline — this
+    // is the self-serve sandbox eval (G3), never touches mastery (D1 v0).
+    feedback: jsonb("feedback"),
     submittedAt: timestamp("submitted_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -845,11 +851,76 @@ export const voiceSession = pgTable("voice_session", {
   createdAt: createdAt(),
 });
 
+// ─────────────── 10. Cross-Device Upload (Slice Q3 — photo capture) ───────────────
+//
+// A student answers a SUBJECTIVE practice question on paper, scans a QR on the
+// desktop, and uploads photos from their phone (UNAUTHENTICATED). Two tables:
+//
+// upload_token — the phone-side CREDENTIAL. GLOBAL (NOT tenant-scoped / NOT in
+//   TENANT_SCOPED_TABLES) ON PURPOSE (D-Q3-1): the phone carries no session
+//   cookie and no board, so RLS (which needs the `app.board` claim) can't gate
+//   it — the 128-bit unguessable `token` string IS the credential. It CARRIES
+//   `board_id` as a plain attribute so every downstream write it authorizes runs
+//   under withBoard(token.board_id). Minted by an authed desktop call (inside a
+//   board claim, so its FKs validate); read GLOBALLY by token string on the
+//   unauth upload route. Bound to one (student, session, question) slot + 30-min
+//   expiry + single-use (pending→uploaded→consumed) — the security envelope.
+export const uploadToken = pgTable("upload_token", {
+  id: id(),
+  token: text("token").notNull().unique(), // 128-bit hex; the credential
+  boardId: uuid("board_id")
+    .notNull()
+    .references(() => board.id),
+  appUserId: uuid("app_user_id")
+    .notNull()
+    .references(() => appUser.id),
+  practiceSessionId: uuid("practice_session_id")
+    .notNull()
+    .references(() => practiceSession.id),
+  questionId: uuid("question_id")
+    .notNull()
+    .references(() => question.id),
+  status: text("status").notNull().default("pending"), // 'pending'|'uploaded'|'consumed'
+  // Object-storage keys of the uploaded photos (S3/fs; `uploads/{token}/{n}.ext`).
+  // Empty until the phone POSTs; the durable evidence link is attempt_image
+  // (below), written when the desktop consumes the token into an attempt.
+  uploadKeys: text("upload_keys").array().notNull().default(sql`'{}'::text[]`),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+// attempt_image — the photos that ARE a subjective answer, once the desktop
+// submits (D-Q3-2). Tenant-scoped (board_id) + RLS. One attempt → N photos
+// (ordered). `storage_key` is the S3/fs object key (bytes live in object
+// storage, metadata here — D-Q3-5). Stage-1 vision reads these (Q3-2) exactly
+// as it reads answer_text for typed answers.
+export const attemptImage = pgTable(
+  "attempt_image",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    attemptId: uuid("attempt_id")
+      .notNull()
+      .references(() => attempt.id),
+    storageKey: text("storage_key").notNull(),
+    mime: text("mime").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.attemptId, t.ordinal)],
+);
+
 /**
  * Tables carrying board_id → get RLS ENABLE + FORCE + a board-claim policy.
  * Single source of truth for src/db/migrate.ts (rls application). board,
  * app_user, content_version are intentionally absent (board/app_user are
  * global; content_version is scoped transitively via content_unit).
+ * upload_token is ALSO intentionally absent — it is a GLOBAL credential read
+ * without a board claim (the unauth phone has none); see its comment above.
  */
 export const TENANT_SCOPED_TABLES = [
   "membership",
@@ -878,6 +949,7 @@ export const TENANT_SCOPED_TABLES = [
   "question_image",
   "pace_plan",
   "voice_session",
+  "attempt_image", // Slice Q3 — subjective answer photos (tenant-scoped + RLS)
 ] as const;
 
 // All table names (for blanket GRANTs to the app role). Includes the GLOBAL
@@ -892,4 +964,5 @@ export const ALL_TABLES = [
   "verifications",
   ...TENANT_SCOPED_TABLES,
   "content_version",
+  "upload_token", // Slice Q3 — GLOBAL credential (no RLS); needs the app-role grant
 ] as const;

@@ -12,6 +12,12 @@ import { appRouter } from "./trpc/router";
 import { createContext } from "./trpc/context";
 import { BundleError, resolveBundle } from "./services/content";
 import { ImageError, resolveImageBytes } from "./services/image_serve";
+import {
+  getUploadTokenForPhone,
+  recordPhoneUpload,
+  UploadError,
+  type IncomingPhoto,
+} from "./services/upload";
 import { withBoard } from "./db/with-board";
 import { NoMembershipError, requireMembership } from "./services/membership";
 import {
@@ -104,6 +110,44 @@ app.get("/content/image/:imageId", async (c) => {
     if (e instanceof ImageError) {
       return c.json({ error: e.code }, e.status as any);
     }
+    throw e;
+  }
+});
+
+// ── Cross-Device Upload phone routes (Slice Q3) ───────────────────────────
+//
+// UNAUTHENTICATED — the phone carries no session cookie and no board. The
+// upload token (a 128-bit unguessable string in the path) IS the credential:
+// it's read GLOBALLY by string, carries its own board_id, and is bound to one
+// (student, session, question) slot + 30-min expiry + single-use. This is the
+// ONE route family that intentionally diverges from the ?board=+cookie gate on
+// the bundle/image routes above — see src/services/upload.ts for why.
+
+// Phone page load: validate the token + return the question stem (not a secret).
+app.get("/upload/:token", async (c) => {
+  try {
+    return c.json(await getUploadTokenForPhone(c.req.param("token")));
+  } catch (e) {
+    if (e instanceof UploadError) return c.json({ error: e.code }, e.status);
+    throw e;
+  }
+});
+
+// Phone upload: multipart `answer_image` files → object storage; token→uploaded.
+app.post("/upload/:token", async (c) => {
+  try {
+    const form = await c.req.formData();
+    const files = form.getAll("answer_image").filter((f): f is File => f instanceof File);
+    const photos: IncomingPhoto[] = [];
+    for (const f of files) {
+      photos.push({
+        bytes: new Uint8Array(await f.arrayBuffer()),
+        mime: f.type || "application/octet-stream",
+      });
+    }
+    return c.json(await recordPhoneUpload(c.req.param("token"), photos));
+  } catch (e) {
+    if (e instanceof UploadError) return c.json({ error: e.code }, e.status);
     throw e;
   }
 });

@@ -2273,3 +2273,159 @@
   gap: 12px;
   margin-top: 8px;
 }
+
+/* ── Slice T6: the tutor Pace-Plan view (read-only). `.tut-pace-`-scoped to
+   dodge the global revision-shell.css landmine (same discipline as the rest of
+   this file). Colours mirror the student pace.css so the two reads match. ── */
+.tut-pace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tut-pace-subject {
+  align-self: flex-start;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font: inherit;
+  color: var(--ink);
+}
+.tut-pace-empty-sub {
+  margin: 10px 0 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.tut-pace-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tut-pace-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tut-pace-summary-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+.tut-pace-window {
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+}
+.tut-pace-banner {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  font-size: 0.86rem;
+}
+.tut-pace-banner--over {
+  background: #fff8eb;
+  border: 1px solid #fed7aa;
+  color: #92400e;
+}
+.tut-pace-banner--under {
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  color: var(--ink-muted);
+}
+.tut-pace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-pace-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--r-md);
+}
+.tut-pace-row--on_time { border-left-color: #12b76a; }
+.tut-pace-row--delay_risk { border-left-color: var(--yellow); }
+.tut-pace-row--amber { border-left-color: #f79009; }
+.tut-pace-row--red { border-left-color: #f04438; }
+.tut-pace-row--completed { border-left-color: var(--primary); opacity: 0.72; }
+.tut-pace-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-sunk);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+.tut-pace-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.tut-pace-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+.tut-pace-meta {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+.tut-pace-weeks {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+.tut-pace-signals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tut-pace-pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tut-pace-pill--on_time { background: #e7f8ef; color: #027a48; }
+.tut-pace-pill--delay_risk { background: #fef7e0; color: #a16207; }
+.tut-pace-pill--amber { background: #fff1e3; color: #b54708; }
+.tut-pace-pill--red { background: #fee4e2; color: #b42318; }
+.tut-pace-pill--completed { background: var(--primary-soft); color: var(--primary-hover); }
+.tut-pace-prep {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.tut-pace-prep--strong { color: #027a48; }
+.tut-pace-prep--on_track { color: #1d4ed8; }
+.tut-pace-prep--needs_work { color: #b54708; }
+.tut-pace-prep--not_started {
+  color: #98928a;
+  border-style: dashed;
+}
+.tut-pace-done {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--primary-hover);
+}

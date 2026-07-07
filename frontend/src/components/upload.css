@@ -1,0 +1,153 @@
+/* Cross-Device Upload — the standalone unauth phone page (Slice Q3-3).
+   Rendered outside the AppShell, so it carries its own full-screen styling.
+   Mobile-first; Paper & Ink tokens inlined to stay self-contained. `.up-`. */
+
+.up-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #f5f2ee;
+  color: #1a1a1a;
+  font-family: "Outfit", system-ui, -apple-system, sans-serif;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 16px 40px;
+  box-sizing: border-box;
+}
+
+.up-card {
+  width: 100%;
+  max-width: 480px;
+  background: #fff;
+  border: 1px solid #e6e0d8;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.up-brand {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: #2563eb;
+  margin-bottom: 18px;
+}
+
+.up-eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8378;
+  margin: 0 0 8px;
+}
+
+.up-stem {
+  font-size: 17px;
+  line-height: 1.45;
+  margin: 0 0 20px;
+  color: #1a1a1a;
+}
+
+/* file input — the label is the big tappable target; the input is hidden */
+.up-pick {
+  display: block;
+}
+.up-pick input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.up-pick-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #2563eb;
+  background: #f0f5ff;
+  border: 1.5px dashed #b9cdf5;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.up-pick input:disabled + .up-pick-face {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.up-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+.up-thumb {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e6e0d8;
+}
+.up-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  background: #f5f2ee;
+}
+
+.up-btn {
+  width: 100%;
+  margin-top: 18px;
+  padding: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+.up-btn:hover {
+  background: #1d4fd8;
+}
+.up-btn:disabled {
+  background: #b9cdf5;
+  cursor: default;
+}
+
+.up-muted {
+  color: #8a8378;
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
+.up-err {
+  color: #c0392b;
+  font-size: 14px;
+  margin: 12px 0 0;
+}
+
+.up-state {
+  text-align: center;
+  padding: 24px 8px;
+}
+.up-emoji {
+  font-size: 44px;
+  line-height: 1;
+  margin-bottom: 14px;
+}
+.up-emoji.up-ok {
+  color: #1f9d55;
+}
+.up-state-msg {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}

@@ -120,6 +120,20 @@
       "when": 1783280835736,
       "tag": "0016_deep_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783383690630,
+      "tag": "0017_useful_forgotten_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783429989990,
+      "tag": "0018_magenta_jackal",
+      "breakpoints": true
     }
   ]
 }

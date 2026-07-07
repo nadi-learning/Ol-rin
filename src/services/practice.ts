@@ -25,10 +25,11 @@
 import { and, asc, eq, isNull, or } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { attempt, practiceSession, question } from "@b2c/kernel/schema";
+import { attempt, attemptImage, practiceSession, question } from "@b2c/kernel/schema";
 import { enqueueStage1Scoring } from "../worker/queue";
 import { assertAssignedSubTopic } from "./assignment";
 import { currentImageFor } from "./image_read";
+import { consumeUploadToken, type ConsumedPhotos } from "./upload";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -93,6 +94,7 @@ export type SessionView = {
 };
 
 export type AttemptResult = {
+  attemptId: string; // Slice T1 — the FE requests immediate feedback for this id
   reveal: Reveal;
   currentIndex: number;
   total: number;
@@ -271,22 +273,41 @@ export async function getSession(
   return viewOf(s, q);
 }
 
-/** Shared advance: persist the attempt row, bump index, flip to completed, and
- *  return the reveal + the next projected question. */
+/** Shared advance: persist the attempt row (+ any answer photos), bump index,
+ *  flip to completed, and return the reveal + the next projected question. */
 async function recordAndAdvance(
   tx: Tx,
   s: typeof practiceSession.$inferSelect,
   row: typeof attempt.$inferInsert,
+  photos: ConsumedPhotos[] = [],
 ): Promise<AttemptResult> {
   const [inserted] = await tx
     .insert(attempt)
     .values(row)
     .returning({ id: attempt.id });
 
-  // Stage-1 scoring trigger (Slice AI-1). Only REAL submits — a skip carries no
-  // answer to read. Best-effort + fault-isolated (enqueueStage1Scoring swallows
-  // its own errors): a queue/Redis failure here must never break the submit.
-  if (inserted && row.answerText && !row.skipReason) {
+  // A photo answer (Slice Q3): persist one attempt_image row per uploaded photo,
+  // linked to the attempt. Bytes already live in object storage; these rows are
+  // the durable evidence link Stage-1 vision reads (Q3-2).
+  if (inserted && photos.length > 0) {
+    await tx.insert(attemptImage).values(
+      photos.map((p, i) => ({
+        boardId: row.boardId,
+        attemptId: inserted.id,
+        storageKey: p.storageKey,
+        mime: p.mime,
+        ordinal: i,
+      })),
+    );
+  }
+
+  // Stage-1 scoring trigger (Slice AI-1, widened by Q3-2). A TEXT answer OR a
+  // PHOTO answer (answer_text null but attempt_image rows present) both get
+  // scored — Stage-1 vision reads the photos exactly as it reads text (Q3-2). A
+  // skip carries neither and is never scored. Best-effort + fault-isolated
+  // (enqueueStage1Scoring swallows its own errors): a queue/Redis failure here
+  // must never break the submit.
+  if (inserted && (row.answerText || photos.length > 0) && !row.skipReason) {
     await enqueueStage1Scoring({ attemptId: inserted.id, boardId: row.boardId });
   }
 
@@ -306,6 +327,7 @@ async function recordAndAdvance(
     ? null
     : await loadPublicQuestion(tx, s.questionIds[nextIndex]!);
   return {
+    attemptId: inserted!.id,
     reveal,
     currentIndex: completed ? total : nextIndex,
     total,
@@ -356,6 +378,55 @@ export async function submitAttempt(
     timeMs: args.timeMs,
     skipReason: null,
   });
+}
+
+/**
+ * Submit a PHOTO answer to the current question (Slice Q3 — Cross-Device Upload).
+ * The student answered on paper and uploaded photos from their phone via an
+ * upload token; here (on the authed desktop) we consume that token single-use,
+ * persist the attempt with its photos, advance, and reveal the reference answer
+ * (D-L-3, no grade). answer_text is null — the answer IS the photos; Stage-1
+ * vision reads attempt_image (Q3-2). confidence + timing still ride along (they
+ * live on the desktop where the student taps them).
+ */
+export async function submitPhotoAttempt(
+  tx: Tx,
+  args: {
+    boardId: string;
+    appUserId: string;
+    sessionId: string;
+    questionId: string;
+    uploadToken: string;
+    confidence: number;
+    timeMs: number;
+  },
+): Promise<AttemptResult> {
+  const s = await ownedSession(tx, args.sessionId, args.appUserId);
+  const questionId = assertCurrent(s, args.questionId);
+  // Consume the token BEFORE writing the attempt: it validates the token matches
+  // this (user, session, question) slot + flips it consumed single-use. A stale/
+  // foreign/already-used token throws → no attempt is written.
+  const photos = await consumeUploadToken(tx, {
+    token: args.uploadToken,
+    sessionId: args.sessionId,
+    questionId,
+    appUserId: args.appUserId,
+  });
+  return recordAndAdvance(
+    tx,
+    s,
+    {
+      boardId: args.boardId,
+      practiceSessionId: s.id,
+      questionId,
+      appUserId: args.appUserId,
+      answerText: null, // the answer is the photos
+      confidence: args.confidence,
+      timeMs: args.timeMs,
+      skipReason: null,
+    },
+    photos,
+  );
 }
 
 /** Skip the current question (captured as an attempt with skip_reason), advance,

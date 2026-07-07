@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { trpc, BOARD } from "../trpc";
 import "./practice.css";
 
@@ -17,8 +18,18 @@ type Assignment = Awaited<
   ReturnType<typeof trpc.practice.listAssignments.query>
 >[number];
 
+type AnswerFeedback = Awaited<
+  ReturnType<typeof trpc.practice.getAnswerFeedback.mutate>
+>;
+
 type Picker = { id: string; name: string; topicName: string };
 type Phase = "picking" | "answering" | "revealed" | "completed";
+
+const VERDICT_LABEL: Record<AnswerFeedback["verdict"], string> = {
+  strong: "Strong answer",
+  partial: "On the right track",
+  off_track: "Not quite",
+};
 
 export function PracticePage() {
   const [nav, setNav] = useState<Nav | null>(null);
@@ -37,9 +48,17 @@ export function PracticePage() {
   const [answer, setAnswer] = useState("");
   const [confidence, setConfidence] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // Q3-3 — answer via typed text or an uploaded photo (paper answer scanned
+  // from the phone). Resets to "type" per question.
+  const [inputMode, setInputMode] = useState<"type" | "photo">("type");
+  const [lastWasPhoto, setLastWasPhoto] = useState(false);
+  // Guards the auto-submit so a photo can only be consumed once (StrictMode
+  // double-mount / a racing poll can't double-submit).
+  const photoSubmittingRef = useRef(false);
 
   // reveal state (post-submit)
   const [reveal, setReveal] = useState<AttemptResult["reveal"] | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null); // T1 — for feedback
   const [pendingNext, setPendingNext] = useState<Session["question"]>(null);
   const [pendingCompleted, setPendingCompleted] = useState(false);
 
@@ -78,7 +97,10 @@ export function PracticePage() {
     setQuestion(q);
     setAnswer("");
     setConfidence(null);
+    setInputMode("type");
+    photoSubmittingRef.current = false;
     setReveal(null);
+    setAttemptId(null);
     setStartedAt(Date.now());
     setPhase("answering");
   };
@@ -109,6 +131,7 @@ export function PracticePage() {
 
   const afterAttempt = (r: AttemptResult) => {
     setReveal(r.reveal);
+    setAttemptId(r.attemptId);
     setPendingNext(r.next);
     setPendingCompleted(r.completed);
     setIdx(r.currentIndex);
@@ -127,8 +150,36 @@ export function PracticePage() {
         confidence,
         timeMs: Math.max(0, Date.now() - startedAt),
       });
+      setLastWasPhoto(false);
       afterAttempt(r);
     } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Q3-3 — the phone has uploaded a photo for this slot; consume the token into
+  // a photo attempt, carrying the confidence + timer captured on the desktop.
+  // Fired once by UploadPanel's poll (photoSubmittingRef guards re-entry).
+  const submitPhoto = async (uploadToken: string) => {
+    if (photoSubmittingRef.current) return;
+    if (!sessionId || !question || confidence == null) return;
+    photoSubmittingRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await trpc.practice.submitPhotoAttempt.mutate({
+        sessionId,
+        questionId: question.id,
+        uploadToken,
+        confidence,
+        timeMs: Math.max(0, Date.now() - startedAt),
+      });
+      setLastWasPhoto(true);
+      afterAttempt(r);
+    } catch (e: any) {
+      photoSubmittingRef.current = false; // allow a retry on failure
       setError(String(e?.message ?? e));
     } finally {
       setBusy(false);
@@ -240,14 +291,32 @@ export function PracticePage() {
 
                 {phase === "answering" && (
                   <>
-                    <textarea
-                      className="prac-answer"
-                      placeholder="Write your answer…"
-                      value={answer}
-                      onChange={(e) => setAnswer(e.target.value)}
-                      rows={6}
-                      autoFocus
-                    />
+                    <div className="prac-mode" role="tablist">
+                      <button
+                        className={`prac-mode-tab${inputMode === "type" ? " is-on" : ""}`}
+                        onClick={() => setInputMode("type")}
+                      >
+                        ✍️ Type answer
+                      </button>
+                      <button
+                        className={`prac-mode-tab${inputMode === "photo" ? " is-on" : ""}`}
+                        onClick={() => setInputMode("photo")}
+                      >
+                        📷 Upload photo
+                      </button>
+                    </div>
+
+                    {inputMode === "type" && (
+                      <textarea
+                        className="prac-answer"
+                        placeholder="Write your answer…"
+                        value={answer}
+                        onChange={(e) => setAnswer(e.target.value)}
+                        rows={6}
+                        autoFocus
+                      />
+                    )}
+
                     <div className="prac-confidence">
                       <span className="prac-conf-label">How sure are you?</span>
                       <div className="prac-conf-scale">
@@ -263,6 +332,22 @@ export function PracticePage() {
                         ))}
                       </div>
                     </div>
+
+                    {inputMode === "photo" &&
+                      (confidence == null ? (
+                        <p className="prac-note">
+                          Answer on paper, then set how sure you are — a QR code
+                          will appear to upload a photo from your phone.
+                        </p>
+                      ) : (
+                        <UploadPanel
+                          sessionId={sessionId!}
+                          questionId={question.id}
+                          onUploaded={submitPhoto}
+                          onError={setError}
+                        />
+                      ))}
+
                     <div className="prac-actions">
                       <button
                         className="prac-btn prac-btn-ghost"
@@ -271,24 +356,39 @@ export function PracticePage() {
                       >
                         Skip
                       </button>
-                      <button
-                        className="prac-btn prac-btn-primary"
-                        onClick={submit}
-                        disabled={busy || !answer.trim() || confidence == null}
-                      >
-                        Submit answer
-                      </button>
+                      {inputMode === "type" && (
+                        <button
+                          className="prac-btn prac-btn-primary"
+                          onClick={submit}
+                          disabled={busy || !answer.trim() || confidence == null}
+                        >
+                          Submit answer
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
 
                 {phase === "revealed" && reveal && (
                   <div className="prac-reveal">
-                    {answer.trim() && (
+                    {lastWasPhoto ? (
                       <div className="prac-yours">
                         <p className="prac-reveal-label">Your answer</p>
-                        <p className="prac-yours-text">{answer.trim()}</p>
+                        <p className="prac-yours-text">📷 You uploaded a photo of your answer.</p>
                       </div>
+                    ) : (
+                      answer.trim() && (
+                        <div className="prac-yours">
+                          <p className="prac-reveal-label">Your answer</p>
+                          <p className="prac-yours-text">{answer.trim()}</p>
+                        </div>
+                      )
+                    )}
+                    {/* T1 — immediate AI feedback on a typed answer. Additive:
+                        the model answer below shows regardless. Stays mounted
+                        while the read is in flight (M31). */}
+                    {!lastWasPhoto && attemptId && (
+                      <FeedbackCard attemptId={attemptId} />
                     )}
                     <div className="prac-model">
                       <p className="prac-reveal-label">Model answer</p>
@@ -384,6 +484,66 @@ function AssignedList({
   );
 }
 
+// T1 — immediate AI feedback on the student's typed answer. Fetches once per
+// attempt (the server caches it, so this is idempotent + refresh-safe). Feedback
+// is ADDITIVE: on failure it stays quiet (the reveal + model answer already show).
+// Rendered inside the persistent reveal block, so its in-flight fetch survives (M31).
+function FeedbackCard({ attemptId }: { attemptId: string }) {
+  const [fb, setFb] = useState<AnswerFeedback | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setFb(null);
+    setFailed(false);
+    trpc.practice.getAnswerFeedback
+      .mutate({ attemptId })
+      .then((r) => alive && setFb(r))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [attemptId]);
+
+  if (failed) return null; // additive — no eval this time, model answer still shows
+  return (
+    <div className="prac-feedback">
+      <p className="prac-reveal-label">Feedback on your answer</p>
+      {!fb ? (
+        <p className="prac-fb-loading">
+          <span className="prac-fb-spinner" aria-hidden /> Evaluating your answer…
+        </p>
+      ) : (
+        <>
+          <span className={`prac-fb-verdict prac-fb-verdict--${fb.verdict}`}>
+            {VERDICT_LABEL[fb.verdict]}
+          </span>
+          <p className="prac-fb-text">{fb.feedback}</p>
+          {fb.strengths.length > 0 && (
+            <div className="prac-fb-block">
+              <p className="prac-fb-block-label">What you did well</p>
+              <ul className="prac-fb-list prac-fb-list--good">
+                {fb.strengths.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {fb.improvements.length > 0 && (
+            <div className="prac-fb-block">
+              <p className="prac-fb-block-label">To improve</p>
+              <ul className="prac-fb-list prac-fb-list--work">
+                {fb.improvements.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function PickList({
   subTopics,
   loading,
@@ -429,5 +589,91 @@ function PickList({
         ))}
       </ul>
     </section>
+  );
+}
+
+// Q3-3 — the desktop QR + poll. Mints an upload token for this (session,
+// question) slot, renders its QR (the phone opens {base}/u/:token), and polls
+// getUploadStatus every 3s. When the phone's photo lands (status 'uploaded') it
+// fires onUploaded ONCE → the parent consumes the token into a photo attempt.
+// The poll lives HERE and is torn down on unmount (mode-switch / next question);
+// onUploaded is read through a ref so the auto-submit always uses the latest
+// confidence, even if the student changes it after the QR appears.
+function UploadPanel({
+  sessionId,
+  questionId,
+  onUploaded,
+  onError,
+}: {
+  sessionId: string;
+  questionId: string;
+  onUploaded: (token: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const [mint, setMint] = useState<{ token: string; uploadUrl: string } | null>(null);
+  const [status, setStatus] = useState<string>("pending");
+  const firedRef = useRef(false);
+  const cbRef = useRef(onUploaded);
+  useEffect(() => {
+    cbRef.current = onUploaded;
+  });
+
+  // Mint (or reuse) the token once for this slot.
+  useEffect(() => {
+    let alive = true;
+    trpc.practice.createUploadToken
+      .mutate({ sessionId, questionId })
+      .then((r) => {
+        if (alive) setMint({ token: r.token, uploadUrl: r.uploadUrl });
+      })
+      .catch((e) => onError(String(e?.message ?? e)));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, questionId, onError]);
+
+  // Poll for the phone's upload; auto-submit once when it arrives.
+  useEffect(() => {
+    if (!mint) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const s = await trpc.practice.getUploadStatus.query({ sessionId, questionId });
+        if (!alive) return;
+        setStatus(s.status);
+        if (s.status === "uploaded" && !firedRef.current) {
+          firedRef.current = true;
+          cbRef.current(mint.token);
+        }
+      } catch {
+        /* transient poll error — keep polling */
+      }
+    };
+    const id = setInterval(tick, 3000);
+    tick(); // immediate first check
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [mint, sessionId, questionId]);
+
+  if (!mint) return <p className="prac-muted">Preparing upload…</p>;
+  const received = status === "uploaded";
+  return (
+    <div className="prac-qr">
+      <div className="prac-qr-code">
+        <QRCodeSVG value={mint.uploadUrl} size={172} />
+      </div>
+      <div className="prac-qr-side">
+        <p className="prac-qr-title">Scan to upload your answer</p>
+        <p className="prac-muted">
+          Point your phone camera at the code, then take a photo of your written
+          answer. It’ll submit here automatically.
+        </p>
+        <p className={`prac-qr-status${received ? " is-live" : ""}`}>
+          {received ? "✓ Photo received — submitting…" : "Waiting for your photo…"}
+        </p>
+      </div>
+    </div>
   );
 }

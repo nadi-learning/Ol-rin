@@ -34,6 +34,9 @@ import {
   topic,
   tutorStudent,
 } from "@b2c/kernel/schema";
+import { getPlan } from "./pace";
+import type { PacePlanView } from "./pace";
+import type { ChildSummary } from "./parent";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -405,6 +408,40 @@ export async function listPendingStage2(
       hasMastery: a.hasMastery,
     };
   });
+}
+
+// ── Slice T6: the tutor Pace-Plan view (read-only) ─────────────────────────
+// A tutor inspects a linked student's Pace Plan for one subject — the SAME
+// derive-at-read view the student sees (pace.getPlan), gated by the tutor↔student
+// wall. NO writes: the tutor cannot set up / reorder / mark-complete a plan (v0
+// read surface, the D-T-1 read-before-write discipline). `getPlan` is keyed only
+// by the target student's ChildSummary, so this is purely the ownership guard +
+// a delegate; every derived number (projected dates, pace, preparedness) is still
+// recomputed on read from the student's own plan + certified mastery.
+
+/**
+ * A linked student's Pace Plan for one subject. Ownership-guarded (foreign
+ * student → StudentNotFoundError, the D-L-5 wall) then delegated to pace.getPlan
+ * with a ChildSummary built for the target student. `today` is injectable so the
+ * probe can pin the clock (mirrors pace.getPlan). Read-only — never writes.
+ */
+export async function getStudentPacePlan(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string; subjectId: string; today?: string },
+): Promise<PacePlanView> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  const [student] = await tx
+    .select({ id: appUser.id, name: appUser.name, email: appUser.email })
+    .from(appUser)
+    .where(eq(appUser.id, args.studentId))
+    .limit(1);
+  // The ownership guard already proved the link exists; this is the display name.
+  const self: ChildSummary = {
+    studentId: args.studentId,
+    name: student?.name ?? null,
+    email: student?.email ?? "",
+  };
+  return getPlan(tx, { self, subjectId: args.subjectId, today: args.today });
 }
 
 /**

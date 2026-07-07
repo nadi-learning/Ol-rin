@@ -8,6 +8,12 @@
  * mastery_state** — moving certified mastery is Stage-2, tutor-in-the-loop (§6),
  * which needs a tutor surface we don't have yet.
  *
+ * The answer is read the same way whether it was TYPED or handwritten: a typed
+ * answer rides in `answer_text`; a PHOTO answer (Slice Q3) has `answer_text` null
+ * and its `attempt_image` rows are loaded, fetched from object storage, and sent
+ * to the SAME per-axis Gemini call as inline images (multimodal, Q3-2). The
+ * ladders + the blind/abstain rules are identical for both.
+ *
  * The two system prompts below ARE the v0 agent prompts (Polaris frame 3: the
  * skill file becomes the agent's system prompt) — faithful distillations of
  * assessment.md §2. The data turn carries the sub-topic's LOs (the
@@ -26,6 +32,7 @@ import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
   attempt,
+  attemptImage,
   eventLog,
   learningObjective,
   masteryHistory,
@@ -39,6 +46,7 @@ import {
 import { Type } from "@google/genai";
 import { withBoard } from "../db/with-board";
 import { geminiJson } from "./ai/gemini";
+import { getObject } from "./object_storage";
 import { assertTutorsStudent } from "./tutor";
 
 type Tx = PgTransaction<any, any, any>;
@@ -171,10 +179,31 @@ export async function scoreAttempt(
     const [a] = await tx.select().from(attempt).where(eq(attempt.id, attemptId));
     if (!a) throw new AttemptNotFoundError(attemptId);
 
-    // Skips carry no answer to read — nothing to score (the attempt is still
+    // A skip carries no answer to read — nothing to score (the attempt is still
     // captured evidence for Stage-2's coverage view, just not Stage-1-scorable).
-    if (!a.answerText || a.skipReason) {
+    if (a.skipReason) {
       return { attemptId, scored: false, axesRun: [], observationsWritten: 0 };
+    }
+
+    // Answer photos (Q3-2): a photo answer has answer_text null — the answer IS
+    // the image(s). Load them once (both axes reuse the same bytes), lowest
+    // ordinal first, and decode to base64 for the multimodal Gemini call. Text
+    // answers have no rows here → images stays empty (the text path is unchanged).
+    const imgRows = await tx
+      .select()
+      .from(attemptImage)
+      .where(eq(attemptImage.attemptId, attemptId))
+      .orderBy(asc(attemptImage.ordinal));
+
+    // Nothing to read at all (no typed answer AND no photos) → not scorable.
+    if (!a.answerText && imgRows.length === 0) {
+      return { attemptId, scored: false, axesRun: [], observationsWritten: 0 };
+    }
+
+    const images: Array<{ mimeType: string; data: string }> = [];
+    for (const r of imgRows) {
+      const bytes = await getObject(r.storageKey);
+      images.push({ mimeType: r.mime, data: Buffer.from(bytes).toString("base64") });
     }
 
     const [q] = await tx
@@ -226,6 +255,7 @@ export async function scoreAttempt(
         explanation: q.explanation,
         pedagogicalNote: q.pedagogicalNote,
         answerText: a.answerText,
+        images,
         confidence: a.confidence,
         timeMs: a.timeMs,
         attemptId,
@@ -248,6 +278,8 @@ export async function scoreAttempt(
           timeMs: a.timeMs ?? null,
           crossConceptNote: read.crossConceptNote,
           model: process.env.GEMINI_MODEL ?? "gemini-3-flash-preview",
+          // Forensics: this read was of a photo answer (Q3-2), not typed text.
+          ...(images.length ? { photoCount: images.length } : {}),
         },
         calibrationFlag: read.calibrationFlag,
         pedagogicalComment: q.pedagogicalNote,
@@ -272,7 +304,10 @@ interface AxisCallInput {
   referenceAnswer: string;
   explanation: string | null;
   pedagogicalNote: string | null;
-  answerText: string;
+  // Typed answer, or null when the answer is handwritten in the photo(s).
+  answerText: string | null;
+  // Answer photos (Q3-2), base64. Empty for a typed answer.
+  images: Array<{ mimeType: string; data: string }>;
   confidence: number | null;
   timeMs: number | null;
   attemptId: string;
@@ -300,7 +335,15 @@ ${i.referenceAnswer}${i.explanation ? `\n\nEXPLANATION: ${i.explanation}` : ""}$
   }
 
 STUDENT ANSWER:
-${i.answerText}
+${
+    i.images.length
+      ? `The student answered ON PAPER — their answer is in the ${
+          i.images.length === 1 ? "attached photo" : `${i.images.length} attached photos`
+        }. Read the handwriting, including every step of working, any diagrams, crossings-out/self-corrections, and the final result.${
+          i.answerText ? `\n\nTyped note alongside the photo(s): ${i.answerText}` : ""
+        }`
+      : i.answerText
+  }
 
 SIGNALS: self-rated confidence = ${i.confidence ?? "n/a"}/5; time taken = ${
     i.timeMs != null ? `${i.timeMs} ms` : "n/a"
@@ -312,7 +355,13 @@ Read this single answer on the ${axis} axis per your instructions. Return the st
     label: `stage1:${axis}:${i.attemptId}`,
     systemInstruction: axis === "conceptual" ? CONCEPTUAL_SYSTEM : PROCEDURAL_SYSTEM,
     prompt,
+    images: i.images.length ? i.images : undefined,
     responseSchema: geminiResponseSchema as never,
+    // M28: a vision read (OCR of handwriting + working) spikes thinking well
+    // above a text read — run it UNCAPPED (model default) so thinking can't
+    // starve the JSON. Text answers keep the default ceiling. Timeout + retry
+    // remain the runaway guards.
+    maxOutputTokens: i.images.length ? null : undefined,
   });
 
   return axisReadSchema.parse(raw);

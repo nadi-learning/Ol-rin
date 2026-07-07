@@ -182,6 +182,7 @@ function StudentDetail({
       <nav className="tut-tabs" role="tablist">
         <TutorTabButton id="assess" tab={tab} onPick={setTab} label="Assess" badge={pendingCount} />
         <TutorTabButton id="assign" tab={tab} onPick={setTab} label="Assign" badge={dueCount} />
+        <TutorTabButton id="pace" tab={tab} onPick={setTab} label="Pace" />
         <TutorTabButton id="reports" tab={tab} onPick={setTab} label="Reports" />
         <TutorTabButton id="author" tab={tab} onPick={setTab} label="Author" />
       </nav>
@@ -224,6 +225,13 @@ function StudentDetail({
         </>
       )}
 
+      {tab === "pace" && (
+        <section className="tut-section">
+          <h3 className="tut-section-title">Pace plan</h3>
+          <TutorPacePanel student={student} />
+        </section>
+      )}
+
       {tab === "reports" && (
         <section className="tut-section">
           <h3 className="tut-section-title">Progress reports (parent sign-off)</h3>
@@ -236,7 +244,191 @@ function StudentDetail({
   );
 }
 
-type TutorTab = "assess" | "assign" | "reports" | "author";
+// ── Slice T6: the tutor Pace-Plan view (read-only) ─────────────────────────
+// The SAME derive-at-read Pace Plan the student sees (tutor.getStudentPacePlan),
+// rendered read-only: no setup form, no reorder / mark-complete, no estimate or
+// date editors. The tutor picks a subject and reads the timeline. All numbers
+// come from the backend (D-PACE-5). `.tut-pace-`-scoped (global-leak hygiene).
+
+type TutorPlan = Awaited<ReturnType<typeof trpc.tutor.getStudentPacePlan.query>>;
+type TutorPlanSubject = Awaited<
+  ReturnType<typeof trpc.tutor.listSubjects.query>
+>[number];
+type TutorPlanChapter = Extract<TutorPlan, { needsSetup: false }>["chapters"][number];
+
+const PACE_STATUS_LABEL: Record<string, string> = {
+  completed: "Completed",
+  on_time: "On track",
+  delay_risk: "Slightly behind",
+  amber: "Behind",
+  red: "Well behind",
+};
+const PREP_LABEL: Record<string, string> = {
+  strong: "Strong",
+  on_track: "On track",
+  needs_work: "Needs work",
+  not_started: "Not started",
+};
+
+function fmtPaceDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+function paceWeeks(days: number): number {
+  return Math.round(days / 7);
+}
+
+function TutorPacePanel({ student }: { student: Student }) {
+  const [subjects, setSubjects] = useState<TutorPlanSubject[] | null>(null);
+  const [subjectId, setSubjectId] = useState<string | null>(null);
+  const [plan, setPlan] = useState<TutorPlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    trpc.tutor.listSubjects
+      .query()
+      .then((subs) => {
+        setSubjects(subs);
+        setSubjectId((cur) => cur ?? subs[0]?.id ?? null);
+      })
+      .catch((e) => setError(String(e?.message ?? e)));
+  }, []);
+
+  useEffect(() => {
+    if (!subjectId) return;
+    setPlan(null);
+    setError(null);
+    trpc.tutor.getStudentPacePlan
+      .query({ studentId: student.studentId, subjectId })
+      .then(setPlan)
+      .catch((e) => setError(String(e?.message ?? e)));
+  }, [subjectId, student.studentId]);
+
+  return (
+    <div className="tut-pace">
+      {subjects && subjects.length > 1 && (
+        <select
+          className="tut-pace-subject"
+          value={subjectId ?? ""}
+          onChange={(e) => setSubjectId(e.target.value)}
+        >
+          {subjects.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} · {s.grade}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {error && <p className="tut-error">{error}</p>}
+      {!error && !plan && <p className="tut-muted">Loading pace plan…</p>}
+
+      {plan?.needsSetup && (
+        <div className="tut-pace-empty">
+          <p className="tut-muted">
+            {student.name ?? student.email} hasn’t set up a pace plan for{" "}
+            <b>{plan.subject.name}</b> yet.
+          </p>
+          <p className="tut-pace-empty-sub">Suggested order &amp; effort:</p>
+          <ol className="tut-pace-list">
+            {plan.chapters.map((c, i) => (
+              <li className="tut-pace-row" key={c.chapterId}>
+                <span className="tut-pace-num">{i + 1}</span>
+                <span className="tut-pace-name">{c.name}</span>
+                <span className="tut-pace-weeks">
+                  ~{c.recommendedWeeks} {c.recommendedWeeks === 1 ? "wk" : "wks"}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {plan && !plan.needsSetup && <TutorPaceTimeline plan={plan} />}
+    </div>
+  );
+}
+
+function TutorPaceTimeline({
+  plan,
+}: {
+  plan: Extract<TutorPlan, { needsSetup: false }>;
+}) {
+  const { summary, chapters } = plan;
+  const over = summary.totalRecommendedDays - summary.availableDays;
+  return (
+    <div className="tut-pace-timeline">
+      <div className="tut-pace-summary">
+        <span className="tut-pace-summary-label">Overall</span>
+        <PacePillTut status={summary.subjectStatus} />
+        <span className="tut-pace-window">
+          {fmtPaceDate(summary.startDate)} → {fmtPaceDate(summary.endDate)}
+        </span>
+      </div>
+
+      {summary.budgetStatus === "over" && (
+        <p className="tut-pace-banner tut-pace-banner--over">
+          <b>~{paceWeeks(over)} weeks over the deadline.</b> Plan needs about{" "}
+          {paceWeeks(summary.totalRecommendedDays)} weeks; {paceWeeks(summary.availableDays)}{" "}
+          allowed.
+        </p>
+      )}
+      {summary.budgetStatus === "under" && (
+        <p className="tut-pace-banner tut-pace-banner--under">
+          ~{paceWeeks(-over)} weeks of buffer — the plan fits inside the deadline.
+        </p>
+      )}
+
+      <ol className="tut-pace-list">
+        {chapters.map((c: TutorPlanChapter, i) => (
+          <li className={`tut-pace-row tut-pace-row--${c.paceStatus}`} key={c.chapterId}>
+            <span className="tut-pace-num">{i + 1}</span>
+            <span className="tut-pace-body">
+              <span className="tut-pace-name">{c.name}</span>
+              <span className="tut-pace-meta">
+                ~{c.recommendedWeeks} {c.recommendedWeeks === 1 ? "wk" : "wks"}
+                {c.projectedEndDate && (
+                  <> · should be done by <b>{fmtPaceDate(c.projectedEndDate)}</b></>
+                )}
+              </span>
+            </span>
+            <span className="tut-pace-signals">
+              {c.paceStatus && <PacePillTut status={c.paceStatus} />}
+              {c.preparedness && (
+                <span
+                  className={`tut-pace-prep tut-pace-prep--${c.preparedness.label}`}
+                  title={
+                    c.preparedness.label === "not_started"
+                      ? "No certified mastery yet for this chapter"
+                      : `Rolled up from ${c.preparedness.certifiedSubTopics} assessed sub-topic${c.preparedness.certifiedSubTopics === 1 ? "" : "s"}`
+                  }
+                >
+                  {PREP_LABEL[c.preparedness.label] ?? c.preparedness.label}
+                </span>
+              )}
+              {c.completed && <span className="tut-pace-done">Done</span>}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function PacePillTut({ status }: { status: string }) {
+  return (
+    <span className={`tut-pace-pill tut-pace-pill--${status}`}>
+      {PACE_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+type TutorTab = "assess" | "assign" | "pace" | "reports" | "author";
 
 // Slice QA3-c: the Author tab is PROGRESS-FIRST (D-QA3-1), a two-level drill-down
 // (eyeball feedback): (1) chapter list — each chapter + its two-axis rollup;

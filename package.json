@@ -38,6 +38,7 @@
     "probe:practice": "bun scripts/probe_practice_capture.ts",
     "probe:assessment": "bun scripts/probe_assessment_stage1.ts",
     "probe:tutor": "bun scripts/probe_tutor_surface.ts",
+    "probe:tutorpace": "bun scripts/probe_tutor_pace.ts",
     "probe:stage2": "bun scripts/probe_stage2.ts",
     "probe:parent": "bun scripts/probe_parent_report.ts",
     "probe:scheduler": "bun scripts/probe_scheduler.ts",
@@ -64,7 +65,10 @@
     "probe:progress": "bun scripts/probe_progress_tree.ts",
     "probe:launcher": "bun scripts/probe_author_launcher.ts",
     "probe:worker": "bun scripts/probe_authoring_worker.ts",
-    "probe:set": "bun scripts/probe_authoring_set.ts"
+    "probe:set": "bun scripts/probe_authoring_set.ts",
+    "probe:upload": "bun scripts/probe_upload_capture.ts",
+    "probe:vision": "bun scripts/probe_vision_scoring.ts",
+    "probe:s3role": "STORAGE_DRIVER=s3 S3_USE_INSTANCE_ROLE=true S3_BUCKET=probe-bucket S3_IMDS_BASE_URL=http://127.0.0.1:8055 bun scripts/probe_s3_instance_role.ts"
   },
   "dependencies": {
     "@b2c/kernel": "workspace:*",

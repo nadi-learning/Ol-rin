@@ -53,6 +53,38 @@ const envSchema = z.object({
   // sidecar fails the render JOB loudly, never app/worker boot.
   PYRENDER_URL: z.string().url().default("http://127.0.0.1:8002"),
   IMAGES_DIR: z.string().min(1).default("./data/images"),
+
+  // Slice Q3 — Cross-Device Upload (answer-photo capture).
+  // STORAGE_DRIVER selects where uploaded photo BYTES go (metadata is always in
+  // Postgres): 'fs' (local dev + the deterministic probe) or 's3' (prod, via
+  // Bun-native S3 — works with AWS S3 or R2 when S3_ENDPOINT is set). The S3
+  // creds are optional here + validated lazily in object_storage.ts (kill-switch
+  // — a misconfigured s3 driver fails the upload job, not app boot).
+  STORAGE_DRIVER: z.enum(["fs", "s3"]).default("fs"),
+  UPLOADS_DIR: z.string().min(1).default("./data/uploads"), // fs-driver root
+  S3_BUCKET: blankToUndefined(z.string().min(1).optional()),
+  S3_REGION: blankToUndefined(z.string().min(1).default("ap-south-1")),
+  S3_ENDPOINT: blankToUndefined(z.string().url().optional()), // set for R2/non-AWS
+  S3_ACCESS_KEY_ID: blankToUndefined(z.string().min(1).optional()),
+  S3_SECRET_ACCESS_KEY: blankToUndefined(z.string().min(1).optional()),
+  // Prod on the Olórin EC2 uses an INSTANCE ROLE instead of a stored key: no
+  // long-lived secret anywhere. Bun's native S3Client does NOT do the AWS IMDS
+  // credential chain itself, so object_storage.ts fetches the role's temporary,
+  // auto-rotating creds from instance metadata and feeds them in (refreshing
+  // before expiry). When true, S3_ACCESS_KEY_ID/SECRET are ignored. Default
+  // false (local dev/probe + any key-based deploy). blankToUndefined (M2).
+  S3_USE_INSTANCE_ROLE: blankToUndefined(
+    z.enum(["true", "false"]).default("false"),
+  ).transform((v) => v === "true"),
+  // Override the IMDS base (default http://169.254.169.254) — lets the probe
+  // point at a local fake metadata server to test the fetch/parse/refresh logic
+  // off-box. Never set in prod. blankToUndefined (M2).
+  S3_IMDS_BASE_URL: blankToUndefined(z.string().url().optional()),
+  // The phone-reachable base URL the desktop QR encodes → `{base}/upload/{token}`
+  // (the FE mobile page, which POSTs to the backend /upload/:token). In dev this
+  // must be the machine's LAN IP (a phone can't reach localhost); defaults to
+  // FRONTEND_URL. blankToUndefined so an empty override falls back (M2).
+  PUBLIC_UPLOAD_BASE_URL: blankToUndefined(z.string().url().optional()),
 });
 
 const parsed = envSchema.safeParse(process.env);
