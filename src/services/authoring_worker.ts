@@ -256,7 +256,12 @@ async function runWorkerCall(
       systemInstruction: opts.pack,
       prompt: opts.prompt,
       responseSchema: geminiQuestionSchema as never,
-      maxOutputTokens: null, // uncapped — thinking model (M28)
+      // Uncapped — authoring is deliberately given full thinking headroom (the
+      // hardest AI task in the system; founder call: do NOT bound authoring
+      // quality for latency). The runaway latency is absorbed by the generous
+      // nginx/worker timeouts, not by starving the model. Runs on the global
+      // GEMINI_MODEL (= gemini-3.5-flash).
+      maxOutputTokens: null,
     });
     return { drafts: draftBatchSchema.parse(raw).questions, aiSessionId: null, resumed: false };
   }

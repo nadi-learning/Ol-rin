@@ -68,6 +68,7 @@
     "probe:set": "bun scripts/probe_authoring_set.ts",
     "probe:upload": "bun scripts/probe_upload_capture.ts",
     "probe:vision": "bun scripts/probe_vision_scoring.ts",
+    "probe:answerfeedback": "bun scripts/probe_answer_feedback.ts",
     "probe:s3role": "STORAGE_DRIVER=s3 S3_USE_INSTANCE_ROLE=true S3_BUCKET=probe-bucket S3_IMDS_BASE_URL=http://127.0.0.1:8055 bun scripts/probe_s3_instance_role.ts"
   },
   "dependencies": {

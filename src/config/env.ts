@@ -34,7 +34,7 @@ const envSchema = z.object({
   // Default model = gemini-3-flash-preview, matching b2c prod's evaluation path
   // (evaluation_service.py reads student answers on the same flash model).
   GEMINI_API_KEY: blankToUndefined(z.string().min(1).optional()),
-  GEMINI_MODEL: z.string().min(1).default("gemini-3-flash-preview"),
+  GEMINI_MODEL: z.string().min(1).default("gemini-3.5-flash"),
   // Slice VOICE-2 — the Gemini Live realtime model (a DISTINCT surface from the
   // generateContent path above; `gemini-3-flash-preview` is NOT Live-capable).
   // Default is the SDK-documented Live model; flip via env to a newer/native-audio
