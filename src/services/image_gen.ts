@@ -41,6 +41,27 @@ export class NoImageSpecError extends Error {
     this.name = "NoImageSpecError";
   }
 }
+
+/**
+ * A render failure surfaced out of the pipeline. Carries the pyrender HTTP status
+ * so the worker can tell an UNREACHABLE sidecar (httpStatus 0 → don't retry, a
+ * retry only re-pays the Gemini script-gen) from a transient/script failure
+ * (a 5xx / traceback → a retry may help).
+ */
+export class ImageRenderError extends Error {
+  constructor(
+    message: string,
+    public readonly httpStatus: number,
+  ) {
+    super(message);
+    this.name = "ImageRenderError";
+  }
+}
+
+/** True when the failure is the render sidecar being unreachable (not a bad script). */
+export function isPyrenderDownError(err: unknown): boolean {
+  return err instanceof ImageRenderError && err.httpStatus === 0;
+}
 export class QuestionNotFoundError extends Error {
   constructor(questionId: string) {
     super(`question ${questionId} not found`);
@@ -231,9 +252,10 @@ export async function generateImageForQuestion(
       });
     } catch (err) {
       if (err instanceof PyrenderError) {
-        throw new Error(
+        throw new ImageRenderError(
           `pyrender failed (status ${err.httpStatus}): ${err.message}` +
             (err.traceback ? `\n--- traceback ---\n${err.traceback}` : ""),
+          err.httpStatus,
         );
       }
       throw err;

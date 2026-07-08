@@ -141,7 +141,7 @@ import {
   sendTurn,
   startChat,
 } from "../services/authoring_chat";
-import { enqueueImageGeneration } from "../worker/queue";
+import { enqueueImageGeneration, getImageJobState } from "../worker/queue";
 import { verifyImage, VerifyImageNotFoundError } from "../services/image_verify";
 import { currentImageFor } from "../services/image_read";
 import { VendorChoice } from "@b2c/kernel/contracts";
@@ -1420,15 +1420,28 @@ export const appRouter = router({
           }
           throw e;
         }
+        const jobId = `image-${input.questionId}-${Date.now()}`;
         await enqueueImageGeneration(
           {
             questionId: input.questionId,
             boardId: ctx.board.id,
             refinementNote: input.refinementNote ?? null,
           },
-          { jobId: `image-${input.questionId}-${Date.now()}`, delayMs: 0 },
+          { jobId, delayMs: 0 },
         );
-        return { enqueued: true as const };
+        // Return the jobId so the poll can watch the job's state and surface a
+        // failure fast, instead of waiting out the full render-poll cap on a job
+        // that will never write an image row (e.g. the render sidecar is down).
+        return { enqueued: true as const, jobId };
+      }),
+
+    // Coarse render-job state for the tutor's poll (waiting/active/completed/
+    // failed/unknown). Lets the FE stop polling + show a friendly failure the
+    // moment a render job fails, rather than after the ~6-min image-poll cap.
+    getImageJobStatus: tutorProcedure
+      .input(z.object({ jobId: z.string().max(200) }))
+      .query(async ({ input }) => {
+        return { state: await getImageJobState(input.jobId) };
       }),
 
     // Poll the current rendered figure for a draft (thumbnail + verifier badge).

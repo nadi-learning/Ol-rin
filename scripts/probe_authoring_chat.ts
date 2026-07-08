@@ -40,11 +40,13 @@ import {
   authorFromChat,
   AuthoringChatNotFoundError,
   getChat,
+  parseAuthorMarker,
   proposeTarget,
   ProposeTargetError,
   reviseDraft,
   sendTurn,
   startChat,
+  stripAuthorMarker,
   SubTopicNotFoundError,
 } from "../src/services/authoring_chat";
 import { approveDrafts } from "../src/services/authoring";
@@ -254,6 +256,47 @@ async function main() {
   const privUnderQ = await rows(Q.id, (tx) => tx.select().from(question).where(eq(question.subTopicId, fx.subTopicId)));
   check("RLS: authoring_chat invisible under board Q", chatUnderQ.length === 0);
   check("RLS: P's private questions invisible under board Q", privUnderQ.length === 0);
+
+  // ─────────── Claude IN-CHAT authoring via the fenced marker (parity) ───────────
+  // FIRM (deterministic): the marker parser/stripper — the load-bearing logic we
+  // control, independent of any model. Valid → parsed; malformed/absent → null.
+  {
+    const good =
+      'On it — drafting now.\n```author_questions\n{"subTopicNumber": 2, "count": 3}\n```\nDone.';
+    const p = parseAuthorMarker(good);
+    check("marker parse: valid fenced block → {subTopicNumber:2, count:3}", p?.subTopicNumber === 2 && p?.count === 3);
+    const stripped = stripAuthorMarker(good);
+    check("marker strip: fence removed, prose kept", !/author_questions/.test(stripped) && /drafting now/.test(stripped) && /Done\./.test(stripped));
+    check("marker parse: same-line JSON tolerated", parseAuthorMarker('```author_questions {"subTopicNumber":1,"count":1}```')?.count === 1);
+    check("marker parse: no marker → null (inert)", parseAuthorMarker("let's discuss acceleration first, no rush") === null);
+    check("marker parse: fenced but missing keys → null (inert)", parseAuthorMarker('```author_questions\n{"foo":1}\n```') === null);
+    check("marker parse: wrong fence tag → null (inert)", parseAuthorMarker('```json\n{"subTopicNumber":1,"count":1}\n```') === null);
+  }
+
+  // FIRM (real Claude, AI-dependent — one retry to absorb model nondeterminism):
+  // a plain discussion turn does NOT author; an explicit go-ahead authors IN-CHAT
+  // (the marker fires → same review-form drafts as the Gemini tool). Fresh chat so
+  // it can't disturb the flow above.
+  {
+    const icChat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "claude_cli", chapterId: fx.chapterId }));
+    const disc = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: icChat.chatId, text: "Before we author — in one line, what's the single biggest gap for this student?" }));
+    check("claude in-chat: discussion turn (no go-ahead) does NOT author (draft absent)", disc.draft === undefined);
+
+    let go = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: icChat.chatId, text: "Yes — go ahead and author 2 questions on sub-topic 1 now." }));
+    if (!go.draft) {
+      // one more explicit nudge (model nondeterminism, not a logic failure)
+      go = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: icChat.chatId, text: "Author 2 questions on sub-topic 1 now — emit the author_questions block." }));
+    }
+    const authored = !!go.draft && go.draft.drafts.length >= 1 && go.draft.drafts.every(validDraft);
+    check("claude in-chat: go-ahead authored drafts in-chat (marker fired, ≤2 tries)", authored);
+    if (go.draft) {
+      check("claude in-chat: target ∈ chapter allowlist (anchor bounded)", fx.allowedSubTopicIds.includes(go.draft.subTopicId));
+      check("claude in-chat: shown wrap-up has no raw author_questions marker leak", !/```\s*author_questions/.test(go.messages[go.messages.length - 1]!.text));
+      soft("claude in-chat drafted", { count: go.draft.drafts.length, sub: go.draft.subTopicName });
+    } else {
+      soft("claude in-chat: marker did NOT fire after 2 tries (inspect / re-run)", go.messages[go.messages.length - 1]!.text.slice(0, 200));
+    }
+  }
 
   // ─────────── gemini_api smoke (both vendors) ───────────
   try {

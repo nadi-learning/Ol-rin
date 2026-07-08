@@ -172,12 +172,18 @@ async function main() {
   check("tool: wrap-up carries NO pseudocode leak (sanitised)", !LEAK_RE.test(wrap.text));
   soft("tool wrap-up (first 140ch)", wrap.text.slice(0, 140));
 
-  // ─────────── Claude path (hybrid): NO tool → NO draft ───────────
+  // ─────────── Claude path: in-chat authoring via the fenced marker (parity) ───────────
+  // Claude has no native tool, but a clear go-ahead now authors IN-CHAT via the
+  // `author_questions` fenced marker (same review-form drafts as the Gemini tool).
+  // One retry absorbs model nondeterminism. (Deep coverage lives in probe:authoringchat.)
   try {
     const cchat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "claude_cli", chapterId: fx.chapterId }));
-    const c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Go ahead and author 3 questions on Acceleration now." }));
-    check("claude go-ahead: NO draft (tool is Gemini-only; Claude authors via the button)", c1.draft === undefined);
-    check("claude: assistant text non-empty, vendorId=claude_cli", c1.messages.at(-1)!.text.trim().length > 0 && c1.messages.at(-1)!.vendorId === "claude_cli");
+    let c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Go ahead and author 3 questions on sub-topic 1 now." }));
+    if (!c1.draft) {
+      c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Author 3 on sub-topic 1 now — emit the author_questions block." }));
+    }
+    check("claude go-ahead: authored IN-CHAT via marker (draft present, ≤2 tries)", !!c1.draft && c1.draft.drafts.length >= 1 && c1.draft.drafts.every(validDraft));
+    check("claude: assistant text non-empty, vendorId=claude_cli, no raw marker leak", c1.messages.at(-1)!.text.trim().length > 0 && c1.messages.at(-1)!.vendorId === "claude_cli" && !/```\s*author_questions/.test(c1.messages.at(-1)!.text));
   } catch (e) {
     check("claude path smoke", false);
     console.error("    claude smoke error:", (e as Error).message);

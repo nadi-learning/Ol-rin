@@ -3255,12 +3255,20 @@ function DraftFigureSection({
   }, [card.id, card.imageId, card.verifierLabel]);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jobRef = useRef<string | null>(null);
   useEffect(
     () => () => {
       if (pollRef.current) clearTimeout(pollRef.current);
     },
     [],
   );
+
+  // Every tutor-facing message here is plain English — no server/exception text
+  // reaches the UI. The worker's technical detail stays in the logs.
+  const GEN_FAILED_MSG =
+    "We couldn't create this diagram. Please try again — if it keeps failing, simplify the description.";
+  const GEN_SLOW_MSG =
+    "The diagram is taking longer than usual. Leave this open, or try Generate again in a moment.";
 
   const spec = card.image;
   const description = spec?.description ?? "";
@@ -3286,37 +3294,50 @@ function DraftFigureSection({
     try {
       // The worker reads question.image from the DB → persist the spec first.
       await onCommit();
-      await trpc.tutor.generateQuestionImage.mutate({
+      const { jobId } = await trpc.tutor.generateQuestionImage.mutate({
         questionId: card.id,
         refinementNote: refinementNote?.trim() || undefined,
       });
+      jobRef.current = jobId;
       poll(0);
-    } catch (e) {
+    } catch {
       setGenerating(false);
-      setErr(String((e as { message?: string })?.message ?? e));
+      setErr(GEN_FAILED_MSG);
     }
   }
 
-  // Poll until a verdict lands (verifierLabel non-null) or we give up (~6 min).
+  // Poll until a verdict lands (verifierLabel non-null) or the render JOB fails
+  // (surfaced fast so the tutor isn't left waiting out the cap on a job that will
+  // never write an image row). Give up after ~6 min → a friendly "taking longer".
   function poll(tries: number) {
     if (tries > 120) {
       setGenerating(false);
-      setErr("Still rendering — check back shortly (Re-verify to refresh).");
+      setErr(GEN_SLOW_MSG);
       return;
     }
     trpc.tutor.getQuestionImage
       .query({ questionId: card.id })
-      .then((cur) => {
+      .then(async (cur) => {
         if (cur) setImg({ imageId: cur.imageId, verifierLabel: cur.verifierLabel });
         if (cur && cur.verifierLabel) {
           setGenerating(false); // terminal — PASS / FAIL / ERROR
-        } else {
-          pollRef.current = setTimeout(() => poll(tries + 1), 3000);
+          return;
         }
+        // No image yet: check whether the render job has already failed.
+        const jobId = jobRef.current;
+        if (jobId) {
+          const { state } = await trpc.tutor.getImageJobStatus.query({ jobId });
+          if (state === "failed") {
+            setGenerating(false);
+            setErr(GEN_FAILED_MSG);
+            return;
+          }
+        }
+        pollRef.current = setTimeout(() => poll(tries + 1), 3000);
       })
-      .catch((e) => {
+      .catch(() => {
         setGenerating(false);
-        setErr(String((e as { message?: string })?.message ?? e));
+        setErr(GEN_FAILED_MSG);
       });
   }
 
@@ -3330,7 +3351,7 @@ function DraftFigureSection({
       .then((cur) => {
         if (cur) setImg({ imageId: cur.imageId, verifierLabel: cur.verifierLabel });
       })
-      .catch((e) => setErr(String((e as { message?: string })?.message ?? e)))
+      .catch(() => setErr("We couldn't re-check this diagram. Please try again."))
       .finally(() => setReverifying(false));
   }
 

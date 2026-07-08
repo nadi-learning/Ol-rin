@@ -135,11 +135,17 @@ const CHAT_SYSTEM_BASE = `You are a question-authoring partner for a tutor in an
 
 Your job in this chat is to help the tutor decide WHAT questions to author for this student, aimed at their genuine weaknesses. Surface your data-driven read of where the student is strong and weak (cite the mastery levels / observations), listen to the tutor's human perspective, and converge on a concrete authoring brief (which sub-topic, which misconception or skill, what kind of probe). Be concise and specific — this is a working conversation, not an essay.`;
 
-// Claude path — no tool. Authoring runs through the button, so tell the tutor
-// exactly that (this is TRUE for Claude → the AI never contradicts itself).
+// Claude path — no native tool (the claude_cli vendor drops req.tools), so Claude
+// authors IN-CHAT by emitting a fenced `author_questions` JSON marker on a clear
+// go-ahead; sendTurn parses it and runs the SAME spawn→persist path as the Gemini
+// tool. Parity with Gemini, via text instead of a structured function call.
 const CHAT_SYSTEM_CLAUDE = `${CHAT_SYSTEM_BASE}
 
-HOW AUTHORING HAPPENS (so you can guide the tutor correctly): you do NOT write the final questions in your chat replies. When you and the tutor have converged on what to work on, tell them to click the **"Suggest what to work on"** button (next to the message box). That makes you formally propose ONE sub-topic + a number of questions; the tutor confirms it, and the questions are drafted into a review form for them to edit and save. So when the tutor says "let's author" or "go ahead", point them to the "Suggest what to work on" button to lock the target — don't say authoring happens elsewhere, and don't claim you can't author.`;
+HOW AUTHORING HAPPENS (so you author correctly): when you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), author by emitting EXACTLY ONE fenced code block whose info string is \`author_questions\` and whose body is a JSON object with two integer fields — \`subTopicNumber\` (the 1-based number of the chosen sub-topic from the AUTHORING TARGETS list in the message) and \`count\` (how many questions, 1–8). Exactly like this, the JSON alone inside the fence:
+\`\`\`author_questions
+{"subTopicNumber": 2, "count": 3}
+\`\`\`
+You do NOT write the questions yourself — emitting that block spawns a specialist authoring worker that drafts them to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them. Emit the block ONLY after a clear go-ahead — until then, keep discussing and do NOT emit it. You may write one short natural sentence before the block (e.g. "On it — drafting 3 now."). (A "Suggest what to work on" button also exists as an alternative, but you don't need it.)`;
 
 // Gemini path — has the author_questions tool. It authors IN-CHAT on the tutor's
 // go-ahead. The drafts still land in the review form (decision 2b: the tutor
@@ -215,11 +221,53 @@ function authorQuestionsToolSpec(): ToolSpec {
 }
 
 // Validates the tool call's args. The tool SELECTS a target + count; the worker
-// authors the questions (QA3-e master→worker split).
+// authors the questions (QA3-e master→worker split). Shared by the Gemini tool
+// AND the Claude marker path below.
 const authorToolArgsSchema = z.object({
   subTopicNumber: z.number().int(),
   count: z.number().int(),
 });
+
+// ── Claude in-chat authoring marker (parity with the Gemini author_questions
+//    tool, without native function-calling). The claude_cli vendor drops req.tools
+//    (claude_cli_vendor.ts), so Claude signals an author intent by emitting a
+//    fenced ```author_questions {json}``` block on a clear tutor go-ahead. sendTurn
+//    parses it and runs the SAME resolve→spawn→persist path the tool uses. Absent
+//    or malformed → parseAuthorMarker returns null → nothing is authored (inert). ──
+type SubRef = {
+  subTopicId: string;
+  subTopicName: string;
+  topicName: string;
+  chapterName: string;
+};
+
+// Tolerant match: the info string is `author_questions` (matched on the tag, not a
+// \b boundary — ai-integration-gotchas); the JSON body may be on the next line or
+// the same line. The object is extracted with the shared extractJsonObject and
+// validated with the same schema as the tool.
+const CLAUDE_AUTHOR_FENCE_RE = /```[ \t]*author_questions\b[ \t]*\r?\n?([\s\S]*?)```/i;
+
+/** Parse the Claude `author_questions` fenced marker → {subTopicNumber, count},
+ *  or null if absent/malformed. Exported for the probe's deterministic checks. */
+export function parseAuthorMarker(
+  text: string | null | undefined,
+): { subTopicNumber: number; count: number } | null {
+  if (!text) return null;
+  const m = text.match(CLAUDE_AUTHOR_FENCE_RE);
+  if (!m || !m[1]) return null;
+  const obj = extractJsonObject<unknown>(m[1]);
+  if (!obj) return null;
+  const parsed = authorToolArgsSchema.safeParse(obj);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Remove the `author_questions` fenced block from the assistant text shown to the
+ *  tutor (it's a machine directive, not prose); collapse the gap it leaves.
+ *  Exported for the probe. */
+export function stripAuthorMarker(text: string | null | undefined): string {
+  if (!text) return "";
+  return text.replace(CLAUDE_AUTHOR_FENCE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 // ───────────────────────── resume helpers (ported from unit_chat) ─────────────────────────
 
@@ -443,10 +491,11 @@ export type ChatView = {
   subTopicId: string | null; // resolved authoring focus (set by proposeTarget)
   vendor: VendorChoice;
   messages: ChatMessage[];
-  // Set ONLY on a sendTurn where the Gemini author_questions tool fired: the
-  // drafted questions the FE routes into the review form (decision 2b — same
-  // shape as authorFromChat; not persisted, the tutor edits + saves). Absent on
-  // every ordinary turn and on the Claude path.
+  // Set ONLY on a sendTurn where an in-chat author fired — the Gemini
+  // author_questions tool OR the Claude `author_questions` marker: the drafted
+  // questions the FE routes into the review form (same shape as authorFromChat;
+  // persisted as status='draft'/private, the tutor edits + approves). Absent on
+  // every ordinary discussion turn.
   draft?: AuthorFromChatResult;
 };
 
@@ -620,6 +669,93 @@ export async function listAuthoringChats(
 }
 
 /**
+ * Shared in-chat authoring core (both the Gemini tool branch and the Claude marker
+ * branch call this). Resolve the numbered target — clamped INTO the chapter
+ * allowlist so it can never escape to a raw id (M15) — pin it on the chat, spawn a
+ * scoped worker (method pack + O1/O2), and persist the drafts as status='draft' /
+ * private. Both paths therefore draft to the SAME craft bar (QA3-e master→worker).
+ */
+async function resolveAndAuthor(
+  tx: Tx,
+  a: {
+    row: Awaited<ReturnType<typeof ownedChat>>;
+    subs: SubRef[];
+    subTopicNumber: number;
+    count: number;
+    history: ChatMessage[];
+    text: string;
+    vendor: VendorChoice;
+  },
+): Promise<{ chosen: SubRef; nextOrdinal: number; persisted: PersistedDraft[] }> {
+  const idx = Math.min(Math.max(a.subTopicNumber, 1), a.subs.length) - 1;
+  const chosen = a.subs[idx]!;
+  const count = Math.min(Math.max(a.count, 1), 8);
+  const nextOrdinal = await nextOrdinalFor(tx, chosen.subTopicId);
+
+  // Persist the resolved focus (mirrors proposeTarget/authorFromChat).
+  await tx
+    .update(authoringChat)
+    .set({ subTopicId: chosen.subTopicId, updatedAt: new Date() })
+    .where(eq(authoringChat.id, a.row.id));
+
+  // The master SELECTED the target; spawn a fresh scoped worker to author (method
+  // pack + O1/O2 + the scoped slice) so both in-chat paths draft to the SAME bar
+  // as the structured authorFromChat path.
+  const brief = [
+    ...a.history.map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`),
+    `TUTOR: ${a.text}`,
+  ].join("\n\n");
+  const { drafts } = await spawnAuthoringWorker(tx, {
+    boardId: a.row.boardId,
+    chatId: a.row.id,
+    subTopicId: chosen.subTopicId,
+    vendor: a.vendor,
+    count,
+    brief,
+  });
+  // FIG-AUTH (D-FIG-5): persist as status='draft' rows so each has a real id — the
+  // review form renders + previews before approve. Still NOT live (D-FIG-1).
+  const persisted = await persistDrafts(tx, {
+    boardId: a.row.boardId,
+    subTopicId: chosen.subTopicId,
+    targetStudentId: a.row.studentId,
+    drafts,
+  });
+  return { chosen, nextOrdinal, persisted };
+}
+
+/** Build the ChatView returned when an in-chat author fired (drafts → review). */
+function buildAuthoredView(
+  row: Awaited<ReturnType<typeof ownedChat>>,
+  vendor: VendorChoice,
+  chosen: SubRef,
+  nextOrdinal: number,
+  persisted: PersistedDraft[],
+  messages: ChatMessage[],
+): ChatView {
+  return {
+    chatId: row.id,
+    studentId: row.studentId,
+    chapterId: row.chapterId ?? null,
+    chapterIds: chatChapterIds(row),
+    mode: (row.mode as AuthoringMode) ?? "blocked",
+    subTopicId: chosen.subTopicId,
+    vendor,
+    messages,
+    draft: {
+      chatId: row.id,
+      studentId: row.studentId,
+      subTopicId: chosen.subTopicId,
+      subTopicName: chosen.subTopicName,
+      topicName: chosen.topicName,
+      chapterName: chosen.chapterName,
+      nextOrdinal,
+      drafts: persisted,
+    },
+  };
+}
+
+/**
  * One conversational turn. Appends the tutor's message, resolves resume-vs-
  * stitch (per-thread vendor lock + Claude JSONL preflight), calls the vendor via
  * the orchestrator, persists the assistant turn with its continuation handle.
@@ -683,19 +819,15 @@ export async function sendTurn(
 
   const isGemini = vendor === "gemini_api";
 
-  // Gemini authors in-chat via the author_questions tool, picking the target
-  // BY NUMBER — so give it the chapter's numbered sub-topic list (the same
-  // allowlist proposeTarget uses) on EVERY Gemini turn. Small + always current,
-  // so the numbering the tool references is stable regardless of resume.
-  let subs: {
-    subTopicId: string;
-    subTopicName: string;
-    topicName: string;
-    chapterName: string;
-  }[] = [];
+  // Both vendors author in-chat by picking the target BY NUMBER (Gemini via the
+  // author_questions tool; Claude via the fenced marker) — so give EVERY turn the
+  // chapter's numbered sub-topic list (the same allowlist proposeTarget uses).
+  // Small + always current, so the numbering both paths reference is stable
+  // regardless of resume.
+  let subs: SubRef[] = [];
   let targetsBlock = "";
   const turnChapterIds = chatChapterIds(row);
-  if (isGemini && turnChapterIds.length > 0) {
+  if (turnChapterIds.length > 0) {
     subs = await tx
       .select({
         subTopicId: subTopic.id,
@@ -789,42 +921,14 @@ export async function sendTurn(
   if (tools && toolCall) {
     const parsed = authorToolArgsSchema.safeParse(toolCall.args);
     if (parsed.success && subs.length > 0) {
-      const idx = Math.min(Math.max(parsed.data.subTopicNumber, 1), subs.length) - 1;
-      const chosen = subs[idx]!;
-      const count = Math.min(Math.max(parsed.data.count, 1), 8);
-      const nextOrdinal = await nextOrdinalFor(tx, chosen.subTopicId);
-
-      // Persist the resolved focus (mirrors proposeTarget/authorFromChat).
-      await tx
-        .update(authoringChat)
-        .set({ subTopicId: chosen.subTopicId, updatedAt: new Date() })
-        .where(eq(authoringChat.id, row.id));
-
-      // QA3-e: the master SELECTED the target; spawn a fresh scoped worker to
-      // author (method pack + O1/O2 + the scoped slice), so the Gemini in-chat
-      // path drafts to the SAME bar as the structured authorFromChat path.
-      const brief = [
-        ...history.map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`),
-        `TUTOR: ${text}`,
-      ].join("\n\n");
-      const { drafts } = await spawnAuthoringWorker(tx, {
-        boardId: row.boardId,
-        chatId: row.id,
-        subTopicId: chosen.subTopicId,
+      const { chosen, nextOrdinal, persisted } = await resolveAndAuthor(tx, {
+        row,
+        subs,
+        subTopicNumber: parsed.data.subTopicNumber,
+        count: parsed.data.count,
+        history,
+        text,
         vendor,
-        count,
-        brief,
-      });
-
-      // Slice FIG-AUTH (D-FIG-5): persist the drafts as status='draft' rows so each
-      // has a real id — the review form can render a figure against it + preview
-      // before the tutor approves. Still NOT live (decision 2b + D-FIG-1: nothing
-      // reaches a student until approveDrafts flips status).
-      const persisted = await persistDrafts(tx, {
-        boardId: row.boardId,
-        subTopicId: chosen.subTopicId,
-        targetStudentId: row.studentId,
-        drafts,
       });
 
       const toolResult = {
@@ -873,29 +977,55 @@ export async function sendTurn(
         .set({ messages, updatedAt: new Date() })
         .where(eq(authoringChat.id, row.id));
 
-      return {
-        chatId: row.id,
-        studentId: row.studentId,
-        chapterId: row.chapterId ?? null,
-        chapterIds: chatChapterIds(row),
-        mode: (row.mode as AuthoringMode) ?? "blocked",
-        subTopicId: chosen.subTopicId,
-        vendor,
-        messages,
-        draft: {
-          chatId: row.id,
-          studentId: row.studentId,
-          subTopicId: chosen.subTopicId,
-          subTopicName: chosen.subTopicName,
-          topicName: chosen.topicName,
-          chapterName: chosen.chapterName,
-          nextOrdinal,
-          drafts: persisted,
-        },
-      };
+      return buildAuthoredView(row, vendor, chosen, nextOrdinal, persisted, messages);
     }
     // Args failed schema → fall through to the normal path (treat as a plain
     // reply; the model usually re-offers next turn).
+  }
+
+  // ── Claude in-chat authoring (parity with the Gemini tool, via a text marker):
+  //    Claude CLI can't emit a structured function_call, so on a clear go-ahead it
+  //    emits a fenced ```author_questions {json}``` block. Parse it, run the SAME
+  //    resolve→spawn→persist path, and strip the marker from the shown text. An
+  //    absent or malformed marker → parseAuthorMarker returns null → fall through
+  //    to the normal reply (nothing authored). ──
+  if (!isGemini && subs.length > 0) {
+    const marker = parseAuthorMarker(ai.text);
+    if (marker) {
+      const { chosen, nextOrdinal, persisted } = await resolveAndAuthor(tx, {
+        row,
+        subs,
+        subTopicNumber: marker.subTopicNumber,
+        count: marker.count,
+        history,
+        text,
+        vendor,
+      });
+
+      // Wrap-up = Claude's own prose with the directive block removed (no follow-up
+      // call — Claude has no tool schema to hand a result back to); fall back to a
+      // canned line if stripping left nothing.
+      const wrapText =
+        stripAuthorMarker(ai.text) ||
+        `Drafted ${persisted.length} question${persisted.length === 1 ? "" : "s"} for ${chosen.subTopicName} — review, edit, and save them below.`;
+
+      const assistantMsg: ChatMessage = {
+        id: randomUUID(),
+        role: "assistant",
+        text: wrapText,
+        createdAt: new Date().toISOString(),
+        aiSessionId: ai.sessionId ?? undefined,
+        vendorId: vendor,
+        sessionFingerprint: ai.sessionFingerprint,
+      };
+      const messages = [...history, userMsg, assistantMsg];
+      await tx
+        .update(authoringChat)
+        .set({ messages, updatedAt: new Date() })
+        .where(eq(authoringChat.id, row.id));
+
+      return buildAuthoredView(row, vendor, chosen, nextOrdinal, persisted, messages);
+    }
   }
 
   // ── Normal path: persist the assistant turn as-is. sanitise only on Gemini

@@ -1,8 +1,8 @@
-import { Worker } from "bullmq";
+import { UnrecoverableError, Worker } from "bullmq";
 import { redisConnection } from "../redis/connection";
 import { __aiConfigured } from "../services/ai/gemini";
 import { scoreAttempt } from "../services/assessment";
-import { generateImageForQuestion } from "../services/image_gen";
+import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
 import {
   ASSESSMENT_QUEUE,
@@ -43,11 +43,26 @@ worker.on("failed", (job, err) =>
 const imageWorker = new Worker<GenerateImageJobData>(
   GENERATE_IMAGE_QUEUE,
   async (job) => {
-    const res = await generateImageForQuestion(
-      job.data.boardId,
-      job.data.questionId,
-      job.data.refinementNote,
-    );
+    let res;
+    try {
+      res = await generateImageForQuestion(
+        job.data.boardId,
+        job.data.questionId,
+        job.data.refinementNote,
+      );
+    } catch (err) {
+      // The render sidecar (nadi-pyrender) being DOWN won't recover in a 5s
+      // backoff, and every retry re-runs the (paid, ~20s) Gemini script-gen
+      // first — pure waste. Fail the job PERMANENTLY so BullMQ does not retry.
+      // Transient failures (pyrender 5xx / a bad script / a Gemini blip) fall
+      // through to the normal exponential-backoff retry.
+      if (isPyrenderDownError(err)) {
+        throw new UnrecoverableError(
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      throw err;
+    }
     // Stage-2 vision verify — FAULT-ISOLATED. verifyImage stamps ERROR rather
     // than throwing on a call/file failure; the extra guard covers the not-found
     // case so a verify problem can never fail the (successful) render job.

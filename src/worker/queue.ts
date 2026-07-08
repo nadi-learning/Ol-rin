@@ -110,3 +110,34 @@ export async function enqueueImageGeneration(
     );
   }
 }
+
+/**
+ * Coarse state of a render job, so the tutor's poll can distinguish "still
+ * working" from "failed" instead of waiting out the full poll cap on a job that
+ * will never produce a row. Collapsed to what the UI needs; 'unknown' when the
+ * job has aged out of Redis (removeOnFail cap) or Redis is unreachable.
+ */
+export type ImageJobState = "waiting" | "active" | "completed" | "failed" | "unknown";
+
+export async function getImageJobState(jobId: string): Promise<ImageJobState> {
+  try {
+    const job = await generateImageQueue.getJob(jobId);
+    if (!job) return "unknown";
+    const state = await job.getState();
+    switch (state) {
+      case "active":
+      case "completed":
+      case "failed":
+        return state;
+      case "waiting":
+      case "waiting-children":
+      case "delayed":
+      case "prioritized":
+        return "waiting";
+      default:
+        return "unknown";
+    }
+  } catch {
+    return "unknown";
+  }
+}
