@@ -47,6 +47,7 @@ import {
   assertOwnedDraft,
   draftBatchSchema,
   geminiQuestionSchema,
+  listDrafts,
   persistDrafts,
   type PersistedDraft,
 } from "./authoring";
@@ -497,6 +498,12 @@ export type ChatView = {
   // persisted as status='draft'/private, the tutor edits + approves). Absent on
   // every ordinary discussion turn.
   draft?: AuthorFromChatResult;
+  // The student's still-unapproved (status='draft') authored questions, flat
+  // across sub-topics (interleaved may span several). Populated ONLY by getChat so
+  // that RESUMING a chat mid-review (from either the landing history picker or a
+  // remount) re-hydrates the review form — no resume path can silently skip the
+  // restore. Absent on start/turn responses (no review in progress there).
+  pendingDrafts?: Awaited<ReturnType<typeof listDrafts>>;
 };
 
 /** Load a chat the caller owns, or throw NOT_FOUND (no existence leak). RLS
@@ -601,6 +608,13 @@ export async function getChat(
   args: { tutorUserId: string; chatId: string },
 ): Promise<ChatView> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
+  // Re-hydrate the review form on resume: the student's still-unapproved drafts.
+  // Scoped by student (a draft is student-private, not chat-scoped) + tutor-owned
+  // (listDrafts asserts the tutor↔student link).
+  const pendingDrafts = await listDrafts(tx, {
+    tutorUserId: args.tutorUserId,
+    studentId: row.studentId,
+  });
   return {
     chatId: row.id,
     studentId: row.studentId,
@@ -610,6 +624,7 @@ export async function getChat(
     subTopicId: row.subTopicId ?? null,
     vendor: row.vendor as VendorChoice,
     messages: parseMessages(row.messages),
+    pendingDrafts,
   };
 }
 

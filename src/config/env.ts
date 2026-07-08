@@ -85,6 +85,33 @@ const envSchema = z.object({
   // must be the machine's LAN IP (a phone can't reach localhost); defaults to
   // FRONTEND_URL. blankToUndefined so an empty override falls back (M2).
   PUBLIC_UPLOAD_BASE_URL: blankToUndefined(z.string().url().optional()),
+
+  // ── Slice VOICE-A0+ — Pipecat orchestrator (D2 → Option A) ────────────────
+  // The rewrite is the ORCHESTRATOR; the proven `nadi-tutor` bot on Pipecat
+  // Cloud runs the STT→LLM→TTS pipeline (Deepgram/ElevenLabs/Gemini live INSIDE
+  // the bot — those keys are NOT here). We POST a per-session {config} to Pipecat
+  // Cloud → get a Daily room + token → the FE joins. Contract ported from b2c
+  // prod voice_service.py. All creds OPTIONAL (blankToUndefined, M2) so the app +
+  // worker boot without them — a missing key fails the START call loudly (kill
+  // switch), never boot (same stance as GEMINI_API_KEY above).
+  PIPECAT_API_KEY: blankToUndefined(z.string().min(1).optional()),
+  PIPECAT_AGENT_NAME: z.string().min(1).default("nadi-tutor"),
+  PIPECAT_CLOUD_API: z
+    .string()
+    .url()
+    .default("https://api.pipecat.daily.co/v1/public"),
+  // The https domain the bot POSTs its end-of-session webhook to (A1 consumes it;
+  // A0 only assembles it into the config). Optional → the START call throws
+  // VoicePipecatNotConfiguredError when unset.
+  VOICE_WEBHOOK_DOMAIN: blankToUndefined(z.string().min(1).optional()),
+  // Verifies the inbound webhook signature (Slice A1). Optional until then.
+  WEBHOOK_SECRET: blankToUndefined(z.string().min(1).optional()),
+  // Daily REST key — fetches cloud recordings post-call (a later slice). Optional.
+  DAILY_API_KEY: blankToUndefined(z.string().min(1).optional()),
+  // Cutover flag: which voice backend the FE drives. 'gemini_live' = the existing
+  // VOICE-2 server relay (unchanged default so A0 CAN'T regress it); 'pipecat' =
+  // the new Option-A path. The FE transport swap that reads this lands in A2.
+  VOICE_BACKEND: z.enum(["gemini_live", "pipecat"]).default("gemini_live"),
 });
 
 const parsed = envSchema.safeParse(process.env);

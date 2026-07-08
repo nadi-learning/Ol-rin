@@ -73,6 +73,12 @@ import {
   VoiceSessionNotFoundError,
   voiceTurnSchema,
 } from "../services/voice";
+import {
+  PipecatStartError,
+  pipecatVoiceModeSchema,
+  startPipecatVoiceSession,
+  VoicePipecatNotConfiguredError,
+} from "../services/voice_pipecat";
 import { getStudentSummary } from "../services/dashboard";
 import { getMyInsights } from "../services/insights";
 import {
@@ -526,6 +532,43 @@ export const appRouter = router({
           }
           if (e instanceof VoiceContextMissingError) {
             throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Slice VOICE-A0 (D2 → Option A): start a Pipecat-backed voice session.
+    // The rewrite orchestrates; the proven `nadi-tutor` bot runs the pipeline.
+    // Returns the Daily room + token the FE joins (transport swap is A2). Distinct
+    // from startSession above (the Gemini-Live path) so the VOICE_BACKEND cutover
+    // can't regress it — same protectedProcedure gates (authed + board + RLS).
+    startPipecatSession: protectedProcedure
+      .input(
+        z.object({
+          subTopicId: z.string().uuid(),
+          mode: pipecatVoiceModeSchema.optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await startPipecatVoiceSession(ctx.tx, {
+            boardId: ctx.board.id,
+            appUserId: ctx.membership.userId,
+            subTopicId: input.subTopicId,
+            mode: input.mode,
+          });
+        } catch (e) {
+          if (e instanceof SlideNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof VoiceContextMissingError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          if (e instanceof VoicePipecatNotConfiguredError) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.code });
+          }
+          if (e instanceof PipecatStartError) {
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e.code });
           }
           throw e;
         }

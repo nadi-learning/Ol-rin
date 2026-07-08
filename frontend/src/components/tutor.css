@@ -874,6 +874,32 @@
   background: #fff;
   resize: vertical;
 }
+/* Live LaTeX preview under an editable draft field (1B). Muted, boxed, sits
+   directly below the textarea so the tutor sees rendered math without losing the
+   raw editable source. */
+.tut-auth-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px dashed var(--line, #d9dbe4);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--page, #f7f8fa);
+}
+.tut-auth-preview-tag {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+}
+.tut-auth-preview-body {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink, #15162b);
+  overflow-x: auto;
+}
 .tut-auth-intent-read,
 .tut-auth-honest {
   font-size: 13px;

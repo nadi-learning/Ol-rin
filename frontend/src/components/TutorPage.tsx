@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { trpc, BOARD } from "../trpc";
+import { MathText } from "./MathText";
 import "./tutor.css";
 
 // Slice T — the Tutor READ surface. A tutor inspects a linked student's
@@ -1974,6 +1975,23 @@ function AuthorChat({
     setInput("");
   }
 
+  // Re-hydrate the review form from a RESUMED chat's still-unapproved drafts.
+  // getChat now returns them (pendingDrafts), so every resume entry point — the
+  // landing history picker AND a plain remount — restores identically; no path
+  // can silently drop a mid-review form. No-op when there's nothing pending.
+  function restoreDrafts(c: ChatView) {
+    const drafts = c.pendingDrafts ?? [];
+    if (drafts.length === 0) return;
+    setCards(drafts.map((d) => toCard(d, d.subTopicId, d.subTopicName)));
+    setPreviewMinimized(false);
+    const first = drafts[0]!;
+    setTarget({
+      subTopicId: first.subTopicId,
+      subTopicName: first.subTopicName,
+      nextOrdinal: first.ordinal,
+    });
+  }
+
   // Rehydrate the active chat for this student on mount / student change. In launch
   // mode (QA3-d) the tutor explicitly chose a fresh scope in the modal, so we ignore
   // any stored handle and auto-start with the launch params instead.
@@ -1997,6 +2015,7 @@ function AuthorChat({
         .then((c) => {
           if (!alive) return;
           setChat(c);
+          restoreDrafts(c);
           localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
         })
         .catch((e) => {
@@ -2018,23 +2037,12 @@ function AuthorChat({
     let live = true;
     trpc.tutor.getAuthoringChat
       .query({ chatId: saved })
-      .then(async (c) => {
+      .then((c) => {
         if (!live) return;
         setChat(c);
-        // Restore any un-approved drafts for this student so a refresh mid-review
-        // doesn't lose them (FIG-AUTH: drafts persist server-side now).
-        const drafts = await trpc.tutor.listDrafts.query({
-          studentId: student.studentId,
-        });
-        if (!live || drafts.length === 0) return;
-        setCards(drafts.map((d) => toCard(d, d.subTopicId, d.subTopicName)));
-        setPreviewMinimized(false);
-        const first = drafts[0]!;
-        setTarget({
-          subTopicId: first.subTopicId,
-          subTopicName: first.subTopicName,
-          nextOrdinal: first.ordinal,
-        });
+        // Restore any un-approved drafts so a refresh mid-review doesn't lose them
+        // (now carried on the chat payload — same path as the landing resume).
+        restoreDrafts(c);
       })
       .catch(() => {
         // Chat gone (cleared / different board) → drop the stale handle, show gate.
@@ -3096,6 +3104,22 @@ function HistoryPicker({
   );
 }
 
+// Live LaTeX preview shown beneath an editable draft field (1B): the AI emits
+// inline `$...$` math in the stem/answer, so the raw textarea alone reads as
+// source. Rendered only when there's math to render (a `$` present) — a plain-text
+// field needs no echo. `.tut-`-scoped to dodge the global revision-shell.css leak.
+function FieldPreview({ text }: { text: string }) {
+  if (!text || !text.includes("$")) return null;
+  return (
+    <div className="tut-auth-preview" aria-hidden>
+      <span className="tut-auth-preview-tag">Preview</span>
+      <div className="tut-auth-preview-body">
+        <MathText text={text} />
+      </div>
+    </div>
+  );
+}
+
 function AuthorCardForm({
   n,
   card,
@@ -3160,6 +3184,7 @@ function AuthorCardForm({
           onBlur={() => onCommit()}
           disabled={busy}
         />
+        <FieldPreview text={card.stem} />
       </label>
 
       <label className="tut-auth-cardfield">
@@ -3172,6 +3197,7 @@ function AuthorCardForm({
           onBlur={() => onCommit()}
           disabled={busy}
         />
+        <FieldPreview text={card.referenceAnswer} />
       </label>
 
       <label className="tut-auth-cardfield">
@@ -3184,6 +3210,7 @@ function AuthorCardForm({
           onBlur={() => onCommit()}
           disabled={busy}
         />
+        <FieldPreview text={card.explanation} />
       </label>
 
       {/* Figure spec + on-demand render/verify (Slice FIG-AUTH Stage-2). */}

@@ -54,6 +54,7 @@
     "probe:authoringtool": "bun scripts/probe_authoring_tool.ts",
     "probe:listauthored": "bun scripts/probe_list_authored.ts",
     "probe:image": "bun scripts/probe_image_render.ts",
+    "probe:pipecatstart": "bun scripts/probe_pipecat_start.ts",
     "probe:imagefailfast": "bun scripts/probe_image_failfast.ts",
     "probe:imageverify": "bun scripts/probe_image_verify.ts",
     "probe:imageread": "bun scripts/probe_image_read.ts",

@@ -183,6 +183,29 @@ async function main() {
   const readInter = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: inter.chatId }));
   check("getChat: interleaved reads back mode + chapterIds", readInter.mode === "interleaved" && readInter.chapterIds.length === 2);
 
+  // 8b. RESUME re-hydration (bug fix): getChat carries the student's still-unapproved
+  //     drafts so BOTH resume entry points restore the review form. No drafts yet →
+  //     empty; seed a draft → getChat surfaces it with sub-topic + ordinal.
+  check("getChat: pendingDrafts empty before any draft exists", (readInter.pendingDrafts ?? []).length === 0);
+  await rows(P.id, (tx) =>
+    tx.insert(question).values({
+      boardId: P.id,
+      subTopicId: fx.subA1,
+      axis: "conceptual",
+      kind: "subjective",
+      stem: "Draft under review for $10\\ \\Omega$",
+      referenceAnswer: "ref",
+      ordinal: 1,
+      source: "b2c_authoring",
+      status: "draft",
+      targetStudentId: stuA.id,
+    }),
+  );
+  const afterSeed = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: inter.chatId }));
+  const pd = afterSeed.pendingDrafts ?? [];
+  check("getChat: pendingDrafts surfaces the seeded draft (resume restore)", pd.length === 1 && pd[0]!.stem.includes("Omega"));
+  check("getChat: pendingDrafts carry sub-topic identity + ordinal (for toCard)", pd[0]?.subTopicId === fx.subA1 && pd[0]?.subTopicName === "Acceleration" && typeof pd[0]?.ordinal === "number");
+
   // 9. legacy back-compat — a raw row with mode/chapter_ids NULL reads as blocked
   //    with chapterIds=[chapter_id].
   const legacyId = await rows(P.id, async (tx) => {
