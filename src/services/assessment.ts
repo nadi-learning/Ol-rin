@@ -33,6 +33,7 @@ import { z } from "zod";
 import {
   attempt,
   attemptImage,
+  crossConceptFlag,
   eventLog,
   learningObjective,
   masteryHistory,
@@ -408,6 +409,8 @@ TWO TERMS, KEPT APART:
 - observation level = what a SINGLE answer demonstrated (already scored, given to you).
 - certified level = the stored 1–5 for the sub-topic on an axis; it accumulates from many observations. You output this.
 
+TUTOR-CORRECTED OBSERVATIONS: an observation marked "⚠ TUTOR-CORRECTED" was re-read by the tutor, who overruled the Stage-1 scorer. The obs-level shown IS the tutor's — count it, and do NOT re-litigate it back toward the machine's number. The tutor wins on the evidence (§6); their reason is given so you can reflect it in the description/log, not so you can argue with it.
+
 THE QUALIFYING-OBSERVATION RULE (read first): "N observations at level X" means N SEPARATE answers each at observation level X OR HIGHER — not N answers of any level. Counts are per sub-topic × axis (the LOs pool), never per-LO.
 
 TO CERTIFY A LEVEL — both conditions required:
@@ -423,26 +426,32 @@ HOW THE CERTIFIED LEVEL MOVES:
 
 COUNTS + SPACING ARE A RULE YOU EXECUTE FAITHFULLY, not your discretion — derive them exactly from the observations + the datetimes given. Your genuine judgment is narrow: does an answer actually COVER an LO, and are the sub-topic's LOs covered (coverage attribution).
 
-BOTH AXES MUST GET A 1–5. If an axis has NO qualifying observations, HOLD it at the current certified level (or 1 if there is no current state) and add a coverage-gap flag — NEVER invent a level you have no evidence for.
+NEVER INVENT A LEVEL YOU HAVE NO EVIDENCE FOR. If an axis has NO qualifying observations:
+- there IS a current certified level for it → HOLD it there (unchanged) and add a coverage-gap flag;
+- there is NO current level for it (this axis has never been observed) → return **null** for that axis and add a coverage-gap flag naming what to serve next.
+Null means NOT YET OBSERVED — it is NOT a low level. An item that couldn't expose an axis is a coverage gap, never evidence of weakness, so it must never be recorded as a 1. (Both axes null is impossible here — you are only ever called with at least one observation.)
 
-COLD START (no current mastery state): certify from these observations alone; write the description + log fresh.
+COLD START (no current mastery state): certify from these observations alone; write the description + log fresh. An axis with no observations in that set is null, not 1.
 
 OUTPUT:
-- conceptualLevel, proceduralLevel (1–5 each) — the certified pair, the whole standing (no fused score).
+- conceptualLevel, proceduralLevel (1–5, or null = not yet observed) — the certified pair, the whole standing (no fused score).
 - description: ONE dense blob spanning both axes — WHERE the student is + WHAT improvement is needed. User-visible. Fold any calibration flags into this prose.
 - log: your internal working notes — qualifying-obs counts per axis, LO coverage, #questions at each rating, whether the spacing criteria were met. Not shown to the student.
-- climbNextDue (YYYY-MM-DD or null): the date to re-ask so a ready student can climb — the LAST qualifying observation's date + the gap the NEXT level needs. Null when the climbable axis is already topped out (both at 5, or nothing left to climb).
-- retentionNextDue (YYYY-MM-DD or null): anti-fade re-check = the completion date + the retention gap by PROCEDURAL level (L2→3 days, L3→7, L4→14, L5→21). Present for every taught sub-topic (floor L2); null only while pure-acquiring below L2.
+- climbNextDue (YYYY-MM-DD or null): the date to re-ask so a ready student can climb — the LAST qualifying observation's date + the gap the NEXT level needs. Null when the climbable axis is already topped out (both at 5, or nothing left to climb). This is the ONE date you emit: it needs your judgment (which level is being climbed, which observations qualified). The anti-fade RETENTION date is NOT yours — it is pure arithmetic off the procedural level and the scheduler derives it. Do not compute or mention it.
 - reasoning: why each axis landed where it did (the move + its justification).
 - flags: coverage gaps ("stuck at 3: no transfer item served"), cross-concept notes carried from Stage-1, and calibration flags.`;
 
 export const stage2DraftSchema = z.object({
-  conceptualLevel: z.number().int().min(1).max(5),
-  proceduralLevel: z.number().int().min(1).max(5),
+  // null = NOT YET OBSERVED (never "level 1") — see mastery_state in the kernel schema.
+  conceptualLevel: z.number().int().min(1).max(5).nullable().default(null),
+  proceduralLevel: z.number().int().min(1).max(5).nullable().default(null),
   description: z.string().min(1),
   log: z.string().min(1),
+  // ASSESS-FIX-3: climb is the ONLY date Stage-2 emits. Retention is a pure
+  // function of the procedural level (the 3/7/14/21 ladder) and is DERIVED by the
+  // scheduler — one owner, one home. Asking the LLM for it too gave us two sources
+  // that could disagree, and the stored copy was already dead (D-SCH-1).
   climbNextDue: z.string().nullable().default(null),
-  retentionNextDue: z.string().nullable().default(null),
   reasoning: z.string().min(1),
   flags: z.array(z.string()).default([]),
 });
@@ -451,8 +460,16 @@ export type Stage2Draft = z.infer<typeof stage2DraftSchema>;
 const stage2GeminiSchema = {
   type: Type.OBJECT,
   properties: {
-    conceptualLevel: { type: Type.INTEGER, description: "certified conceptual level 1–5" },
-    proceduralLevel: { type: Type.INTEGER, description: "certified procedural level 1–5" },
+    conceptualLevel: {
+      type: Type.INTEGER,
+      nullable: true,
+      description: "certified conceptual level 1–5, or null = never observed (NOT a 1)",
+    },
+    proceduralLevel: {
+      type: Type.INTEGER,
+      nullable: true,
+      description: "certified procedural level 1–5, or null = never observed (NOT a 1)",
+    },
     description: {
       type: Type.STRING,
       description: "dense blob, both axes — where the student is + what improvement is needed; USER-VISIBLE",
@@ -466,11 +483,6 @@ const stage2GeminiSchema = {
       nullable: true,
       description: "YYYY-MM-DD re-check to climb, or null if topped out",
     },
-    retentionNextDue: {
-      type: Type.STRING,
-      nullable: true,
-      description: "YYYY-MM-DD anti-fade re-check by procedural level, or null if pure-acquiring <L2",
-    },
     reasoning: { type: Type.STRING, description: "why each axis landed where it did" },
     flags: {
       type: Type.ARRAY,
@@ -482,8 +494,8 @@ const stage2GeminiSchema = {
 } as const;
 
 export type CurrentMastery = {
-  conceptualLevel: number;
-  proceduralLevel: number;
+  conceptualLevel: number | null; // null = not yet observed
+  proceduralLevel: number | null;
   description: string;
   log: string;
   updatedAt: Date;
@@ -569,7 +581,12 @@ export async function draftStage2(
     current,
     observations: obs.map((o) => ({
       axis: o.axis,
-      level: o.observationLevel,
+      // The EFFECTIVE level — a tutor correction (§6) supersedes the machine read
+      // for every count. The machine's original + the tutor's reason ride along so
+      // the model sees that a human already adjudicated this answer.
+      level: o.tutorLevel ?? o.observationLevel,
+      machineLevel: o.tutorLevel != null ? o.observationLevel : null,
+      overrideReason: o.overrideReason,
       reasoning: o.reasoning,
       calibrationFlag: o.calibrationFlag,
       crossConceptNote:
@@ -589,7 +606,6 @@ export async function draftStage2(
     draft: {
       ...draft,
       climbNextDue: normalizeDate(draft.climbNextDue),
-      retentionNextDue: normalizeDate(draft.retentionNextDue),
     },
   };
 }
@@ -601,7 +617,9 @@ interface Stage2CallInput {
   current: CurrentMastery | null;
   observations: Array<{
     axis: string;
-    level: number;
+    level: number; // effective (tutor correction wins)
+    machineLevel: number | null; // the machine's read, when a tutor overrode it
+    overrideReason: string | null;
     reasoning: string;
     calibrationFlag: string | null;
     crossConceptNote: string | null;
@@ -616,8 +634,10 @@ async function runStage2Call(i: Stage2CallInput): Promise<Stage2Draft> {
   const loList = (ls: string[]) =>
     ls.length ? ls.map((d, n) => `  ${n + 1}. ${d}`).join("\n") : "  (none recorded)";
 
+  const lvl = (n: number | null) => (n == null ? "NOT YET OBSERVED (null — no evidence ever seen on this axis)" : String(n));
+
   const stateBlock = i.current
-    ? `conceptual=${i.current.conceptualLevel}, procedural=${i.current.proceduralLevel}
+    ? `conceptual=${lvl(i.current.conceptualLevel)}, procedural=${lvl(i.current.proceduralLevel)}
 last description: ${i.current.description}
 last log: ${i.current.log}
 last finalized: ${i.current.updatedAt.toISOString()}`
@@ -629,6 +649,10 @@ last finalized: ${i.current.updatedAt.toISOString()}`
         `  [${n + 1}] axis=${o.axis} obs-level=${o.level} at=${o.at.toISOString()}` +
         (o.calibrationFlag ? ` calibration=${o.calibrationFlag}` : "") +
         (o.crossConceptNote ? ` cross-concept="${o.crossConceptNote}"` : "") +
+        (o.machineLevel != null
+          ? `\n      ⚠ TUTOR-CORRECTED: the Stage-1 scorer read this as ${o.machineLevel}; the tutor set it to ${o.level}` +
+            `${o.overrideReason ? ` — "${o.overrideReason}"` : ""}. Count ${o.level}; the tutor has already adjudicated this answer.`
+          : "") +
         `\n      author's intention: ${o.pedagogicalComment ?? "(none)"}` +
         `\n      Stage-1 reasoning: ${o.reasoning}`,
     )
@@ -668,8 +692,8 @@ Apply the rule. Propose the certified pair, the description, the log, the two re
 }
 
 export type FinalizeResult = {
-  conceptualLevel: number;
-  proceduralLevel: number;
+  conceptualLevel: number | null; // null = not yet observed
+  proceduralLevel: number | null;
   description: string;
   taught: boolean; // a `taught` (G2) event was emitted this finalize
   overridden: boolean; // the tutor changed the draft → an override was logged
@@ -693,7 +717,11 @@ export async function finalizeStage2(
     tutorUserId: string;
     studentId: string;
     subTopicId: string;
-    final: { conceptualLevel: number; proceduralLevel: number; description: string };
+    final: {
+      conceptualLevel: number | null;
+      proceduralLevel: number | null;
+      description: string;
+    };
     draft: Stage2Draft;
   },
 ): Promise<FinalizeResult> {
@@ -733,8 +761,10 @@ export async function finalizeStage2(
     final.proceduralLevel !== draft.proceduralLevel ||
     final.description.trim() !== draft.description.trim();
 
+  // ≥L2 on EITHER axis crosses into the spiral. A null axis is "not yet observed",
+  // so it can never trigger `taught` on its own (null → 0 for this test only).
   const newlyTaught =
-    (final.conceptualLevel >= 2 || final.proceduralLevel >= 2) &&
+    ((final.conceptualLevel ?? 0) >= 2 || (final.proceduralLevel ?? 0) >= 2) &&
     priorSched?.taughtAt == null;
 
   // 1. stage2_finalize event — always (the finalize is the auditable act).
@@ -830,8 +860,11 @@ export async function finalizeStage2(
     },
   });
 
-  // 6. scheduling_state — the assessment's dated inputs to the spiral engine (#3).
+  // 6. scheduling_state — the assessment's dated input to the spiral engine (#3).
   //    taughtAt: keep the existing one, else stamp now iff newly ≥L2 (G2).
+  //    CLIMB ONLY (ASSESS-FIX-3): the retention date is not stored — it is a pure
+  //    function of the procedural level and the scheduler derives it on read. One
+  //    owner, one home; a stored copy could only ever go stale (D-SCH-1).
   const taughtAt = priorSched?.taughtAt ?? (newlyTaught ? now : null);
   await tx
     .insert(schedulingState)
@@ -841,7 +874,6 @@ export async function finalizeStage2(
       subTopicId,
       taughtAt,
       climbNextDue: draft.climbNextDue,
-      retentionNextDue: draft.retentionNextDue,
       updatedAt: now,
     })
     .onConflictDoUpdate({
@@ -849,10 +881,40 @@ export async function finalizeStage2(
       set: {
         taughtAt,
         climbNextDue: draft.climbNextDue,
-        retentionNextDue: draft.retentionNextDue,
         updatedAt: now,
       },
     });
+
+  // 6b. ASSESS-FIX-4 — persist the CROSS-CONCEPT flags this sub-topic's reads raised.
+  // "They ran the trigonometry fine but couldn't rationalise the denominator": that
+  // slip must not dent THIS sub-topic's rung (§2 procedural Step 4), so it has to
+  // leave as its own signal or it dies here. Not an observation — it carries no rung
+  // (Stage-1 never read the other concept's LOs); it counts toward nothing.
+  // UNIQUE(source_observation_id) → re-finalizing cannot duplicate a flag.
+  const flagged = await tx
+    .select({ id: observation.id, signals: observation.signals })
+    .from(observation)
+    .where(
+      and(
+        eq(observation.studentId, studentId),
+        eq(observation.subTopicId, subTopicId),
+        eq(observation.source, STAGE1_SOURCE),
+      ),
+    );
+  for (const o of flagged) {
+    const note = (o.signals as { crossConceptNote?: string | null } | null)?.crossConceptNote;
+    if (!note) continue;
+    await tx
+      .insert(crossConceptFlag)
+      .values({
+        boardId,
+        studentId,
+        fromSubTopicId: subTopicId,
+        note,
+        sourceObservationId: o.id,
+      })
+      .onConflictDoNothing({ target: crossConceptFlag.sourceObservationId });
+  }
 
   // 7. taught (G2) — emitted once, when the sub-topic first crosses ≥L2 either axis.
   if (newlyTaught) {

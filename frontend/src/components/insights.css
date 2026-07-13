@@ -161,6 +161,14 @@
   background: var(--surface-sunk);
   border-color: var(--border);
 }
+/* Axis never observed — a gap in what we asked, not a low bucket. Dashed + muted
+   so it reads as "nothing here yet" rather than as the bottom of the scale. */
+.ins-chip--unassessed {
+  background: transparent;
+  border-color: var(--border);
+  border-style: dashed;
+  color: var(--muted, #6b6f80);
+}
 .ins-chip--practising {
   background: color-mix(in srgb, var(--yellow) 38%, white);
   border-color: color-mix(in srgb, var(--yellow) 60%, white);

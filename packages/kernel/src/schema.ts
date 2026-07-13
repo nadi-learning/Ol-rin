@@ -356,6 +356,9 @@ export const observation = pgTable(
     // attempt_id + axis) + Stage-2 traceability back to the raw answer.
     attemptId: uuid("attempt_id").references(() => attempt.id),
     axis: text("axis").notNull(), // 'conceptual'|'procedural'
+    // The MACHINE's read. IMMUTABLE — a tutor correction never overwrites it
+    // (see tutorLevel below). Stage-1's original call, right or wrong, is the
+    // half of the training pair we can't reconstruct later.
     observationLevel: smallint("observation_level").notNull(),
     reasoning: text("reasoning").notNull(),
     signals: jsonb("signals").notNull().default({}),
@@ -363,6 +366,20 @@ export const observation = pgTable(
     pedagogicalComment: text("pedagogical_comment"),
     source: text("source").notNull(), // 'stage1_scorer' | 'teachback'
     transcriptId: uuid("transcript_id").references(() => transcript.id),
+    // ── Tutor correction of THIS read (assessment.md §6: "adjust an observation
+    // level … with a reason"). Observations are the DURABLE evidence every future
+    // Stage-2 recounts from, so a Stage-1 misread the tutor can see but not correct
+    // would keep corrupting counts forever.
+    //
+    // Layered, NOT overwritten: the EFFECTIVE level everything counts from is
+    // `tutorLevel ?? observationLevel`, while `observationLevel` keeps the machine's
+    // original. That pair — what the AI said, what the human said, and why — IS the
+    // labeled judgment the data engine exists to collect (Polaris frame 4);
+    // overwriting would fix the count and destroy the label.
+    tutorLevel: smallint("tutor_level"), // null = not overridden
+    overrideReason: text("override_reason"),
+    overriddenBy: uuid("overridden_by").references(() => appUser.id),
+    overriddenAt: timestamp("overridden_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -370,7 +387,52 @@ export const observation = pgTable(
       "observation_level_range",
       sql`${t.observationLevel} between 1 and 5`,
     ),
+    check("observation_tutor_level_range", sql`${t.tutorLevel} between 1 and 5`),
   ],
+);
+
+// cross_concept_flag — "they ran the target procedure fine but stumbled on a
+// prerequisite from ANOTHER concept" (assessment.md §2 procedural Step 4).
+//
+// The rule that creates these: such a slip must NOT lower the rung of the sub-topic
+// being assessed — the student did that procedure well. Instead Stage-1 emits a note
+// naming the other skill, and §6 carries it out "as evidence for that other concept."
+// Before ASSESS-FIX-4 that note was written into observation.signals, shown once in a
+// draft, and never seen again — it died against the WRONG sub-topic.
+//
+// It is deliberately NOT an `observation`: Stage-1 never read the other sub-topic's
+// LOs, so the note carries NO rung. Materialising it as a scored observation would
+// mean inventing a level from zero evidence — the exact thing ASSESS-FIX-1 removed.
+// It counts toward nothing; it is a signal for the human.
+//
+// v1 routes to the STUDENT (an open worklist, tagged with where it was seen), not to
+// a resolved target sub_topic_id — that would need the AI to guess an id from free
+// text. Adding a nullable `to_sub_topic_id` later is a trivial migration if the flat
+// list proves too coarse.
+export const crossConceptFlag = pgTable(
+  "cross_concept_flag",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    // Where the student was working when the other skill broke.
+    fromSubTopicId: uuid("from_sub_topic_id")
+      .notNull()
+      .references(() => subTopic.id),
+    note: text("note").notNull(), // "procedural issue in <other skill> — <what broke>"
+    // The read that raised it. UNIQUE → re-finalizing a sub-topic can't duplicate flags.
+    sourceObservationId: uuid("source_observation_id")
+      .notNull()
+      .references(() => observation.id),
+    addressedAt: timestamp("addressed_at", { withTimezone: true }), // null = open
+    addressedBy: uuid("addressed_by").references(() => appUser.id),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.sourceObservationId)],
 );
 
 // ───────────────────────── 3. Mastery (four-field model) ─────────────────────────
@@ -389,8 +451,13 @@ export const masteryState = pgTable(
     subTopicId: uuid("sub_topic_id")
       .notNull()
       .references(() => subTopic.id),
-    conceptualLevel: smallint("conceptual_level").notNull(),
-    proceduralLevel: smallint("procedural_level").notNull(),
+    // NULL = NOT YET OBSERVED on this axis — never "level 1". An item that
+    // couldn't expose an axis is a coverage gap, not weakness (assessment.md §2's
+    // bound, §4's "don't guess — hold"). Stage-2 writes null rather than invent a
+    // level it has no evidence for; a null only ever becomes a number, never back.
+    // (The range CHECK still guards real values — NULL passes a CHECK in Postgres.)
+    conceptualLevel: smallint("conceptual_level"),
+    proceduralLevel: smallint("procedural_level"),
     description: text("description").notNull(), // dense blob, USER-VISIBLE
     log: text("log").notNull(), // agent working notes, INTERNAL
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -418,8 +485,8 @@ export const masteryHistory = pgTable("mastery_history", {
   subTopicId: uuid("sub_topic_id")
     .notNull()
     .references(() => subTopic.id),
-  conceptualLevel: smallint("conceptual_level").notNull(),
-  proceduralLevel: smallint("procedural_level").notNull(),
+  conceptualLevel: smallint("conceptual_level"), // null = not yet observed (see mastery_state)
+  proceduralLevel: smallint("procedural_level"),
   description: text("description").notNull(),
   log: text("log").notNull(),
   sourceEventId: uuid("source_event_id").references(() => eventLog.id),
@@ -442,8 +509,12 @@ export const schedulingState = pgTable(
       .notNull()
       .references(() => subTopic.id),
     taughtAt: timestamp("taught_at", { withTimezone: true }), // null = not yet in spiral
+    // CLIMB is the only stored date — it needs Stage-2's judgment (which level is
+    // being climbed, which observations qualified). RETENTION is deliberately NOT
+    // stored (ASSESS-FIX-3): it is pure arithmetic off the procedural level
+    // (RETENTION_LADDER_DAYS) and the scheduler derives it on read. A stored copy
+    // had exactly one possible future — going stale (it already had; D-SCH-1).
     climbNextDue: date("climb_next_due"),
-    retentionNextDue: date("retention_next_due"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -935,6 +1006,7 @@ export const TENANT_SCOPED_TABLES = [
   "event_log",
   "transcript",
   "observation",
+  "cross_concept_flag",
   "mastery_state",
   "mastery_history",
   "scheduling_state",

@@ -1,0 +1,1 @@
+ALTER TABLE "scheduling_state" DROP COLUMN IF EXISTS "retention_next_due";

@@ -340,7 +340,8 @@ export async function assembleGrounding(
           .map(
             (m) =>
               `  - ${m.chapterName} › ${m.topicName} › ${m.subTopicName}: ` +
-              `conceptual L${m.conceptualLevel}, procedural L${m.proceduralLevel}. ${m.description}`,
+              `conceptual ${m.conceptualLevel == null ? "not yet assessed" : `L${m.conceptualLevel}`}, ` +
+                `procedural ${m.proceduralLevel == null ? "not yet assessed" : `L${m.proceduralLevel}`}. ${m.description}`,
           )
           .join("\n")
       : "  (no certified mastery yet — the student has not been through Stage-2 certification)";

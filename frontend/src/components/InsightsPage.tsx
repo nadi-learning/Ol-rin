@@ -15,7 +15,7 @@ import "./insights.css";
 
 type Summary = Awaited<ReturnType<typeof trpc.insights.getMySummary.query>>;
 type Topic = Summary["topics"][number];
-type Bucket = Topic["conceptual"];
+type Bucket = NonNullable<Topic["conceptual"]>; // null (never observed) is handled separately
 type Trend = Topic["trend"];
 
 export function InsightsPage({
@@ -111,7 +111,16 @@ const BUCKET_LABEL: Record<Bucket, string> = {
   mastered: "Mastered",
 };
 
-function BucketChip({ axis, bucket }: { axis: string; bucket: Bucket }) {
+function BucketChip({ axis, bucket }: { axis: string; bucket: Bucket | null }) {
+  // null = never observed on this axis. Not a low bucket — a gap in what we asked.
+  if (bucket == null) {
+    return (
+      <span className="ins-chip ins-chip--unassessed">
+        <span className="ins-chip-axis">{axis}</span>
+        <span className="ins-chip-level">Not yet assessed</span>
+      </span>
+    );
+  }
   return (
     <span className={`ins-chip ins-chip--${bucket}`}>
       <span className="ins-chip-axis">{axis}</span>

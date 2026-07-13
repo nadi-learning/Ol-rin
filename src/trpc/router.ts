@@ -62,7 +62,12 @@ import {
   getStudentMastery,
   getStudentPacePlan,
   listPendingStage2,
+  FlagNotFoundError,
+  getCrossConceptFlags,
   listStudents,
+  ObservationNotFoundError,
+  overrideObservation,
+  setCrossConceptFlagAddressed,
   StudentNotFoundError,
 } from "../services/tutor";
 import {
@@ -802,6 +807,80 @@ export const appRouter = router({
         }
       }),
 
+    // ASSESS-FIX-2: correct a Stage-1 observation (assessment.md §6 — "adjust an
+    // observation level … with a reason"). Observations are the durable evidence
+    // every future Stage-2 recounts from, so a misread the tutor can see but not
+    // correct would keep corrupting counts. LAYERED: the machine's read is kept,
+    // `tutorLevel` carries the correction, and an `observation_override` event is
+    // logged separately (frame 4). level=null clears the override.
+    overrideObservation: tutorProcedure
+      .input(
+        z.object({
+          observationId: z.string().uuid(),
+          level: z.number().int().min(1).max(5).nullable(),
+          reason: z.string().min(1).max(2000).nullable(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await overrideObservation(ctx.tx, {
+            boardId: ctx.board.id,
+            tutorUserId: ctx.membership.userId,
+            observationId: input.observationId,
+            level: input.level,
+            reason: input.reason,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError || e instanceof ObservationNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // ASSESS-FIX-4: the student's OPEN cross-concept flags — "ran the trig fine
+    // but couldn't rationalise the denominator". These carry NO rung and count
+    // toward NO level (§2 procedural Step 4 forbids denting the assessed sub-topic);
+    // they are a worklist of weak prerequisites surfacing in other work.
+    getCrossConceptFlags: tutorProcedure
+      .input(
+        z.object({
+          studentId: z.string().uuid(),
+          includeAddressed: z.boolean().optional(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getCrossConceptFlags(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+            includeAddressed: input.includeAddressed,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    setCrossConceptFlagAddressed: tutorProcedure
+      .input(z.object({ flagId: z.string().uuid(), addressed: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setCrossConceptFlagAddressed(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            flagId: input.flagId,
+            addressed: input.addressed,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError || e instanceof FlagNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
     // Slice T6: the tutor Pace-Plan view (read-only). listSubjects for the
     // subject picker; getStudentPacePlan → a linked student's derive-at-read
     // Pace Plan (the SAME view the student sees). NO writes. Ownership-guarded
@@ -944,8 +1023,10 @@ export const appRouter = router({
           studentId: z.string().uuid(),
           subTopicId: z.string().uuid(),
           final: z.object({
-            conceptualLevel: z.number().int().min(1).max(5),
-            proceduralLevel: z.number().int().min(1).max(5),
+            // null = not yet observed on that axis (never a 1) — the tutor can
+            // leave an axis unobserved when no item exposed it.
+            conceptualLevel: z.number().int().min(1).max(5).nullable(),
+            proceduralLevel: z.number().int().min(1).max(5).nullable(),
             description: z.string().min(1),
           }),
           draft: stage2DraftSchema,

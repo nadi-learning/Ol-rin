@@ -209,6 +209,68 @@
 .tut-obs-reasoning { margin: 0; font-size: 14px; line-height: 1.5; }
 .tut-obs-loading { padding: 12px 18px; }
 
+/* --- ASSESS-FIX-2: correcting a Stage-1 read ---
+   A corrected observation shows BOTH numbers — the machine's read and the tutor's
+   — because the pair (and the reason) is the labeled judgment, not a replacement. */
+.tut-obs--corrected { background: #fbfaf6; border-left: 3px solid var(--accent, #e8a33d); }
+.tut-level--machine {
+  color: var(--muted, #6b6f80);
+  text-decoration: line-through;
+  font-weight: 600;
+}
+.tut-level--tutor { color: #1d7a4d; }
+.tut-obs-editbtn {
+  border: 1px solid #dfe2ea;
+  background: #fff;
+  color: #33364a;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tut-obs-editbtn:hover { border-color: var(--primary, #2f63ff); color: var(--primary, #2f63ff); }
+.tut-obs-overridereason {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #5d4a1f;
+  font-style: italic;
+}
+.tut-obs-edit {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #e6e8ef;
+  border-radius: 9px;
+  background: #fafbfd;
+}
+.tut-obs-editrow { display: flex; flex-direction: column; gap: 4px; }
+.tut-obs-editactions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tut-btn {
+  border: none;
+  background: var(--primary, #2f63ff);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 15px;
+  border-radius: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s ease-out;
+}
+.tut-btn:hover:not(:disabled) { filter: brightness(1.06); }
+.tut-btn:disabled { opacity: 0.55; cursor: default; }
+.tut-btn--ghost {
+  background: transparent;
+  color: #33364a;
+  border: 1px solid #dfe2ea;
+}
+.tut-btn--ghost:hover:not(:disabled) { border-color: var(--primary, #2f63ff); color: var(--primary, #2f63ff); }
+
 /* --- certified mastery --- */
 .tut-mastery-grid {
   display: grid;
@@ -327,6 +389,7 @@
   margin: 0 5px 5px 0;
   font-size: 11.5px;
 }
+.tut-s2-ro-note { color: var(--muted, #6b6f80); font-size: 11.5px; }
 .tut-s2-log { font-size: 12.5px; }
 .tut-s2-log summary { cursor: pointer; color: var(--muted, #6b6f80); font-weight: 600; }
 .tut-s2-actions { display: flex; gap: 10px; align-items: center; }
@@ -2455,3 +2518,37 @@
   font-weight: 700;
   color: var(--primary-hover);
 }
+
+/* --- ASSESS-FIX-4: cross-concept flags ---
+   A weak prerequisite seen while the student worked on something else. These
+   carry NO level and move NO mastery (the rule that creates them forbids denting
+   the sub-topic being assessed) — so style them as a worklist, not a score. */
+.tut-ccf {
+  border: 1px solid #f0e0c4;
+  background: #fdfaf3;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-ccf-head {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6d541c;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tut-ccf-sub { font-size: 11.5px; font-weight: 500; color: var(--muted, #6b6f80); }
+.tut-ccf-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid #f3e9d6;
+}
+.tut-ccf-note { font-size: 13.5px; color: #33364a; flex: 1 1 260px; }
+.tut-ccf-from { font-size: 11.5px; color: var(--muted, #6b6f80); }

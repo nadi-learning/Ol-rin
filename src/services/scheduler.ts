@@ -15,11 +15,18 @@
  *    from scheduling_state.climbNextDue. Null when topped out / nothing to climb.
  *  - RETENTION (this engine owns it — D-SCH-1, intent §8): anti-fade re-check =
  *    a deterministic ladder off the PROCEDURAL level. Pure arithmetic, not an AI
- *    guess, so the scheduler RECOMPUTES it from mastery_state (the anchor =
- *    updatedAt, the last Stage-2 finalize = "completion date"). Floor L2 (L1 is
- *    pure-acquiring — nothing yet to retain). The tunable ladder (intent §11)
- *    lives in code here, not in a prompt. (S2 also writes scheduling_state
- *    .retentionNextDue; that column is now ignored/dead — cleanup deferred.)
+ *    guess, so the scheduler DERIVES it on read. Floor L2 (L1 is pure-acquiring —
+ *    nothing yet to retain). The tunable ladder (intent §11) lives in code here,
+ *    not in a prompt. ASSESS-FIX-3 finished the cleanup D-SCH-1 deferred: Stage-2
+ *    no longer emits a retention date and `scheduling_state.retention_next_due` is
+ *    GONE (migration 0021). One owner, one home — a stored copy could only go stale.
+ *
+ *    THE ANCHOR = the student's LAST PRACTICE on that sub-topic (the most recent
+ *    Stage-1 observation), NOT the Stage-2 finalize. Fade is measured from when the
+ *    student last *did* the thing; anchoring on the tutor's admin action means a
+ *    tutor who certifies five days late silently pushes the anti-fade check five
+ *    days out. Falls back to mastery_state.updatedAt when a taught sub-topic somehow
+ *    has no observations (defensive — it always should).
  *
  * Two independent questions, never conflated (§6):
  *  1. IS it due?      → effectiveDue = min(climb, retention) ≤ asOf.
@@ -41,11 +48,12 @@
  * Access: reuses the tutor surface's role gate + assertTutorsStudent ownership
  * wall (RLS scopes by board, not user). Runs inside the board-scoped tx.
  */
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, max } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   chapter,
   masteryState,
+  observation,
   schedulingState,
   subTopic,
   subject,
@@ -84,8 +92,9 @@ function dayDelta(a: string, b: string): number {
  */
 export function computeRetentionDue(
   anchor: Date,
-  proceduralLevel: number,
+  proceduralLevel: number | null,
 ): string | null {
+  if (proceduralLevel == null) return null; // never observed → nothing to retain yet
   const gap = RETENTION_LADDER_DAYS[proceduralLevel];
   if (gap === undefined) return null; // L1 (or out of range) → not yet retainable
   return toDateStr(new Date(anchor.getTime() + gap * MS_PER_DAY));
@@ -96,8 +105,8 @@ export type DueItem = {
   subTopicName: string;
   topicName: string;
   chapterName: string;
-  conceptualLevel: number;
-  proceduralLevel: number;
+  conceptualLevel: number | null; // null = not yet observed on that axis
+  proceduralLevel: number | null;
   climbDue: string | null; // assessment-owned (read from scheduling_state)
   retentionDue: string | null; // recomputed here
   effectiveDue: string; // min(climb, retention) — the reason it's in the queue
@@ -126,6 +135,22 @@ export async function getDueQueue(
 ): Promise<SubjectDueGroup[]> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
   const asOfStr = toDateStr(args.asOf ?? new Date());
+
+  // The retention anchor: when the student LAST PRACTISED each sub-topic (the most
+  // recent Stage-1 observation). One grouped read, joined in memory — cheaper than
+  // a correlated subquery per row, and it keeps the main query flat.
+  const lastPractice = new Map<string, Date>();
+  const practiceRows = await tx
+    .select({
+      subTopicId: observation.subTopicId,
+      lastAt: max(observation.createdAt),
+    })
+    .from(observation)
+    .where(eq(observation.studentId, args.studentId))
+    .groupBy(observation.subTopicId);
+  for (const r of practiceRows) {
+    if (r.lastAt) lastPractice.set(r.subTopicId, new Date(r.lastAt));
+  }
 
   // Taught, in-the-spiral sub-topics for this student (taughtAt IS NOT NULL),
   // joined to their mastery levels + the curriculum chain up to subject. RLS
@@ -174,10 +199,10 @@ export async function getDueQueue(
   const groups = new Map<string, SubjectDueGroup>();
 
   for (const r of rows) {
-    const retentionDue = computeRetentionDue(
-      r.masteryUpdatedAt,
-      r.proceduralLevel,
-    );
+    // Anchor on the last practice; fall back to the finalize time only if this
+    // taught sub-topic somehow has no observations at all.
+    const anchor = lastPractice.get(r.subTopicId) ?? r.masteryUpdatedAt;
+    const retentionDue = computeRetentionDue(anchor, r.proceduralLevel);
     const climbDue = r.climbDue; // `date` column → string | null
 
     // Reconcile: the earliest of the two (intent §6). Skip if neither fires.
@@ -190,8 +215,10 @@ export async function getDueQueue(
     const overdueDays = dayDelta(asOfStr, effectiveDue);
     if (overdueDays < 0) continue; // not due yet
 
+    // ≥3 on BOTH axes → eligible to be mixed. An unobserved axis (null) cannot
+    // clear the gate — we have no evidence it is at 3.
     const interleaveEligible =
-      r.conceptualLevel >= 3 && r.proceduralLevel >= 3;
+      (r.conceptualLevel ?? 0) >= 3 && (r.proceduralLevel ?? 0) >= 3;
 
     let group = groups.get(r.subjectId);
     if (!group) {

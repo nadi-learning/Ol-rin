@@ -349,9 +349,21 @@ function Axis({
   prior,
 }: {
   label: string;
-  level: number;
+  level: number | null;
   prior: number | null;
 }) {
+  // level === null → this axis has never been observed. Say so plainly. Showing a
+  // number here (a "1") would tell a parent their child is at the bottom of a
+  // scale we never actually tested them on.
+  if (level == null) {
+    return (
+      <span className="par-axislevel par-axislevel--unassessed">
+        <span className="par-axislabel">{label}</span>
+        <span className="par-axisnum par-axisnum--none">—</span>
+        <span className="par-axisscale">not yet assessed</span>
+      </span>
+    );
+  }
   return (
     <span className="par-axislevel">
       <span className="par-axislabel">{label}</span>

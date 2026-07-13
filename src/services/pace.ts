@@ -142,10 +142,18 @@ function validateWeeksOverride(w: number): void {
  *   nearly every chapter (D-PACE-4: sparse-is-fine, no hiding on mastery; D-PACE-11).
  */
 export function preparednessForChapter(cards: ReportMasteryCard[]): Preparedness {
-  const n = cards.length;
+  // An UNOBSERVED axis (null) is absent evidence, not a low score — averaging it
+  // in as 0/1 would fabricate weakness. Take the mean over the axes we actually
+  // observed; a card with neither axis observed contributes nothing at all.
+  const scored = cards.flatMap((c) => {
+    const axes = [c.conceptualLevel, c.proceduralLevel].filter(
+      (l): l is number => l != null,
+    );
+    return axes.length ? [axes.reduce((a, b) => a + b, 0) / axes.length] : [];
+  });
+  const n = scored.length;
   if (n === 0) return { label: "not_started", value: null, certifiedSubTopics: 0 };
-  const sum = cards.reduce((acc, c) => acc + (c.conceptualLevel + c.proceduralLevel) / 2, 0);
-  const value = sum / n;
+  const value = scored.reduce((a, b) => a + b, 0) / n;
   const label: PreparednessLabel =
     value >= PREP_STRONG_MIN ? "strong" : value >= PREP_ON_TRACK_MIN ? "on_track" : "needs_work";
   return { label, value, certifiedSubTopics: n };

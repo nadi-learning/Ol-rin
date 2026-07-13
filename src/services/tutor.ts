@@ -23,11 +23,13 @@
  * (mastery_state.updated_at), or ALL of them when the sub_topic has no mastery
  * yet. No new column: mastery_state.updated_at IS the last-finalize marker (D-T-2).
  */
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   chapter,
+  crossConceptFlag,
+  eventLog,
   masteryState,
   observation,
   subTopic,
@@ -43,6 +45,10 @@ type Tx = PgTransaction<any, any, any>;
 // Matches the source tag Stage-1 writes (assessment.ts STAGE1_SOURCE).
 const STAGE1_SOURCE = "stage1_scorer";
 const EPOCH = new Date(0);
+
+// A tutor correcting a Stage-1 read. Its own event type — the rule-vs-human gap
+// is the labeled judgment (Polaris frame 4), never folded into another record.
+export const OBSERVATION_OVERRIDE_EVENT = "observation_override";
 
 export class TutorOnlyError extends Error {
   readonly code = "NOT_A_TUTOR";
@@ -71,8 +77,8 @@ export type MasteryCard = {
   subTopicName: string;
   topicName: string;
   chapterName: string;
-  conceptualLevel: number;
-  proceduralLevel: number;
+  conceptualLevel: number | null; // null = not yet observed on that axis
+  proceduralLevel: number | null;
   description: string; // user-visible blob (NOT the internal log field)
   updatedAt: Date;
 };
@@ -90,7 +96,11 @@ export type PendingItem = {
 export type ObservationView = {
   id: string;
   axis: string;
-  observationLevel: number;
+  observationLevel: number; // the MACHINE's read — never overwritten
+  tutorLevel: number | null; // the tutor's correction, if any
+  effectiveLevel: number; // tutorLevel ?? observationLevel — what Stage-2 counts
+  overrideReason: string | null;
+  overriddenAt: Date | null;
   reasoning: string;
   calibrationFlag: string | null;
   pedagogicalComment: string | null;
@@ -188,9 +198,12 @@ export type AxisRollup = {
 export type ProgressSubTopic = {
   subTopicId: string;
   name: string;
-  conceptualLevel: number; // raw; 0 when untaught
-  proceduralLevel: number; // raw; 0 when untaught
-  hasMastery: boolean; // false = no mastery_state yet (untaught leaf)
+  // Raw level, with 0 meaning NO EVIDENCE — either no mastery_state row at all
+  // (untaught leaf) or a certified row whose axis was never observed (null).
+  // Both are gaps that drive authoring, so the weakest-link rollup treats them alike.
+  conceptualLevel: number;
+  proceduralLevel: number;
+  hasMastery: boolean; // false = no mastery_state row yet (untaught leaf)
   description: string | null; // user-visible blob (never the internal log)
 };
 
@@ -241,6 +254,7 @@ export async function getProgressTree(
       topicName: topic.name,
       subTopicId: subTopic.id,
       subTopicName: subTopic.name,
+      masteryStateId: masteryState.id, // row presence — levels themselves are nullable
       conceptualLevel: masteryState.conceptualLevel,
       proceduralLevel: masteryState.proceduralLevel,
       description: masteryState.description,
@@ -302,7 +316,7 @@ export async function getProgressTree(
       name: r.subTopicName,
       conceptualLevel: cl,
       proceduralLevel: pl,
-      hasMastery: r.conceptualLevel !== null,
+      hasMastery: r.masteryStateId !== null,
       description: r.description,
     });
     bucket(r.topicId).c.push(cl);
@@ -454,11 +468,14 @@ export async function getObservations(
   args: { tutorUserId: string; studentId: string; subTopicId: string },
 ): Promise<ObservationView[]> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
-  return tx
+  const rows = await tx
     .select({
       id: observation.id,
       axis: observation.axis,
       observationLevel: observation.observationLevel,
+      tutorLevel: observation.tutorLevel,
+      overrideReason: observation.overrideReason,
+      overriddenAt: observation.overriddenAt,
       reasoning: observation.reasoning,
       calibrationFlag: observation.calibrationFlag,
       pedagogicalComment: observation.pedagogicalComment,
@@ -474,4 +491,184 @@ export async function getObservations(
       ),
     )
     .orderBy(asc(observation.createdAt));
+  // Surface BOTH numbers + the one that counts, so the tutor always sees what the
+  // machine said next to what they changed it to (never a silently-replaced value).
+  return rows.map((r) => ({
+    ...r,
+    effectiveLevel: r.tutorLevel ?? r.observationLevel,
+  }));
+}
+
+export type CrossConceptFlagView = {
+  id: string;
+  note: string;
+  fromSubTopicId: string;
+  fromSubTopicName: string; // where the student was working when the OTHER skill broke
+  addressedAt: Date | null;
+  createdAt: Date;
+};
+
+/**
+ * ASSESS-FIX-4 — the student's OPEN cross-concept flags.
+ *
+ * "Ran the trigonometry correctly but couldn't rationalise the denominator." Per
+ * assessment.md §2 (procedural Step 4) that slip must NOT lower the rung of the
+ * sub-topic being assessed — so it leaves as its own signal, or it is lost. These
+ * are NOT scored observations (they carry no rung and count toward no level); they
+ * are a worklist for the human: a weak prerequisite showing up in someone else's work.
+ */
+export async function getCrossConceptFlags(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string; includeAddressed?: boolean },
+): Promise<CrossConceptFlagView[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  const where = [eq(crossConceptFlag.studentId, args.studentId)];
+  if (!args.includeAddressed) where.push(isNull(crossConceptFlag.addressedAt));
+  return tx
+    .select({
+      id: crossConceptFlag.id,
+      note: crossConceptFlag.note,
+      fromSubTopicId: crossConceptFlag.fromSubTopicId,
+      fromSubTopicName: subTopic.name,
+      addressedAt: crossConceptFlag.addressedAt,
+      createdAt: crossConceptFlag.createdAt,
+    })
+    .from(crossConceptFlag)
+    .innerJoin(subTopic, eq(subTopic.id, crossConceptFlag.fromSubTopicId))
+    .where(and(...where))
+    .orderBy(asc(crossConceptFlag.createdAt));
+}
+
+/** Raised when the flag isn't this student's / this board's. */
+export class FlagNotFoundError extends Error {
+  code = "FLAG_NOT_FOUND";
+  constructor(id: string) {
+    super(`cross-concept flag ${id} not found`);
+    this.name = "FlagNotFoundError";
+  }
+}
+
+/** Close (or re-open) a cross-concept flag once the tutor has acted on it. */
+export async function setCrossConceptFlagAddressed(
+  tx: Tx,
+  args: { tutorUserId: string; flagId: string; addressed: boolean },
+): Promise<CrossConceptFlagView> {
+  const [flag] = await tx
+    .select()
+    .from(crossConceptFlag)
+    .where(eq(crossConceptFlag.id, args.flagId));
+  if (!flag) throw new FlagNotFoundError(args.flagId);
+  await assertTutorsStudent(tx, args.tutorUserId, flag.studentId);
+
+  await tx
+    .update(crossConceptFlag)
+    .set({
+      addressedAt: args.addressed ? new Date() : null,
+      addressedBy: args.addressed ? args.tutorUserId : null,
+    })
+    .where(eq(crossConceptFlag.id, args.flagId));
+
+  const [view] = await getCrossConceptFlags(tx, {
+    tutorUserId: args.tutorUserId,
+    studentId: flag.studentId,
+    includeAddressed: true,
+  }).then((all) => all.filter((f) => f.id === args.flagId));
+  return view!;
+}
+
+/** Raised when the observation isn't this student's / this board's. */
+export class ObservationNotFoundError extends Error {
+  code = "OBSERVATION_NOT_FOUND";
+  constructor(id: string) {
+    super(`observation ${id} not found`);
+    this.name = "ObservationNotFoundError";
+  }
+}
+
+/**
+ * Correct a Stage-1 observation (assessment.md §6 — "adjust an observation level
+ * … with a reason"). Observations are the DURABLE evidence: every future Stage-2
+ * recounts qualifying observations from them, so an uncorrectable Stage-1 misread
+ * keeps corrupting counts long after the tutor spotted it.
+ *
+ * LAYERED, never destructive: `observation_level` (the machine's read) is left
+ * exactly as Stage-1 wrote it and `tutor_level` carries the correction. The pair —
+ * what the AI said, what the human said, and why — is the labeled judgment the
+ * data engine collects (Polaris frame 4). Passing level=null CLEARS the override
+ * and reverts to the machine's read.
+ *
+ * Ownership-guarded like every tutor write; the correction is also logged to
+ * event_log as its own `observation_override` event (never folded into anything).
+ */
+export async function overrideObservation(
+  tx: Tx,
+  args: {
+    boardId: string;
+    tutorUserId: string;
+    observationId: string;
+    level: number | null; // null = clear the override, revert to the machine read
+    reason: string | null;
+  },
+): Promise<ObservationView> {
+  const [obs] = await tx
+    .select()
+    .from(observation)
+    .where(eq(observation.id, args.observationId));
+  if (!obs) throw new ObservationNotFoundError(args.observationId);
+  // The observation names its student — assert the caller tutors them (a tutor
+  // sharing a board with another tutor's students must not reach this).
+  await assertTutorsStudent(tx, args.tutorUserId, obs.studentId);
+
+  const now = new Date();
+  const clearing = args.level == null;
+  const [updated] = await tx
+    .update(observation)
+    .set({
+      tutorLevel: args.level,
+      overrideReason: clearing ? null : args.reason,
+      overriddenBy: clearing ? null : args.tutorUserId,
+      overriddenAt: clearing ? null : now,
+    })
+    .where(eq(observation.id, args.observationId))
+    .returning();
+
+  await tx.insert(eventLog).values({
+    boardId: args.boardId,
+    eventType: OBSERVATION_OVERRIDE_EVENT,
+    studentId: obs.studentId,
+    tutorId: args.tutorUserId,
+    subTopicId: obs.subTopicId,
+    // `before` is the level that WAS counting; `after` is what will count now.
+    before: {
+      machineLevel: obs.observationLevel,
+      effectiveLevel: obs.tutorLevel ?? obs.observationLevel,
+    },
+    after: {
+      machineLevel: obs.observationLevel, // unchanged — the machine's read is immutable
+      effectiveLevel: args.level ?? obs.observationLevel,
+    },
+    reason: clearing ? "tutor cleared the observation override" : args.reason,
+    payload: {
+      observationId: args.observationId,
+      axis: obs.axis,
+      cleared: clearing,
+      machineReasoning: obs.reasoning, // the read the tutor disagreed with
+    },
+  });
+
+  const u = updated!;
+  return {
+    id: u.id,
+    axis: u.axis,
+    observationLevel: u.observationLevel,
+    tutorLevel: u.tutorLevel,
+    effectiveLevel: u.tutorLevel ?? u.observationLevel,
+    overrideReason: u.overrideReason,
+    overriddenAt: u.overriddenAt,
+    reasoning: u.reasoning,
+    calibrationFlag: u.calibrationFlag,
+    pedagogicalComment: u.pedagogicalComment,
+    questionId: u.questionId,
+    createdAt: u.createdAt,
+  };
 }

@@ -71,8 +71,8 @@ export type ReportMasteryCard = {
   topicName: string;
   chapterId: string;
   chapterName: string;
-  conceptualLevel: number;
-  proceduralLevel: number;
+  conceptualLevel: number | null; // null = not yet observed on that axis
+  proceduralLevel: number | null;
   description: string; // user-visible blob (NEVER the internal `log` field)
   updatedAt: Date;
   trend: Trend;
@@ -143,14 +143,23 @@ export async function listChildren(
     .orderBy(asc(appUser.email));
 }
 
+/**
+ * Movement across BOTH axes, current vs the prior snapshot. An unobserved axis
+ * (null) scores 0 — safe because a level only ever goes null → number (Stage-2
+ * holds or raises, it never un-observes), so a first observation reads as "up".
+ */
 function trendOf(
-  curC: number,
-  curP: number,
-  prior: { conceptualLevel: number; proceduralLevel: number } | undefined,
+  curC: number | null,
+  curP: number | null,
+  prior:
+    | { conceptualLevel: number | null; proceduralLevel: number | null }
+    | undefined,
 ): Trend {
   if (!prior) return "new";
   const delta =
-    curC + curP - (prior.conceptualLevel + prior.proceduralLevel);
+    (curC ?? 0) +
+    (curP ?? 0) -
+    ((prior.conceptualLevel ?? 0) + (prior.proceduralLevel ?? 0));
   if (delta > 0) return "up";
   if (delta < 0) return "down";
   return "flat";
@@ -224,7 +233,7 @@ export async function computeChildReport(
     .orderBy(desc(masteryHistory.snapshotAt));
   const priorBySubTopic = new Map<
     string,
-    { conceptualLevel: number; proceduralLevel: number }
+    { conceptualLevel: number | null; proceduralLevel: number | null }
   >();
   for (const h of history) {
     if (!priorBySubTopic.has(h.subTopicId)) {

@@ -16,6 +16,11 @@
  *   3. draft: a sub-topic with no observations → NO_OBSERVATIONS.
  *   4. draft (REAL Gemini): valid pair + non-empty description/log/reasoning;
  *      observationCount correct; current=null on cold start. SOFT: log levels/dates.
+ *   4b. draft (REAL Gemini) on a sub-topic where only the CONCEPTUAL axis was ever
+ *      exposed → procedural comes back NULL ("not yet observed"), never a 1. An
+ *      unexposed axis is a coverage gap, not weakness (assessment.md §2 bound, §5).
+ *   7b. finalize with a NULL axis: mastery_state stores NULL (not 0/1); taught(G2)
+ *      still fires off the other axis; retention null (retention = f(procedural)).
  *   5. finalize COLD START (final 3/3): mastery_state created; NO history snapshot;
  *      stage2_finalize event (before=null); transcript(stage2); taught(G2) emitted +
  *      scheduling taughtAt set + climb/retention persisted; result {taught, !overridden}.
@@ -32,6 +37,7 @@ import {
   appUser,
   board,
   chapter,
+  crossConceptFlag,
   eventLog,
   learningObjective,
   masteryHistory,
@@ -52,7 +58,13 @@ import {
   NoObservationsError,
   type Stage2Draft,
 } from "../src/services/assessment";
-import { StudentNotFoundError } from "../src/services/tutor";
+import {
+  getCrossConceptFlags,
+  overrideObservation,
+  setCrossConceptFlagAddressed,
+  StudentNotFoundError,
+} from "../src/services/tutor";
+import { computeRetentionDue } from "../src/services/scheduler";
 import { __aiConfigured } from "../src/services/ai/gemini";
 
 type Tx = PgTransaction<any, any, any>;
@@ -106,8 +118,12 @@ async function main() {
     const [tp] = await tx.insert(topic).values({ boardId: P.id, chapterId: chap!.id, slug: "speed", name: "Speed", ordinal: 1 }).returning();
     const [stCold] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp!.id, slug: "accel", name: "Acceleration", ordinal: 1 }).returning();
     const [stLow] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp!.id, slug: "velocity", name: "Velocity", ordinal: 2 }).returning();
+    // Only the CONCEPTUAL axis is ever exposed here — the unobserved-axis case.
+    const [stOneAxis] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp!.id, slug: "graphs", name: "Motion graphs", ordinal: 3 }).returning();
     await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: stCold!.id, axis: "conceptual", code: "C1", description: "Explains acceleration as the rate of change of velocity, distinguishing it from velocity itself." });
     await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: stCold!.id, axis: "procedural", code: "P1", description: "Computes acceleration = Δv / Δt with correct units." });
+    await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: stOneAxis!.id, axis: "conceptual", code: "C1", description: "Reads the gradient of a distance–time graph as a rate." });
+    await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: stOneAxis!.id, axis: "procedural", code: "P1", description: "Derives velocity from a distance–time graph." });
 
     // link the tutor to the student (NOT to `other`).
     await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stu.id });
@@ -133,8 +149,38 @@ async function main() {
     await mkObs("conceptual", 4, "Linked Δv/Δt to the principle, reasoned from it on a variant.", 0, "transfer/variant probe");
     await mkObs("conceptual", 3, "Several correct points but listed, not connected.", 7, "routine explain-why");
     await mkObs("procedural", 3, "Right and clean, every step walked, no compression.", 10, "routine execution");
+    // ASSESS-FIX-4: a slip in a DIFFERENT skill. Per §2 procedural Step 4 this must
+    // NOT lower Acceleration's rung — so it has to leave as its own flag or it dies.
+    await tx.insert(observation).values({
+      boardId: P.id, studentId: stu.id, subTopicId: stCold!.id, axis: "procedural",
+      observationLevel: 4, reasoning: "Ran the acceleration procedure cleanly and fast.",
+      signals: { crossConceptNote: "procedural issue in rationalising the denominator — left the surd in the answer" },
+      pedagogicalComment: "routine execution", source: "stage1_scorer",
+      createdAt: new Date(baseMs + 11 * 24 * 3600 * 1000),
+    });
 
-    return { stCold: stCold!.id, stLow: stLow!.id };
+    // stOneAxis: CONCEPTUAL observations only — every item served was an
+    // explain-why, so the procedural axis was never exposed. Nothing here is
+    // evidence about execution, and the assessor must not invent a level for it.
+    const mkObsOn = (stId: string, axis: string, level: number, reasoning: string, ageDays: number, ped: string) =>
+      tx.insert(observation).values({
+        boardId: P.id, studentId: stu.id, subTopicId: stId, questionId: null, attemptId: null,
+        axis, observationLevel: level, reasoning, signals: {}, calibrationFlag: null,
+        pedagogicalComment: ped, source: "stage1_scorer",
+        createdAt: new Date(baseMs + ageDays * 24 * 3600 * 1000),
+      });
+    await mkObsOn(stOneAxis!.id, "conceptual", 3, "Correct points about the gradient, listed rather than connected.", 0, "routine explain-why (no execution demanded)");
+    await mkObsOn(stOneAxis!.id, "conceptual", 3, "Explains what the slope shows, not why it is the rate.", 6, "routine explain-why (no execution demanded)");
+
+    // stCorrect: two HIGH conceptual reads the tutor will later correct DOWN to 1.
+    // Proves a tutor correction actually changes what Stage-2 COUNTS (ASSESS-FIX-2)
+    // — not just what the tutor sees on screen.
+    const [stCorrect] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp!.id, slug: "reltime", name: "Relative motion", ordinal: 4 }).returning();
+    await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: stCorrect!.id, axis: "conceptual", code: "C1", description: "Explains why motion is described relative to a chosen frame." });
+    await mkObsOn(stCorrect!.id, "conceptual", 4, "Fluent paragraph connecting frames to the principle.", 0, "explain-why");
+    await mkObsOn(stCorrect!.id, "conceptual", 4, "Again reasons from the principle on a variant.", 8, "transfer/variant probe");
+
+    return { stCold: stCold!.id, stLow: stLow!.id, stOneAxis: stOneAxis!.id, stCorrect: stCorrect!.id };
   });
 
   // 2. ownership — draft a student the tutor doesn't tutor
@@ -158,14 +204,59 @@ async function main() {
   // 4. REAL Gemini draft on stCold (cold start)
   const dres = await rows(P.id, (tx) => draftStage2(tx, { tutorUserId: tut.id, studentId: stu.id, subTopicId: fx.stCold }));
   const d = dres.draft;
-  check("draft: valid conceptual pair (1–5)", d.conceptualLevel >= 1 && d.conceptualLevel <= 5);
-  check("draft: valid procedural pair (1–5)", d.proceduralLevel >= 1 && d.proceduralLevel <= 5);
+  const validLevel = (l: number | null) => l === null || (l >= 1 && l <= 5);
+  check("draft: conceptual is 1–5 or null", validLevel(d.conceptualLevel));
+  check("draft: procedural is 1–5 or null", validLevel(d.proceduralLevel));
+  check("draft: both axes observed here → neither is null", d.conceptualLevel !== null && d.proceduralLevel !== null);
   check("draft: non-empty description/log/reasoning", d.description.length > 0 && d.log.length > 0 && d.reasoning.length > 0);
-  check("draft: observationCount = 3, current=null (cold start)", dres.observationCount === 3 && dres.current === null);
-  check("draft: dates are null or YYYY-MM-DD", [d.climbNextDue, d.retentionNextDue].every((x) => x === null || /^\d{4}-\d{2}-\d{2}$/.test(x)));
+  check("draft: observationCount = 4, current=null (cold start)", dres.observationCount === 4 && dres.current === null);
+  check("draft: climb date is null or YYYY-MM-DD", d.climbNextDue === null || /^\d{4}-\d{2}-\d{2}$/.test(d.climbNextDue));
+  check("draft: no retention date emitted (ASSESS-FIX-3 — the scheduler derives it)", !("retentionNextDue" in (d as object)));
   soft("draft proposed levels (conceptual,procedural)", [d.conceptualLevel, d.proceduralLevel]);
-  soft("draft dates (climb,retention)", [d.climbNextDue, d.retentionNextDue]);
+  soft("draft climb date", d.climbNextDue);
   soft("draft flags", d.flags);
+
+  // 4b. THE UNOBSERVED-AXIS CONTRACT (REAL Gemini) — stOneAxis has conceptual
+  // observations only. The procedural axis was never exposed, so it must come back
+  // NULL ("not yet observed"), never a 1. A fabricated 1 here is what would tell a
+  // parent their child "can't execute" a procedure we never asked them to run.
+  const dOne = (await rows(P.id, (tx) => draftStage2(tx, { tutorUserId: tut.id, studentId: stu.id, subTopicId: fx.stOneAxis }))).draft;
+  check("draft (one-axis): procedural NULL — never invented from zero evidence", dOne.proceduralLevel === null);
+  check("draft (one-axis): conceptual still certified 1–5", dOne.conceptualLevel !== null && validLevel(dOne.conceptualLevel));
+  check("draft (one-axis): retention DERIVES to null (no procedural level → nothing to retain)", computeRetentionDue(new Date(), dOne.proceduralLevel) === null);
+  soft("one-axis draft levels (conceptual,procedural)", [dOne.conceptualLevel, dOne.proceduralLevel]);
+  soft("one-axis draft flags (expect a procedural coverage gap)", dOne.flags);
+
+  // 4c. ASSESS-FIX-2 — a tutor correction changes what Stage-2 COUNTS (REAL Gemini).
+  // stCorrect carries two flattering L4 conceptual reads. Uncorrected, that is a
+  // certifiable L3+ (2 qualifying obs). The tutor overrules BOTH down to L1 ("the
+  // scorer rewarded eloquence — nothing is actually connected"). Stage-2 must now
+  // count 1s, not 4s: with zero observations at ≥2, no level above 1 is reachable.
+  // If the override were cosmetic (screen-only), this would still come back ≥3.
+  const preObs = await rows(P.id, (tx) =>
+    tx.select().from(observation).where(and(eq(observation.subTopicId, fx.stCorrect), eq(observation.studentId, stu.id))),
+  );
+  check("correction: stCorrect starts with 2 machine reads at L4", preObs.length === 2 && preObs.every((o) => o.observationLevel === 4));
+  for (const o of preObs) {
+    await rows(P.id, (tx) =>
+      overrideObservation(tx, {
+        boardId: P.id,
+        tutorUserId: tut.id,
+        observationId: o.id,
+        level: 1,
+        reason: "The scorer rewarded eloquence. Nothing is actually connected — no 'because' anywhere.",
+      }),
+    );
+  }
+  const postObs = await rows(P.id, (tx) =>
+    tx.select().from(observation).where(and(eq(observation.subTopicId, fx.stCorrect), eq(observation.studentId, stu.id))),
+  );
+  check("correction: machine reads PRESERVED at L4 (immutable), tutorLevel=1", postObs.every((o) => o.observationLevel === 4 && o.tutorLevel === 1));
+
+  const dCorr = (await rows(P.id, (tx) => draftStage2(tx, { tutorUserId: tut.id, studentId: stu.id, subTopicId: fx.stCorrect }))).draft;
+  check("correction: Stage-2 COUNTS the tutor's 1s, not the AI's 4s → conceptual = 1", dCorr.conceptualLevel === 1);
+  soft("corrected draft levels (conceptual,procedural)", [dCorr.conceptualLevel, dCorr.proceduralLevel]);
+  soft("corrected draft reasoning", dCorr.reasoning.slice(0, 180));
 
   // hand-built draft for the DETERMINISTIC finalize plumbing tests
   const draftA: Stage2Draft = {
@@ -174,7 +265,6 @@ async function main() {
     description: "Solid grasp of acceleration; procedure reliable but not yet automatic.",
     log: "conceptual: 2 qualifying obs (one variant); procedural: 1 obs. spacing met for L3 conceptual.",
     climbNextDue: "2026-07-21",
-    retentionNextDue: "2026-07-07",
     reasoning: "Conceptual L3→ holds; procedural L3 reliable-clean.",
     flags: ["procedural: only 1 obs, need more for a spacing claim"],
   };
@@ -206,8 +296,18 @@ async function main() {
   check("cold finalize: NO override event (final == draft)", afterCold.ovr.length === 0);
   check("cold finalize: transcript(stage2) appended", afterCold.tr.length === 1);
   check("cold finalize: taught(G2) emitted (≥L2)", afterCold.taught.length === 1);
-  check("cold finalize: scheduling taughtAt set + climb/retention persisted", afterCold.sch.length === 1 && afterCold.sch[0]!.taughtAt != null && afterCold.sch[0]!.climbNextDue === "2026-07-21" && afterCold.sch[0]!.retentionNextDue === "2026-07-07");
+  check("cold finalize: scheduling taughtAt set + CLIMB persisted (retention is not stored)", afterCold.sch.length === 1 && afterCold.sch[0]!.taughtAt != null && afterCold.sch[0]!.climbNextDue === "2026-07-21");
+  check("cold finalize: retention_next_due column is GONE from scheduling_state", !("retentionNextDue" in (afterCold.sch[0]! as object)));
   check("cold finalize: result {taught:true, overridden:false}", r1.taught === true && r1.overridden === false);
+
+  // ── ASSESS-FIX-4: the cross-concept note SURVIVES finalize as its own flag.
+  // Before this fix it lived in observation.signals, was shown once in the draft,
+  // and was never seen again — attached to the WRONG sub-topic.
+  const ccf = await rows(P.id, (tx) => getCrossConceptFlags(tx, { tutorUserId: tut.id, studentId: stu.id }));
+  check("cross-concept: 1 OPEN flag persisted on finalize", ccf.length === 1);
+  check("cross-concept: carries the note + where it was seen", (ccf[0]?.note ?? "").includes("rationalising the denominator") && ccf[0]?.fromSubTopicName === "Acceleration");
+  check("cross-concept: it is NOT a scored observation (no level on the flag)", !("observationLevel" in (ccf[0]! as object)) && !("level" in (ccf[0]! as object)));
+
 
   // 6. OVERRIDE finalize (final 4/3, edited description ≠ draft)
   const r2 = await rows(P.id, (tx) =>
@@ -235,7 +335,7 @@ async function main() {
   check("override finalize: result {overridden:true, taught:false}", r2.overridden === true && r2.taught === false);
 
   // 7. taught GATE OFF — fresh sub-topic, final 1/1 (no observations needed for finalize)
-  const lowDraft: Stage2Draft = { ...draftA, conceptualLevel: 1, proceduralLevel: 1, climbNextDue: null, retentionNextDue: null };
+  const lowDraft: Stage2Draft = { ...draftA, conceptualLevel: 1, proceduralLevel: 1, climbNextDue: null };
   const r3 = await rows(P.id, (tx) =>
     finalizeStage2(tx, {
       boardId: P.id,
@@ -251,6 +351,55 @@ async function main() {
     sch: await tx.select().from(schedulingState).where(and(eq(schedulingState.studentId, stu.id), eq(schedulingState.subTopicId, fx.stLow))),
   }));
   check("taught gate: final 1/1 → NO taught event, scheduling taughtAt null", afterLow.taught.length === 0 && afterLow.sch[0]!.taughtAt === null && r3.taught === false);
+
+  // 7b. NULL AXIS PERSISTS (deterministic) — finalize stOneAxis with procedural=null.
+  // The row must store NULL (not 0, not 1), `taught` must still fire off the
+  // conceptual 3, and retention must be null (retention = f(procedural level)).
+  const oneDraft: Stage2Draft = {
+    conceptualLevel: 3,
+    proceduralLevel: null,
+    description: "Reads a gradient correctly but hasn't been asked to derive velocity yet.",
+    log: "conceptual: 2 qualifying obs at L3. procedural: NO observations — never exposed.",
+    climbNextDue: "2026-07-25",
+    reasoning: "Conceptual L3 on two qualifying obs. Procedural: no evidence — held null.",
+    flags: ["procedural coverage gap: serve a routine execution item"],
+  };
+  const r4 = await rows(P.id, (tx) =>
+    finalizeStage2(tx, {
+      boardId: P.id,
+      tutorUserId: tut.id,
+      studentId: stu.id,
+      subTopicId: fx.stOneAxis,
+      final: { conceptualLevel: 3, proceduralLevel: null, description: oneDraft.description },
+      draft: oneDraft,
+    }),
+  );
+  const afterOne = await rows(P.id, async (tx) => ({
+    ms: await tx.select().from(masteryState).where(and(eq(masteryState.studentId, stu.id), eq(masteryState.subTopicId, fx.stOneAxis))),
+    taught: await tx.select().from(eventLog).where(and(eq(eventLog.subTopicId, fx.stOneAxis), eq(eventLog.eventType, "taught"))),
+    sch: await tx.select().from(schedulingState).where(and(eq(schedulingState.studentId, stu.id), eq(schedulingState.subTopicId, fx.stOneAxis))),
+  }));
+  check("null axis: mastery_state stores conceptual=3, procedural=NULL", afterOne.ms.length === 1 && afterOne.ms[0]!.conceptualLevel === 3 && afterOne.ms[0]!.proceduralLevel === null);
+  check("null axis: taught(G2) still fires off the conceptual ≥L2", afterOne.taught.length === 1 && afterOne.sch[0]!.taughtAt != null && r4.taught === true);
+  check("null axis: retention DERIVES to null (retention = f(procedural level))", computeRetentionDue(new Date(), afterOne.ms[0]!.proceduralLevel) === null);
+  check("null axis: finalize result carries the null through", r4.proceduralLevel === null && r4.conceptualLevel === 3);
+
+  // ASSESS-FIX-4 (cont.) — run LAST: these re-finalize stCold, which adds a history
+  // row + a stage2_finalize event, so they must come after every count assertion above.
+  await rows(P.id, (tx) =>
+    finalizeStage2(tx, {
+      boardId: P.id, tutorUserId: tut.id, studentId: stu.id, subTopicId: fx.stCold,
+      final: { conceptualLevel: 3, proceduralLevel: 3, description: draftA.description },
+      draft: draftA,
+    }),
+  );
+  const ccf2 = await rows(P.id, (tx) => tx.select().from(crossConceptFlag).where(eq(crossConceptFlag.studentId, stu.id)));
+  check("cross-concept: re-finalize does NOT duplicate (unique on source observation)", ccf2.length === 1);
+
+  const closed = await rows(P.id, (tx) => setCrossConceptFlagAddressed(tx, { tutorUserId: tut.id, flagId: ccf[0]!.id, addressed: true }));
+  check("cross-concept: tutor can mark it handled", closed.addressedAt !== null);
+  const openAfter = await rows(P.id, (tx) => getCrossConceptFlags(tx, { tutorUserId: tut.id, studentId: stu.id }));
+  check("cross-concept: handled flag drops out of the OPEN list", openAfter.length === 0);
 
   // 8. RLS — draft a P student under board Q → ownership link invisible → NOT_FOUND
   let rls = false;
@@ -281,6 +430,7 @@ async function main() {
 
   // ── cleanup (FK-safe) ──
   await withBoard(P.id, async (tx: Tx) => {
+    await tx.delete(crossConceptFlag).where(eq(crossConceptFlag.boardId, P.id));
     await tx.delete(masteryHistory).where(eq(masteryHistory.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(schedulingState).where(eq(schedulingState.boardId, P.id));

@@ -38,8 +38,13 @@ export type MasteryBucket =
  * Soft bucket for a certified 1–5 axis level (D-INS-1). Four buckets: the bottom
  * two levels merge into "getting started" so the scale reads warm, not grade-like.
  * Tunable — the single place the level→label policy lives.
+ *
+ * A null level = NOT YET OBSERVED on that axis → null bucket, rendered as
+ * "not yet assessed". It must never fall through to "getting-started": no item
+ * exposed the axis, which is a coverage gap, not a weak student (assessment.md §5).
  */
-export function bucketForLevel(level: number): MasteryBucket {
+export function bucketForLevel(level: number | null): MasteryBucket | null {
+  if (level == null) return null;
   if (level >= 5) return "mastered";
   if (level >= 4) return "strong";
   if (level >= 3) return "practising";
@@ -51,8 +56,8 @@ export type InsightTopic = {
   subTopicName: string;
   topicName: string;
   chapterName: string;
-  conceptual: MasteryBucket;
-  procedural: MasteryBucket;
+  conceptual: MasteryBucket | null; // null = not yet assessed on that axis
+  procedural: MasteryBucket | null;
   description: string;
   trend: Trend;
 };

@@ -24,12 +24,13 @@
  *      a per-student read under Q → StudentNotFoundError.
  *   9. HTTP: tutor.listStudents no session → 401 (soft).
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   board,
   chapter,
+  eventLog,
   masteryState,
   membership,
   observation,
@@ -48,6 +49,9 @@ import {
   getStudentMastery,
   listPendingStage2,
   listStudents,
+  ObservationNotFoundError,
+  OBSERVATION_OVERRIDE_EVENT,
+  overrideObservation,
   StudentNotFoundError,
   TutorOnlyError,
 } from "../src/services/tutor";
@@ -193,6 +197,69 @@ async function main() {
   check("getObservations(A) → carries axis + level + reasoning", obsA[0]!.axis === "conceptual" && obsA[0]!.observationLevel === 4 && obsA[0]!.reasoning.length > 0);
   check("getObservations payload has no answer-key fields (REF_/reference)", !/referenceAnswer|REF_|EXPL_/.test(JSON.stringify(obsA)));
 
+  // An observation belonging to the UNLINKED student S2 — the ownership guard on
+  // overrideObservation must reject it (RLS scopes by board, not by user).
+  const [obsS2] = await withBoard(P.id, (tx) =>
+    tx.insert(observation).values({
+      boardId: P.id, studentId: userS2, subTopicId: fx.A, axis: "conceptual",
+      observationLevel: 3, reasoning: "S2's read — the caller does not tutor S2",
+      source: STAGE1,
+    }).returning({ id: observation.id }),
+  );
+  const obsS2Id = obsS2!.id;
+
+  // ── 6b. ASSESS-FIX-2: the tutor can CORRECT a Stage-1 read (assessment.md §6).
+  // The machine's read must survive intact (it's half the training pair); the
+  // EFFECTIVE level is what counts; the correction is logged as its own event.
+  const target = obsA[0]!; // conceptual, machine read L4
+  check("override (pre): not yet corrected", target.tutorLevel === null && target.effectiveLevel === 4);
+
+  const corrected = await withBoard(P.id, (tx) =>
+    overrideObservation(tx, {
+      boardId: P.id,
+      tutorUserId: userT,
+      observationId: target.id,
+      level: 2,
+      reason: "The scorer rewarded fluent prose — the two ideas are never actually linked.",
+    }),
+  );
+  check("override: machine read PRESERVED (still L4)", corrected.observationLevel === 4);
+  check("override: tutorLevel = 2, effectiveLevel = 2 (the tutor wins)", corrected.tutorLevel === 2 && corrected.effectiveLevel === 2);
+  check("override: reason + overriddenAt stored", (corrected.overrideReason ?? "").length > 0 && corrected.overriddenAt !== null);
+
+  const obsAfter = await withBoard(P.id, (tx) => getObservations(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.A }));
+  const t2 = obsAfter.find((o) => o.id === target.id)!;
+  check("override: re-read shows BOTH numbers (AI 4 / tutor 2)", t2.observationLevel === 4 && t2.tutorLevel === 2 && t2.effectiveLevel === 2);
+
+  const ovrEvents = await withBoard(P.id, (tx) =>
+    tx.select().from(eventLog).where(and(eq(eventLog.boardId, P.id), eq(eventLog.eventType, OBSERVATION_OVERRIDE_EVENT))),
+  );
+  check("override: ONE observation_override event, logged separately", ovrEvents.length === 1);
+  check("override: event carries before/after effective + the machine's reasoning (the labeled pair)",
+    (ovrEvents[0]!.before as any)?.effectiveLevel === 4 &&
+    (ovrEvents[0]!.after as any)?.effectiveLevel === 2 &&
+    (ovrEvents[0]!.after as any)?.machineLevel === 4 &&
+    typeof (ovrEvents[0]!.payload as any)?.machineReasoning === "string");
+
+  // clearing reverts to the machine read (and drops the reason)
+  const cleared = await withBoard(P.id, (tx) =>
+    overrideObservation(tx, { boardId: P.id, tutorUserId: userT, observationId: target.id, level: null, reason: null }),
+  );
+  check("override cleared: reverts to the machine read (L4), reason dropped",
+    cleared.tutorLevel === null && cleared.effectiveLevel === 4 && cleared.overrideReason === null && cleared.overriddenAt === null);
+
+  // ownership + not-found
+  check("override: unlinked student's observation → StudentNotFoundError",
+    await ownerFail(() => withBoard(P.id, (tx) => overrideObservation(tx, { boardId: P.id, tutorUserId: userT, observationId: obsS2Id, level: 3, reason: "nope" }))));
+  let missing = false;
+  try {
+    await withBoard(P.id, (tx) => overrideObservation(tx, { boardId: P.id, tutorUserId: userT, observationId: "00000000-0000-0000-0000-000000000000", level: 3, reason: "x" }));
+  } catch (e) { missing = e instanceof ObservationNotFoundError; }
+  check("override: unknown observation → OBSERVATION_NOT_FOUND", missing);
+
+  // restore the pre-6b state for the assertions below (nothing should see the override)
+  await withBoard(P.id, (tx) => overrideObservation(tx, { boardId: P.id, tutorUserId: userT, observationId: target.id, level: null, reason: null }));
+
   // 7. getStudentMastery → certified pair + description for B and C (ordinal)
   const cards = await withBoard(P.id, (tx) => getStudentMastery(tx, { tutorUserId: userT, studentId: userS1 }));
   check("getStudentMastery → 2 cards (B, C)", cards.length === 2);
@@ -215,6 +282,9 @@ async function main() {
 
   // ── cleanup (FK-safe order) ──
   await withBoard(P.id, async (tx: Tx) => {
+    // event_log first: the override legs write observation_override rows that FK
+    // to app_user / sub_topic / board.
+    await tx.delete(eventLog).where(eq(eventLog.boardId, P.id));
     await tx.delete(observation).where(eq(observation.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));

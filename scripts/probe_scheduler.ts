@@ -8,9 +8,12 @@
  *  1. DB connectivity as the app role.
  *  2. computeRetentionDue (unit): anchor + ladder by procedural; null below L2.
  *  3. OWNERSHIP: getDueQueue for an UNLINKED student → StudentNotFoundError.
- *  4. D-SCH-1 — retention is RECOMPUTED, scheduling_state.retentionNextDue is
- *     IGNORED: A's stored retentionNextDue is bogus (far future) yet A.retentionDue
- *     comes out as anchor+ladder (overdue), not the stored value.
+ *  4. ASSESS-FIX-3 — retention is DERIVED here (code owns the ladder);
+ *     scheduling_state.retention_next_due is GONE (migration 0021).
+ *  4b. THE ANCHOR — retention counts from the student's LAST PRACTICE (latest
+ *     Stage-1 observation), not the Stage-2 finalize. H: certified 2 days ago but
+ *     last practised 20 days ago → due (overdue 13). Finalize-anchored it would be
+ *     asOf+5 and absent. A late-certifying tutor must not postpone anti-fade.
  *  5. min-reconcile (§6): B's effectiveDue = retention (earlier than climb);
  *     C's effectiveDue = climb (earlier than retention).
  *  6. DUE filter + most-overdue-first sort: subject S1 → [A(7), B(6), C(1)].
@@ -18,8 +21,8 @@
  *     taught), F (procedural 1, no climb — below retention floor, no due date).
  *  8. ≥3 SERVING gate: B/C interleave-eligible; A below (proc 2) → blocked.
  *     S1.interleaved = [B,C], S1.blocked = [A].
- *  9. SUBJECT scope (§6): S2's G is in its OWN group (interleaved [G]); it never
- *     joins S1's bundle — composition never crosses subjects.
+ *  9. SUBJECT scope (§6): S2's G/H are in their OWN group; they never join S1's
+ *     bundle — composition never crosses subjects.
  * 10. RLS cross-board: getDueQueue under board Q → StudentNotFoundError (the
  *     tutor_student link is invisible there).
  * 11. HTTP: tutor.getDueQueue no session → 401 (soft).
@@ -28,6 +31,7 @@ import { eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
+  observation,
   board,
   chapter,
   masteryState,
@@ -117,6 +121,7 @@ async function main() {
       F: await st(t1!.id, "f", "ST F", 5),
       C: await st(t2!.id, "c", "ST C", 1),
       G: await st(t3!.id, "g", "ST G", 1),
+      H: await st(t3!.id, "h", "ST H", 2),
     };
   });
 
@@ -142,34 +147,51 @@ async function main() {
         conceptualLevel: c, proceduralLevel: p,
         description: "desc", log: "log", updatedAt,
       });
-    const sched = (subTopicId: string, taughtAt: Date | null, climb: string | null, retentionStored: string | null) =>
+    const sched = (subTopicId: string, taughtAt: Date | null, climb: string | null) =>
       tx.insert(schedulingState).values({
         boardId: P.id, studentId, subTopicId,
-        taughtAt, climbNextDue: climb, retentionNextDue: retentionStored,
+        taughtAt, climbNextDue: climb,
       });
 
+    // A–G carry NO observations → they exercise the FALLBACK anchor
+    // (mastery.updatedAt). H below exercises the real one (last practice).
+    //
     // A: proc2 → retention anchor(-10)+3 = asOf-7 (overdue 7). climb null. BELOW gate.
-    //    stored retentionNextDue is BOGUS (far future) — must be IGNORED (D-SCH-1).
     await mastery(fx.A, 2, 2, anchorBack(10));
-    await sched(fx.A, anchorBack(10), null, dayStr(100));
+    await sched(fx.A, anchorBack(10), null);
     // B: 4/4 → retention anchor(-20)+14 = asOf-6 (overdue 6). climb asOf-2. min → retention.
     await mastery(fx.B, 4, 4, anchorBack(20));
-    await sched(fx.B, anchorBack(20), dayStr(-2), null);
+    await sched(fx.B, anchorBack(20), dayStr(-2));
     // C: 3/3 (chapter C2) → retention anchor(-2)+7 = asOf+5 (future). climb asOf-1. min → climb (overdue 1).
     await mastery(fx.C, 3, 3, anchorBack(2));
-    await sched(fx.C, anchorBack(2), dayStr(-1), null);
+    await sched(fx.C, anchorBack(2), dayStr(-1));
     // D: 3/5 → retention anchor(-2)+21 = asOf+19 (future). climb null. NOT DUE.
     await mastery(fx.D, 3, 5, anchorBack(2));
-    await sched(fx.D, anchorBack(2), null, null);
+    await sched(fx.D, anchorBack(2), null);
     // E: taughtAt NULL (never taught) — excluded even though climb is overdue.
     await mastery(fx.E, 3, 3, anchorBack(10));
-    await sched(fx.E, null, dayStr(-5), null);
+    await sched(fx.E, null, dayStr(-5));
     // F: proc1 (below retention floor) → retention null. climb null. NO due date.
     await mastery(fx.F, 3, 1, anchorBack(10));
-    await sched(fx.F, anchorBack(10), null, null);
+    await sched(fx.F, anchorBack(10), null);
     // G: subject S2, 3/3 → retention anchor(-10)+7 = asOf-3 (overdue 3). eligible.
     await mastery(fx.G, 3, 3, anchorBack(10));
-    await sched(fx.G, anchorBack(10), null, null);
+    await sched(fx.G, anchorBack(10), null);
+
+    // H (ASSESS-FIX-3, subject S2): the ANCHOR test. The tutor finalized only 2 days
+    // ago (updatedAt = asOf-2) but the student last PRACTISED it 20 days ago — the
+    // tutor certified late. 3/3 → ladder 7.
+    //   anchored on the FINALIZE  (old, wrong): asOf-2 +7  = asOf+5  → NOT due.
+    //   anchored on LAST PRACTICE (correct):    asOf-20 +7 = asOf-13 → OVERDUE 13.
+    // H appearing in the queue, overdue 13, is the whole fix. A late-certifying tutor
+    // must not silently postpone a student's anti-fade check.
+    await mastery(fx.H, 3, 3, anchorBack(2));
+    await sched(fx.H, anchorBack(2), null);
+    await tx.insert(observation).values({
+      boardId: P.id, studentId, subTopicId: fx.H, axis: "procedural",
+      observationLevel: 3, reasoning: "last actual practice — 20 days before the tutor got round to certifying",
+      source: "stage1_scorer", createdAt: anchorBack(20),
+    });
   });
 
   // 3. OWNERSHIP: an unlinked student → StudentNotFoundError
@@ -200,9 +222,12 @@ async function main() {
   check("A overdue 7, B overdue 6, C overdue 1",
     itA?.overdueDays === 7 && itB?.overdueDays === 6 && itC?.overdueDays === 1);
 
-  // 4. D-SCH-1: A.retentionDue recomputed (asOf-7), NOT the bogus stored value.
-  check("D-SCH-1: A.retentionDue = anchor+ladder (asOf-7), stored bogus IGNORED",
-    itA?.retentionDue === dayStr(-7) && itA?.retentionDue !== dayStr(100));
+  // 4. D-SCH-1 / ASSESS-FIX-3: retention is DERIVED here (code owns the ladder);
+  //    scheduling_state.retention_next_due no longer exists (migration 0021).
+  check("ASSESS-FIX-3: A.retentionDue = anchor+ladder (asOf-7), derived not stored",
+    itA?.retentionDue === dayStr(-7));
+  check("ASSESS-FIX-3: no retentionNextDue key anywhere in the queue payload",
+    !/retentionNextDue/.test(JSON.stringify(groups)));
   check("A.climbDue null, A.effectiveDue = retention", itA?.climbDue === null && itA?.effectiveDue === dayStr(-7));
 
   // 5. min-reconcile
@@ -222,11 +247,21 @@ async function main() {
   check("S1.interleaved = [B, C]", JSON.stringify(s1?.interleaved) === JSON.stringify([fx.B, fx.C]));
   check("S1.blocked = [A]", JSON.stringify(s1?.blocked) === JSON.stringify([fx.A]));
 
-  // 9. subject scope — G is in S2 only, never bundled into S1
-  check("S2 → 1 item (G), interleaved [G]",
-    s2?.items.length === 1 && s2?.items[0]?.subTopicId === fx.G && JSON.stringify(s2?.interleaved) === JSON.stringify([fx.G]));
-  check("subject scope: G not in S1's items/interleaved",
-    !s1ids.includes(fx.G) && !(s1?.interleaved ?? []).includes(fx.G));
+  // 9. subject scope — G/H are in S2 only, never bundled into S1
+  const itH = s2?.items.find((i) => i.subTopicId === fx.H);
+  check("S2 → 2 items, most-overdue-first [H(13), G(3)]",
+    s2?.items.length === 2 && s2?.items[0]?.subTopicId === fx.H && s2?.items[1]?.subTopicId === fx.G);
+  check("subject scope: G/H not in S1's items/interleaved",
+    !s1ids.includes(fx.G) && !s1ids.includes(fx.H) && !(s1?.interleaved ?? []).includes(fx.G));
+
+  // 4b. ASSESS-FIX-3 — THE ANCHOR. H's tutor certified 2 days ago, but the student
+  // last practised 20 days ago. Anchored on the finalize, H would be asOf+5 (absent
+  // from the queue). Anchored on LAST PRACTICE it is asOf-13 — overdue, as it should be.
+  check("ANCHOR: H is DUE at all (finalize-anchored it would be excluded)", !!itH);
+  check("ANCHOR: H.retentionDue = lastPractice(-20)+7 = asOf-13, NOT finalize(-2)+7 = asOf+5",
+    itH?.retentionDue === dayStr(-13) && itH?.retentionDue !== dayStr(5));
+  check("ANCHOR: H overdue 13 days (a late-certifying tutor cannot postpone anti-fade)",
+    itH?.overdueDays === 13 && itH?.effectiveDue === dayStr(-13));
 
   // 10. RLS cross-board
   let crossThrew = false;
@@ -247,6 +282,7 @@ async function main() {
 
   // ── cleanup (FK-safe order) ──
   await withBoard(P.id, async (tx: Tx) => {
+    await tx.delete(observation).where(eq(observation.boardId, P.id));
     await tx.delete(schedulingState).where(eq(schedulingState.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));

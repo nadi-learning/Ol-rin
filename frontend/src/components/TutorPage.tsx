@@ -25,6 +25,9 @@ type Stage2DraftResult = Awaited<
   ReturnType<typeof trpc.tutor.getStage2Draft.mutate>
 >;
 type Stage2Draft = Stage2DraftResult["draft"];
+type CrossConceptFlagView = Awaited<
+  ReturnType<typeof trpc.tutor.getCrossConceptFlags.query>
+>[number];
 type DueGroup = Awaited<
   ReturnType<typeof trpc.tutor.getDueQueue.query>
 >[number];
@@ -1091,13 +1094,60 @@ function DueRow({ it }: { it: DueItem }) {
         <span className="tut-sch-st">{it.subTopicName}</span>
       </span>
       <span className="tut-sch-levels">
-        C{it.conceptualLevel} · P{it.proceduralLevel}
+        C{it.conceptualLevel ?? "–"} · P{it.proceduralLevel ?? "–"}
       </span>
       <span
         className={`tut-sch-serve ${it.interleaveEligible ? "tut-sch-serve-mix" : "tut-sch-serve-block"}`}
       >
         {it.interleaveEligible ? "interleave" : "blocked"}
       </span>
+    </div>
+  );
+}
+
+// ASSESS-FIX-4 — weak prerequisites spotted while the student was working on
+// something ELSE ("ran the trig fine, couldn't rationalise the denominator").
+// These carry NO level and count toward NO mastery — by design: the rule that
+// creates them forbids denting the sub-topic being assessed. They are a worklist.
+function CrossConceptFlags({ studentId }: { studentId: string }) {
+  const [flags, setFlags] = useState<CrossConceptFlagView[] | null>(null);
+  const load = useCallback(() => {
+    trpc.tutor.getCrossConceptFlags
+      .query({ studentId })
+      .then(setFlags)
+      .catch(() => setFlags([]));
+  }, [studentId]);
+  useEffect(load, [load]);
+
+  if (!flags || flags.length === 0) return null; // silent when there's nothing
+  return (
+    <div className="tut-ccf">
+      <div className="tut-ccf-head">
+        Other skills that tripped them up
+        <span className="tut-ccf-sub">
+          spotted while working on something else — these don't affect any mastery level
+        </span>
+      </div>
+      {flags.map((f) => (
+        <div key={f.id} className="tut-ccf-row">
+          <span className="tut-ccf-note">{f.note}</span>
+          <span className="tut-ccf-from">
+            seen in {f.fromSubTopicName} · {new Date(f.createdAt).toLocaleDateString()}
+          </span>
+          <button
+            type="button"
+            className="tut-obs-editbtn"
+            onClick={() =>
+              trpc.tutor.setCrossConceptFlagAddressed
+                .mutate({ flagId: f.id, addressed: true })
+                .then(load)
+                .catch(() => {})
+            }
+          >
+            Mark handled
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1115,12 +1165,16 @@ function PendingList({
   if (pending === null) return <p className="tut-muted">Loading…</p>;
   if (pending.length === 0)
     return (
-      <p className="tut-muted">
-        Nothing waiting — no new practice evidence since the last assessment.
-      </p>
+      <>
+        <CrossConceptFlags studentId={student.studentId} />
+        <p className="tut-muted">
+          Nothing waiting — no new practice evidence since the last assessment.
+        </p>
+      </>
     );
   return (
     <div className="tut-pending-list">
+      <CrossConceptFlags studentId={student.studentId} />
       {pending.map((p) => (
         <div key={p.subTopicId} className="tut-pending">
           <button
@@ -1156,6 +1210,40 @@ function PendingList({
   );
 }
 
+/** A level, or the honest absence of one. null is NOT a low level — no item
+ *  exposed that axis, which is a coverage gap, not a weak student. */
+function levelText(level: number | null): string {
+  return level == null ? "not observed" : `Level ${level}`;
+}
+
+/** 1–5 plus a first-class "Not yet observed" — the tutor must be able to say
+ *  "we never tested this axis" instead of being forced to pick a number. */
+function LevelSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      className="tut-s2-select"
+      value={value ?? ""}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+    >
+      <option value="">Not yet observed</option>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <option key={n} value={n}>
+          Level {n}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 // Slice S2 — the draft-then-form review screen. "Assess" runs the one AI call
 // (getStage2Draft, ~10s, the tutor waits), then the tutor edits the proposed
 // pair + description (§6's editable set; log/dates/reasoning/flags are AI-
@@ -1175,8 +1263,9 @@ function Stage2Panel({
 }) {
   const [phase, setPhase] = useState<"idle" | "drafting" | "review" | "saving" | "done">("idle");
   const [result, setResult] = useState<Stage2DraftResult | null>(null);
-  const [conceptual, setConceptual] = useState(3);
-  const [procedural, setProcedural] = useState(3);
+  // null = "not yet observed" — a real, selectable value, not a missing one.
+  const [conceptual, setConceptual] = useState<number | null>(null);
+  const [procedural, setProcedural] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -1252,40 +1341,18 @@ function Stage2Panel({
         <label className="tut-s2-field">
           <span className="tut-s2-label">
             Conceptual
-            {cur && <span className="tut-s2-was"> was {cur.conceptualLevel}</span>}
-            <span className="tut-s2-proposed"> · AI proposes {d.conceptualLevel}</span>
+            {cur && <span className="tut-s2-was"> was {levelText(cur.conceptualLevel)}</span>}
+            <span className="tut-s2-proposed"> · AI proposes {levelText(d.conceptualLevel)}</span>
           </span>
-          <select
-            className="tut-s2-select"
-            value={conceptual}
-            disabled={saving}
-            onChange={(e) => setConceptual(Number(e.target.value))}
-          >
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                Level {n}
-              </option>
-            ))}
-          </select>
+          <LevelSelect value={conceptual} onChange={setConceptual} disabled={saving} />
         </label>
         <label className="tut-s2-field">
           <span className="tut-s2-label">
             Procedural
-            {cur && <span className="tut-s2-was"> was {cur.proceduralLevel}</span>}
-            <span className="tut-s2-proposed"> · AI proposes {d.proceduralLevel}</span>
+            {cur && <span className="tut-s2-was"> was {levelText(cur.proceduralLevel)}</span>}
+            <span className="tut-s2-proposed"> · AI proposes {levelText(d.proceduralLevel)}</span>
           </span>
-          <select
-            className="tut-s2-select"
-            value={procedural}
-            disabled={saving}
-            onChange={(e) => setProcedural(Number(e.target.value))}
-          >
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                Level {n}
-              </option>
-            ))}
-          </select>
+          <LevelSelect value={procedural} onChange={setProcedural} disabled={saving} />
         </label>
       </div>
 
@@ -1318,9 +1385,14 @@ function Stage2Panel({
           </div>
         )}
         <div className="tut-s2-ro-row">
-          <span className="tut-s2-ro-key">Re-check due</span>
+          <span className="tut-s2-ro-key">Climb re-check</span>
           <span className="tut-s2-ro-val">
-            climb: {d.climbNextDue ?? "—"} · retention: {d.retentionNextDue ?? "—"}
+            {d.climbNextDue ?? "— (nothing to climb)"}
+            <span className="tut-s2-ro-note">
+              {" "}
+              · the anti-fade retention check is derived from the procedural level and
+              shown in the due queue
+            </span>
           </span>
         </div>
         <details className="tut-s2-log">
@@ -1365,20 +1437,149 @@ function Observations({
   return (
     <div className="tut-obs-list">
       {obs.map((o) => (
-        <div key={o.id} className="tut-obs">
-          <div className="tut-obs-top">
-            <span className={`tut-axis tut-axis--${o.axis}`}>{o.axis}</span>
-            <span className="tut-level">L{o.observationLevel}</span>
-            {o.calibrationFlag && (
-              <span className="tut-calib">calibration: {o.calibrationFlag}</span>
-            )}
-            <span className="tut-obs-date">
-              {new Date(o.createdAt).toLocaleDateString()}
-            </span>
-          </div>
-          <p className="tut-obs-reasoning">{o.reasoning}</p>
-        </div>
+        <ObservationRow
+          key={o.id}
+          o={o}
+          onChanged={(next) =>
+            setObs((prev) => prev?.map((x) => (x.id === next.id ? next : x)) ?? null)
+          }
+        />
       ))}
+    </div>
+  );
+}
+
+// ASSESS-FIX-2 — one Stage-1 read, correctable. The machine's level and the
+// tutor's correction are shown SIDE BY SIDE (never silently replaced): the pair
+// is the labeled judgment, and the tutor should always see what they overruled.
+function ObservationRow({
+  o,
+  onChanged,
+}: {
+  o: ObservationView;
+  onChanged: (next: ObservationView) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [level, setLevel] = useState<number>(o.effectiveLevel);
+  const [reason, setReason] = useState(o.overrideReason ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const corrected = o.tutorLevel !== null;
+
+  function save(nextLevel: number | null) {
+    setSaving(true);
+    setError(null);
+    trpc.tutor.overrideObservation
+      .mutate({
+        observationId: o.id,
+        level: nextLevel,
+        reason: nextLevel === null ? null : reason.trim() || null,
+      })
+      .then((next) => {
+        onChanged(next);
+        setEditing(false);
+      })
+      .catch((e) => setError(String(e?.message ?? e)))
+      .finally(() => setSaving(false));
+  }
+
+  return (
+    <div className={`tut-obs${corrected ? " tut-obs--corrected" : ""}`}>
+      <div className="tut-obs-top">
+        <span className={`tut-axis tut-axis--${o.axis}`}>{o.axis}</span>
+        {corrected ? (
+          <>
+            <span className="tut-level tut-level--machine" title="the Stage-1 scorer's read">
+              AI L{o.observationLevel}
+            </span>
+            <span className="tut-level tut-level--tutor" title="your correction — this is what counts">
+              you L{o.tutorLevel}
+            </span>
+          </>
+        ) : (
+          <span className="tut-level">L{o.observationLevel}</span>
+        )}
+        {o.calibrationFlag && (
+          <span className="tut-calib">calibration: {o.calibrationFlag}</span>
+        )}
+        <span className="tut-obs-date">
+          {new Date(o.createdAt).toLocaleDateString()}
+        </span>
+        {!editing && (
+          <button
+            type="button"
+            className="tut-obs-editbtn"
+            onClick={() => {
+              setLevel(o.effectiveLevel);
+              setReason(o.overrideReason ?? "");
+              setEditing(true);
+            }}
+          >
+            {corrected ? "Re-correct" : "Correct this read"}
+          </button>
+        )}
+      </div>
+
+      <p className="tut-obs-reasoning">{o.reasoning}</p>
+
+      {corrected && !editing && o.overrideReason && (
+        <p className="tut-obs-overridereason">Your reason: {o.overrideReason}</p>
+      )}
+
+      {editing && (
+        <div className="tut-obs-edit">
+          {error && <p className="tut-error">{error}</p>}
+          <label className="tut-obs-editrow">
+            <span className="tut-s2-label">Level this answer actually shows</span>
+            <select
+              className="tut-s2-select"
+              value={level}
+              disabled={saving}
+              onChange={(e) => setLevel(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  Level {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="tut-obs-editrow">
+            <span className="tut-s2-label">Why the AI's read was wrong</span>
+            <textarea
+              className="tut-s2-textarea"
+              rows={2}
+              value={reason}
+              disabled={saving}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. they did connect the two ideas — the scorer missed the 'so' in line 3."
+            />
+          </label>
+          <div className="tut-obs-editactions">
+            <button type="button" className="tut-btn" disabled={saving} onClick={() => save(level)}>
+              {saving ? "Saving…" : "Save correction"}
+            </button>
+            {corrected && (
+              <button
+                type="button"
+                className="tut-btn tut-btn--ghost"
+                disabled={saving}
+                onClick={() => save(null)}
+              >
+                Revert to AI read
+              </button>
+            )}
+            <button
+              type="button"
+              className="tut-btn tut-btn--ghost"
+              disabled={saving}
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1681,11 +1882,11 @@ function ReportPanel({
                 <div className="tut-levels">
                   <span className="tut-axislevel">
                     <span className="tut-axislabel">Conceptual</span>
-                    <span className="tut-axisnum">{m.conceptualLevel}</span>
+                    <span className="tut-axisnum">{m.conceptualLevel ?? "–"}</span>
                   </span>
                   <span className="tut-axislevel">
                     <span className="tut-axislabel">Procedural</span>
-                    <span className="tut-axisnum">{m.proceduralLevel}</span>
+                    <span className="tut-axisnum">{m.proceduralLevel ?? "–"}</span>
                   </span>
                 </div>
                 <p className="tut-desc">{m.description}</p>
