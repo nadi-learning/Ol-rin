@@ -21,9 +21,10 @@ type Assignment = Awaited<
 type AnswerFeedback = Awaited<
   ReturnType<typeof trpc.practice.getAnswerFeedback.mutate>
 >;
+type Review = Awaited<ReturnType<typeof trpc.practice.reviewSession.query>>;
 
 type Picker = { id: string; name: string; topicName: string };
-type Phase = "picking" | "answering" | "revealed" | "completed";
+type Phase = "picking" | "answering" | "revealed" | "completed" | "reviewing";
 
 const VERDICT_LABEL: Record<AnswerFeedback["verdict"], string> = {
   strong: "Strong answer",
@@ -55,6 +56,9 @@ export function PracticePage() {
   // Guards the auto-submit so a photo can only be consumed once (StrictMode
   // double-mount / a racing poll can't double-submit).
   const photoSubmittingRef = useRef(false);
+
+  // read-only review of a completed sub_topic (the "✓ done" tile)
+  const [review, setReview] = useState<Review | null>(null);
 
   // reveal state (post-submit)
   const [reveal, setReveal] = useState<AttemptResult["reveal"] | null>(null);
@@ -124,6 +128,25 @@ export function PracticePage() {
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       setError(msg.includes("NO_QUESTIONS") ? "NO_QUESTIONS" : msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Open a completed sub_topic read-only (no new session spawned). Distinct from
+  // pick(), which resumes/starts an ACTIVE session.
+  const openReview = async (subTopicId: string, assignmentId: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const r = await trpc.practice.reviewSession.query({
+        subTopicId,
+        assignmentId,
+      });
+      setReview(r);
+      setPhase("reviewing");
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
     } finally {
       setBusy(false);
     }
@@ -217,6 +240,7 @@ export function PracticePage() {
     setSessionId(null);
     setQuestion(null);
     setReveal(null);
+    setReview(null);
     setError(null);
     loadAssignments(); // refresh progress after working through a session
   };
@@ -228,14 +252,19 @@ export function PracticePage() {
         <p className="prac-eyebrow">Practice</p>
         <h1 className="prac-title">Subjective practice</h1>
         <p className="prac-sub">
-          Answer in your own words. There’s no grade — you’ll see a model answer
+          Answer in your own words. There’s no grade - you’ll see a model answer
           after each one to check yourself against.
         </p>
       </header>
 
       {phase === "picking" && (
         <>
-          <AssignedList assignments={assignments} busy={busy} onPick={pick} />
+          <AssignedList
+            assignments={assignments}
+            busy={busy}
+            onPick={pick}
+            onReview={openReview}
+          />
           <PickList
             subTopics={subTopics}
             loading={!nav && !error}
@@ -247,7 +276,11 @@ export function PracticePage() {
         </>
       )}
 
-      {phase !== "picking" && (
+      {phase === "reviewing" && review && (
+        <ReviewView review={review} onBack={backToTopics} />
+      )}
+
+      {phase !== "picking" && phase !== "reviewing" && (
         <section className="prac-stage">
           <div className="prac-progress">
             <button className="prac-link" onClick={backToTopics}>
@@ -336,7 +369,7 @@ export function PracticePage() {
                     {inputMode === "photo" &&
                       (confidence == null ? (
                         <p className="prac-note">
-                          Answer on paper, then set how sure you are — a QR code
+                          Answer on paper, then set how sure you are - a QR code
                           will appear to upload a photo from your phone.
                         </p>
                       ) : (
@@ -415,6 +448,75 @@ export function PracticePage() {
   );
 }
 
+// Read-only review of a completed sub_topic — the student's own answers set
+// against the model answers, no input box, no new session. Reuses the practice
+// card styles so it reads like a stack of finished reveals.
+function ReviewView({
+  review,
+  onBack,
+}: {
+  review: Review;
+  onBack: () => void;
+}) {
+  return (
+    <section className="prac-stage">
+      <div className="prac-progress">
+        <button className="prac-link" onClick={onBack}>
+          ← Topics
+        </button>
+        <span className="prac-count">
+          Review · {review.total} question{review.total === 1 ? "" : "s"}
+        </span>
+      </div>
+      {review.items.map((it, i) => (
+        <div className="prac-card" key={it.question.id}>
+          <div className="prac-qhead">
+            <span className={`prac-axis prac-axis--${it.question.axis}`}>
+              {it.question.axis}
+            </span>
+            <span className="prac-count">
+              {i + 1} / {review.total}
+            </span>
+          </div>
+          <p className="prac-stem">{it.question.stem}</p>
+          {it.question.imageId && (
+            <img
+              className="prac-figure"
+              src={`/content/image/${it.question.imageId}?board=${BOARD}`}
+              alt="Question figure"
+              loading="lazy"
+            />
+          )}
+          <div className="prac-reveal">
+            <div className="prac-yours">
+              <p className="prac-reveal-label">Your answer</p>
+              <p className="prac-yours-text">
+                {it.skipped
+                  ? "- Skipped -"
+                  : it.wasPhoto
+                    ? "📷 You uploaded a photo of your answer."
+                    : it.answerText || "-"}
+              </p>
+            </div>
+            <div className="prac-model">
+              <p className="prac-reveal-label">Model answer</p>
+              <p className="prac-model-text">{it.reveal.referenceAnswer}</p>
+              {it.reveal.explanation && (
+                <p className="prac-explain">{it.reveal.explanation}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+      <div className="prac-actions">
+        <button className="prac-btn prac-btn-primary" onClick={onBack}>
+          Back to topics
+        </button>
+      </div>
+    </section>
+  );
+}
+
 // Slice ASG — the student's tutor-assigned work, shown above self-serve. Each
 // assignment lists its sub_topics with start/complete status; clicking one opens
 // the same stepper but stamped with the assignment (origin='tutor_assigned').
@@ -422,10 +524,12 @@ function AssignedList({
   assignments,
   busy,
   onPick,
+  onReview,
 }: {
   assignments: Assignment[] | null;
   busy: boolean;
   onPick: (subTopicId: string, assignmentId: string) => void;
+  onReview: (subTopicId: string, assignmentId: string) => void;
 }) {
   if (!assignments || assignments.length === 0) return null;
   const open = assignments.filter((a) => !a.completed);
@@ -454,11 +558,20 @@ function AssignedList({
             <ul className="prac-assigned-sts">
               {a.subTopics.map((st) => {
                 const done = st.sessionStatus === "completed";
+                // 'continue' ONLY for an active session with real progress
+                // (idx>0). An active-but-untouched session (opened then left,
+                // idx=0) reads 'start →' — it has nothing to continue.
+                const inProgress =
+                  st.sessionStatus === "active" && st.currentIndex > 0;
                 return (
                   <li key={st.subTopicId}>
                     <button
                       className={`prac-assigned-st${done ? " is-done" : ""}`}
-                      onClick={() => onPick(st.subTopicId, a.id)}
+                      onClick={() =>
+                        done
+                          ? onReview(st.subTopicId, a.id)
+                          : onPick(st.subTopicId, a.id)
+                      }
                       disabled={busy}
                     >
                       <span className="prac-assigned-st-name">
@@ -466,11 +579,7 @@ function AssignedList({
                         <span className="prac-assigned-st-crumb">{st.chapterName}</span>
                       </span>
                       <span className="prac-assigned-st-status">
-                        {done
-                          ? "✓ done"
-                          : st.sessionStatus === "active"
-                            ? "continue →"
-                            : "start →"}
+                        {done ? "✓ done" : inProgress ? "continue →" : "start →"}
                       </span>
                     </button>
                   </li>
@@ -567,7 +676,7 @@ function PickList({
       </h2>
       {error === "NO_QUESTIONS" && (
         <p className="prac-note">
-          No practice questions for that topic yet — try another.
+          No practice questions for that topic yet - try another.
         </p>
       )}
       {error && error !== "NO_QUESTIONS" && <p className="prac-error">{error}</p>}
@@ -671,7 +780,7 @@ function UploadPanel({
           answer. It’ll submit here automatically.
         </p>
         <p className={`prac-qr-status${received ? " is-live" : ""}`}>
-          {received ? "✓ Photo received — submitting…" : "Waiting for your photo…"}
+          {received ? "✓ Photo received - submitting…" : "Waiting for your photo…"}
         </p>
       </div>
     </div>

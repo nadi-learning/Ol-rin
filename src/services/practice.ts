@@ -22,7 +22,7 @@
  * post-submit reveal · D-L-4 table named practice_session (Better Auth owns
  * `sessions`).
  */
-import { and, asc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { attempt, attemptImage, practiceSession, question } from "@b2c/kernel/schema";
@@ -271,6 +271,102 @@ export async function getSession(
       ? null
       : await loadPublicQuestion(tx, s.questionIds[s.currentIndex]!);
   return viewOf(s, q);
+}
+
+/** One question in a read-only review of a completed session: the projected
+ *  question, the student's own answer (text / photo / skip), and the reveal. */
+export type ReviewItem = {
+  question: PublicQuestion;
+  answerText: string | null;
+  confidence: number | null;
+  skipped: boolean;
+  wasPhoto: boolean;
+  reveal: Reveal;
+};
+
+export type ReviewView = {
+  sessionId: string;
+  subTopicId: string;
+  total: number;
+  items: ReviewItem[]; // in the frozen question_ids order
+};
+
+export class NoCompletedSessionError extends Error {
+  readonly code = "NO_COMPLETED_SESSION";
+  constructor(subTopicId: string) {
+    super(`no completed practice session for sub_topic ${subTopicId}`);
+    this.name = "NoCompletedSessionError";
+  }
+}
+
+/**
+ * Read-only review of a COMPLETED session (the "✓ done" tile). Returns every
+ * question in composition order with the student's own answer + the reveal —
+ * NO writes, and crucially NEVER creates a fresh session (unlike startSession,
+ * whose resume branch only matches `active`, so a click on a done sub_topic
+ * would otherwise spawn a new attempt at index 0). Ownership is enforced by the
+ * appUserId filter on top of RLS; a self-serve vs assigned copy stays distinct
+ * (assignmentId match), same as startSession's resume.
+ */
+export async function reviewSession(
+  tx: Tx,
+  args: { appUserId: string; subTopicId: string; assignmentId?: string | null },
+): Promise<ReviewView> {
+  const assignmentId = args.assignmentId ?? null;
+  const [s] = await tx
+    .select()
+    .from(practiceSession)
+    .where(
+      and(
+        eq(practiceSession.appUserId, args.appUserId),
+        eq(practiceSession.subTopicId, args.subTopicId),
+        eq(practiceSession.status, "completed"),
+        assignmentId
+          ? eq(practiceSession.assignmentId, assignmentId)
+          : isNull(practiceSession.assignmentId),
+      ),
+    )
+    .orderBy(desc(practiceSession.createdAt))
+    .limit(1);
+  if (!s) throw new NoCompletedSessionError(args.subTopicId);
+
+  // One attempt per question per session; if a question somehow has more than
+  // one, the latest submit wins (asc order → last overwrite).
+  const rows = await tx
+    .select({
+      questionId: attempt.questionId,
+      answerText: attempt.answerText,
+      confidence: attempt.confidence,
+      skipReason: attempt.skipReason,
+    })
+    .from(attempt)
+    .where(eq(attempt.practiceSessionId, s.id))
+    .orderBy(asc(attempt.submittedAt));
+  const byQ = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) byQ.set(r.questionId, r);
+
+  const items: ReviewItem[] = [];
+  for (const qid of s.questionIds) {
+    const q = await loadPublicQuestion(tx, qid);
+    if (!q) continue; // a deleted question drops out of the review, not crashes it
+    const reveal = await loadReveal(tx, qid);
+    const a = byQ.get(qid);
+    items.push({
+      question: q,
+      answerText: a?.answerText ?? null,
+      confidence: a?.confidence ?? null,
+      skipped: !!a?.skipReason,
+      // photo answer (Q3): answer_text null AND not a skip → the answer was photos.
+      wasPhoto: !!a && a.answerText == null && a.skipReason == null,
+      reveal,
+    });
+  }
+  return {
+    sessionId: s.id,
+    subTopicId: s.subTopicId,
+    total: s.questionIds.length,
+    items,
+  };
 }
 
 /** Shared advance: persist the attempt row (+ any answer photos), bump index,

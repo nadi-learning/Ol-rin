@@ -217,7 +217,7 @@ export function RevisionPage({
               <Chevron dir="left" /> Previous
             </button>
             <span className="rev-topbar-count">
-              {total > 0 ? `${currentIdx + 1} / ${total}` : "—"}
+              {total > 0 ? `${currentIdx + 1} / ${total}` : "-"}
             </span>
             <button className="rev-nav-btn" onClick={goNext} disabled={atEnd}>
               Next <Chevron dir="right" />

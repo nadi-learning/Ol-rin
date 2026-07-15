@@ -45,9 +45,9 @@ export function InsightsPage({
 
       {/* Effort metrics — always present, even before any certification. */}
       <section className="ins-metrics" aria-label="Practice effort">
-        <Metric value={data ? String(data.metrics.questionsAnswered) : "—"} label="Questions answered" />
-        <Metric value={data ? t.value : "—"} label={data ? `${t.unit} practised` : "Time practised"} />
-        <Metric value={data ? String(data.metrics.questionsSkipped) : "—"} label="Skipped" />
+        <Metric value={data ? String(data.metrics.questionsAnswered) : "-"} label="Questions answered" />
+        <Metric value={data ? t.value : "-"} label={data ? `${t.unit} practised` : "Time practised"} />
+        <Metric value={data ? String(data.metrics.questionsSkipped) : "-"} label="Skipped" />
       </section>
 
       <section className="ins-list" aria-label="Topic progress">
@@ -60,7 +60,7 @@ export function InsightsPage({
             <p className="ins-empty-title">No topics certified yet</p>
             <p className="ins-muted">
               As you practise, your tutor reviews your work and certifies how
-              you’re doing on each topic. Keep practising — your progress will
+              you’re doing on each topic. Keep practising - your progress will
               show up here.
             </p>
           </div>

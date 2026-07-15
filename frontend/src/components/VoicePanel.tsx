@@ -257,13 +257,13 @@ export function VoicePanel({
 
   const statusLine =
     phase === "idle"
-      ? "Ask me about this slide — out loud."
+      ? "Ask me about this slide - out loud."
       : phase === "connecting"
         ? "Connecting…"
         : phase === "live"
           ? speaking
             ? "Speaking…"
-            : "Listening — go ahead."
+            : "Listening - go ahead."
           : phase === "ending"
             ? "Wrapping up…"
             : phase === "ended"

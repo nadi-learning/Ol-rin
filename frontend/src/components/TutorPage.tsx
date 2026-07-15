@@ -384,7 +384,7 @@ function TutorPaceTimeline({
       )}
       {summary.budgetStatus === "under" && (
         <p className="tut-pace-banner tut-pace-banner--under">
-          ~{paceWeeks(-over)} weeks of buffer — the plan fits inside the deadline.
+          ~{paceWeeks(-over)} weeks of buffer - the plan fits inside the deadline.
         </p>
       )}
 
@@ -819,7 +819,7 @@ function DueQueue({
 }) {
   if (due === null) return <p className="tut-muted">Loading…</p>;
   if (due.length === 0)
-    return <p className="tut-muted">Nothing due — the spiral is clear.</p>;
+    return <p className="tut-muted">Nothing due - the spiral is clear.</p>;
   return (
     <div className="tut-sch-groups">
       {due.map((g) => {
@@ -1125,7 +1125,7 @@ function CrossConceptFlags({ studentId }: { studentId: string }) {
       <div className="tut-ccf-head">
         Other skills that tripped them up
         <span className="tut-ccf-sub">
-          spotted while working on something else — these don't affect any mastery level
+          spotted while working on something else - these don't affect any mastery level
         </span>
       </div>
       {flags.map((f) => (
@@ -1168,7 +1168,7 @@ function PendingList({
       <>
         <CrossConceptFlags studentId={student.studentId} />
         <p className="tut-muted">
-          Nothing waiting — no new practice evidence since the last assessment.
+          Nothing waiting - no new practice evidence since the last assessment.
         </p>
       </>
     );
@@ -1311,7 +1311,7 @@ function Stage2Panel({
   if (phase === "done")
     return (
       <p className="tut-s2-done">
-        ✓ Certified {subTopicName} — conceptual {conceptual}, procedural {procedural}.
+        ✓ Certified {subTopicName} - conceptual {conceptual}, procedural {procedural}.
       </p>
     );
 
@@ -1387,7 +1387,7 @@ function Stage2Panel({
         <div className="tut-s2-ro-row">
           <span className="tut-s2-ro-key">Climb re-check</span>
           <span className="tut-s2-ro-val">
-            {d.climbNextDue ?? "— (nothing to climb)"}
+            {d.climbNextDue ?? "- (nothing to climb)"}
             <span className="tut-s2-ro-note">
               {" "}
               · the anti-fade retention check is derived from the procedural level and
@@ -1403,7 +1403,7 @@ function Stage2Panel({
 
       <div className="tut-s2-actions">
         <button className="tut-assess-btn" onClick={finalize} disabled={saving}>
-          {saving ? "Saving…" : "Finalize — commit mastery"}
+          {saving ? "Saving…" : "Finalize - commit mastery"}
         </button>
         <button
           className="tut-s2-cancel"
@@ -1492,7 +1492,7 @@ function ObservationRow({
             <span className="tut-level tut-level--machine" title="the Stage-1 scorer's read">
               AI L{o.observationLevel}
             </span>
-            <span className="tut-level tut-level--tutor" title="your correction — this is what counts">
+            <span className="tut-level tut-level--tutor" title="your correction - this is what counts">
               you L{o.tutorLevel}
             </span>
           </>
@@ -1552,7 +1552,7 @@ function ObservationRow({
               value={reason}
               disabled={saving}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. they did connect the two ideas — the scorer missed the 'so' in line 3."
+              placeholder="e.g. they did connect the two ideas - the scorer missed the 'so' in line 3."
             />
           </label>
           <div className="tut-obs-editactions">
@@ -1673,7 +1673,7 @@ function ChapterDetail({
         <div>
           <h3 className="tut-section-title">{chapter.name}</h3>
           <p className="tut-muted">
-            {studentName}&rsquo;s topic breakdown — pick the weak spots, then author.
+            {studentName}&rsquo;s topic breakdown - pick the weak spots, then author.
           </p>
           <div className="tut-pt-detailrollup">
             <AxisPair conceptual={chapter.conceptual} procedural={chapter.procedural} />
@@ -1856,7 +1856,7 @@ function ReportPanel({
             {draft.status}
           </span>
           <span className="tut-rpt-frozen">
-            Snapshot frozen at assembly — the parent sees exactly this.
+            Snapshot frozen at assembly - the parent sees exactly this.
           </span>
         </div>
 
@@ -2563,7 +2563,7 @@ function AuthorChat({
       await trpc.tutor.approveDrafts.mutate({ questionIds: ids });
       setSaved(
         `Approved ${n} question${n === 1 ? "" : "s"} for ${student.name ?? student.email}` +
-          " — now live to them. Keep chatting to author more.",
+          " - now live to them. Keep chatting to author more.",
       );
       setCards(null);
       setTarget(null);
@@ -2653,7 +2653,7 @@ function AuthorChat({
         </div>
         <p className="tut-muted">
           Start a chat about {student.name ?? student.email}. The AI arrives already
-          knowing their mastery and recent reads — talk through what to work on, and it
+          knowing their mastery and recent reads - talk through what to work on, and it
           will propose questions aimed at their weak spots (private to this student).
         </p>
         {error && <p className="tut-error">{error}</p>}
@@ -2771,13 +2771,13 @@ function AuthorChat({
                 {multi ? (
                   <>
                     Drafted {cards.length} question{cards.length === 1 ? "" : "s"} across{" "}
-                    {groups.length} sub-topics — review, edit, add figures, then approve
+                    {groups.length} sub-topics - review, edit, add figures, then approve
                     (private to {student.name ?? student.email}).
                   </>
                 ) : (
                   <>
                     Drafted {cards.length} question{cards.length === 1 ? "" : "s"} for{" "}
-                    {target.subTopicName} — review, edit, add a figure, then approve
+                    {target.subTopicName} - review, edit, add a figure, then approve
                     (private to {student.name ?? student.email}; slotting at #
                     {target.nextOrdinal + 1}).
                   </>
@@ -2786,7 +2786,7 @@ function AuthorChat({
               <button
                 className="tut-chat-preview-min"
                 onClick={() => setPreviewMinimized(true)}
-                title="Minimize — keeps the drafts, back to full-width chat"
+                title="Minimize - keeps the drafts, back to full-width chat"
               >
                 Minimize ⟨
               </button>
@@ -2794,7 +2794,7 @@ function AuthorChat({
             {setFailures && setFailures.length > 0 && (
               <p className="tut-chat-set-failures">
                 ⚠ Couldn't author {setFailures.map((f) => f.subTopicName).join(", ")}
-                {" "}— the drafts above are for the sub-topics that succeeded. Retry the set to try again.
+                {" "}- the drafts above are for the sub-topics that succeeded. Retry the set to try again.
               </p>
             )}
             <div className="tut-auth-cards">
@@ -2971,7 +2971,7 @@ function AuthorChat({
         )}
         {authoringSet && !proposalSet && (
           <p className="tut-muted tut-chat-authmeta">
-            Authoring the set in parallel — one worker per sub-topic… (~20–40s)
+            Authoring the set in parallel - one worker per sub-topic… (~20–40s)
           </p>
         )}
       </div>
@@ -3156,7 +3156,7 @@ function AuthoredQuestionsList({
     return (
       <p className="tut-muted tut-saved-empty">
         No questions authored for {studentLabel} yet. Head to the Chat tab and author
-        some — they'll show up here.
+        some - they'll show up here.
       </p>
     );
 
@@ -3494,7 +3494,7 @@ function DraftFigureSection({
   // Every tutor-facing message here is plain English — no server/exception text
   // reaches the UI. The worker's technical detail stays in the logs.
   const GEN_FAILED_MSG =
-    "We couldn't create this diagram. Please try again — if it keeps failing, simplify the description.";
+    "We couldn't create this diagram. Please try again - if it keeps failing, simplify the description.";
   const GEN_SLOW_MSG =
     "The diagram is taking longer than usual. Leave this open, or try Generate again in a moment.";
 
@@ -3694,7 +3694,7 @@ function DraftFigureSection({
             className="tut-auth-ta"
             rows={2}
             value={refine}
-            placeholder="Optional — what to change (e.g. 'thicker lines', 'label the right angle')"
+            placeholder="Optional - what to change (e.g. 'thicker lines', 'label the right angle')"
             onChange={(e) => setRefine(e.target.value)}
             disabled={generating}
           />

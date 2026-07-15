@@ -223,7 +223,7 @@ function SignedReports({ child }: { child: Child }) {
       <section className="par-section">
         <h3 className="par-section-title">Reports from the tutor</h3>
         <p className="par-muted">
-          No progress reports yet — your child's tutor will sign one off here
+          No progress reports yet - your child's tutor will sign one off here
           when ready.
         </p>
       </section>
@@ -243,7 +243,7 @@ function SignedReports({ child }: { child: Child }) {
             : ""}
         </h3>
         {open.tutorNote && (
-          <p className="par-rpt-note">“{open.tutorNote}”<span className="par-rpt-by"> — your child's tutor</span></p>
+          <p className="par-rpt-note">“{open.tutorNote}”<span className="par-rpt-by"> - your child's tutor</span></p>
         )}
         <Metrics metrics={open.snapshot.metrics} />
         <MasteryList mastery={open.snapshot.mastery} />
@@ -307,7 +307,7 @@ function MasteryList({ mastery }: { mastery: MasteryCard[] }) {
   if (mastery.length === 0)
     return (
       <p className="par-muted">
-        No mastery recorded yet — once your child practises and a tutor reviews
+        No mastery recorded yet - once your child practises and a tutor reviews
         their work, their progress shows here.
       </p>
     );
@@ -359,7 +359,7 @@ function Axis({
     return (
       <span className="par-axislevel par-axislevel--unassessed">
         <span className="par-axislabel">{label}</span>
-        <span className="par-axisnum par-axisnum--none">—</span>
+        <span className="par-axisnum par-axisnum--none">-</span>
         <span className="par-axisscale">not yet assessed</span>
       </span>
     );

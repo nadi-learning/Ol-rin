@@ -87,7 +87,7 @@ export function AdminPage({
         rawMd,
         extracted: extraction.extracted,
       });
-      setCommitted(`Committed — ${r.topics} topics · ${r.subTopics} sub-topics · ${r.los} LOs`);
+      setCommitted(`Committed - ${r.topics} topics · ${r.subTopics} sub-topics · ${r.los} LOs`);
       setExtraction(null);
       loadChapters();
     } catch (e: any) {
@@ -123,7 +123,7 @@ export function AdminPage({
             value={chapterId}
             onChange={(e) => setChapterId(e.target.value)}
           >
-            <option value="">— pick a chapter —</option>
+            <option value="">- pick a chapter -</option>
             {(chapters ?? []).map((c) => (
               <option key={c.chapterId} value={c.chapterId}>
                 {c.subjectName} {c.grade} · {c.name}
@@ -164,7 +164,7 @@ export function AdminPage({
                 <div className="adm-progress-bar" />
               </div>
               <p className="adm-progress-hint">
-                Reading the topics.md with AI — this can take a few minutes for a
+                Reading the topics.md with AI - this can take a few minutes for a
                 large file. Elapsed {elapsed}s
               </p>
             </div>
@@ -179,7 +179,7 @@ export function AdminPage({
             <>
               {!extraction.validation.ok && (
                 <div className="adm-invalid">
-                  <b>Cannot commit — fix these:</b>
+                  <b>Cannot commit - fix these:</b>
                   <ul>
                     {extraction.validation.errors.map((er, i) => (
                       <li key={i}>{er}</li>

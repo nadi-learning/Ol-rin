@@ -17,7 +17,7 @@
  * authorizes still runs under withBoard(token.board_id) (M24/M29).
  */
 import { randomBytes } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { practiceSession, question, uploadToken } from "@b2c/kernel/schema";
 import { db } from "../db/client";
@@ -69,8 +69,13 @@ export interface MintedToken {
 
 /**
  * Mint (or reuse) an upload token for a (session, question) slot the caller
- * owns. Idempotent: an existing unexpired pending/uploaded token for the same
- * slot is returned rather than spawning a parallel one (prod behaviour). Runs
+ * owns. Idempotent for the SAME live attempt: an existing unexpired *pending*
+ * token is returned rather than spawning a parallel one (so a mode-toggle /
+ * remount re-shows the same QR). A token that has already been UPLOADED but not
+ * yet consumed is deliberately NOT reused — reusing it would strand a retry (the
+ * phone can't upload to an already-'uploaded' token, so the page would greet the
+ * student with "already uploaded" before they upload anything). Instead we mint
+ * a fresh pending token; the stale uploaded one is abandoned and expires. Runs
  * inside the authed board tx; upload_token is global so no RLS applies, but the
  * FKs validate under the claim.
  */
@@ -107,7 +112,9 @@ export async function mintUploadToken(
         eq(uploadToken.appUserId, args.appUserId),
         eq(uploadToken.practiceSessionId, args.sessionId),
         eq(uploadToken.questionId, args.questionId),
-        inArray(uploadToken.status, ["pending", "uploaded"]),
+        // ONLY a still-pending token is reused. An 'uploaded' (unconsumed) token
+        // is left behind so a fresh, uploadable token is minted for the retry.
+        eq(uploadToken.status, "pending"),
       ),
     )
     .limit(1);

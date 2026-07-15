@@ -33,9 +33,9 @@ const COPY: Record<string, string> = {
   TOKEN_EXPIRED: "This link has expired. Generate a fresh QR on your computer.",
   ALREADY_UPLOADED: "A photo was already uploaded for this question.",
   NO_FILES: "Pick at least one photo first.",
-  TOO_MANY_FILES: "Too many photos — 10 max.",
+  TOO_MANY_FILES: "Too many photos - 10 max.",
   NOT_AN_IMAGE: "One of those files isn’t an image.",
-  NETWORK: "Network error — check your connection and try again.",
+  NETWORK: "Network error - check your connection and try again.",
 };
 const copy = (code: string | null): string =>
   (code ? COPY[code] : undefined) ?? FALLBACK;
@@ -61,12 +61,18 @@ export function MobileUploadPage({ token }: { token: string }) {
           return;
         }
         setView(body);
-        if (body.status !== "pending") {
+        if (body.status === "pending") {
+          setPhase("ready");
+        } else if (body.status === "uploaded" || body.status === "consumed") {
+          // genuinely already used (a photo landed for this slot)
           setErrCode("ALREADY_UPLOADED");
           setPhase("error");
-          return;
+        } else {
+          // missing/unknown status (e.g. a non-JSON body from a mis-proxied
+          // request) — surface a real error, NOT a misleading "already uploaded".
+          setErrCode("ERROR");
+          setPhase("error");
         }
-        setPhase("ready");
       })
       .catch(() => {
         if (!alive) return;
@@ -157,7 +163,7 @@ export function MobileUploadPage({ token }: { token: string }) {
           <div className="up-state">
             <div className="up-emoji up-ok">✓</div>
             <p className="up-state-msg">Photo uploaded.</p>
-            <p className="up-muted">Return to your computer — it’ll pick this up automatically.</p>
+            <p className="up-muted">Return to your computer - it’ll pick this up automatically.</p>
           </div>
         )}
 

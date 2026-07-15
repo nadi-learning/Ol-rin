@@ -149,7 +149,7 @@ function SetupFlow({
       <div className="pace-setup-intro">
         <h2 className="pace-setup-h">Set up your plan for {subjectName}</h2>
         <p className="pace-muted">
-          Your plan only means something when it’s measured against a real deadline —
+          Your plan only means something when it’s measured against a real deadline -
           pick the date you want to be exam-ready.
         </p>
       </div>
@@ -295,13 +295,13 @@ function Timeline({
           <b>~{weeks(summary.totalRecommendedDays - summary.availableDays)} weeks over your
           deadline.</b>{" "}
           Your plan needs about {weeks(summary.totalRecommendedDays)} weeks but you’ve allowed{" "}
-          {weeks(summary.availableDays)}. Adjust your estimates below or move your deadline —
+          {weeks(summary.availableDays)}. Adjust your estimates below or move your deadline -
           reordering won’t change the total.
         </p>
       )}
       {summary.budgetStatus === "under" && (
         <p className="pace-banner pace-banner--under">
-          ~{weeks(summary.availableDays - summary.totalRecommendedDays)} weeks of buffer — your
+          ~{weeks(summary.availableDays - summary.totalRecommendedDays)} weeks of buffer - your
           plan fits inside your deadline.
         </p>
       )}

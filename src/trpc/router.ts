@@ -30,9 +30,11 @@ import {
 } from "../services/revision";
 import {
   getSession,
+  NoCompletedSessionError,
   NoQuestionsError,
   PracticeSessionNotFoundError,
   QuestionMismatchError,
+  reviewSession,
   SessionCompletedError,
   skip,
   startSession,
@@ -315,6 +317,32 @@ export const appRouter = router({
           });
         } catch (e) {
           if (e instanceof PracticeSessionNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Read-only review of a COMPLETED sub_topic (the "✓ done" tile). Returns the
+    // student's answers + the model answers, no answer box, and never spawns a
+    // fresh session. self-serve (no assignmentId) and assigned copies stay
+    // distinct, matching startSession's resume semantics.
+    reviewSession: protectedProcedure
+      .input(
+        z.object({
+          subTopicId: z.string().uuid(),
+          assignmentId: z.string().uuid().optional(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        try {
+          return await reviewSession(ctx.tx, {
+            appUserId: ctx.membership.userId,
+            subTopicId: input.subTopicId,
+            assignmentId: input.assignmentId ?? null,
+          });
+        } catch (e) {
+          if (e instanceof NoCompletedSessionError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;

@@ -61,6 +61,10 @@ export type SubTopicProgress = {
   chapterName: string;
   /** 'not_started' until the student opens it; then the practice_session status. */
   sessionStatus: "not_started" | "active" | "completed";
+  /** How far into the frozen set the student has actually got (answered/skipped
+   *  count). 0 = opened but nothing done yet — the FE reads this to show 'start →'
+   *  instead of a misleading 'continue →' for an untouched active session. */
+  currentIndex: number;
 };
 
 export type AssignmentView = {
@@ -172,16 +176,19 @@ export async function createAssignment(
   return buildView(tx, created!, ids, byId);
 }
 
-/** Per-sub_topic session status for one assignment + one student. */
+type SessionProgress = { status: "active" | "completed"; currentIndex: number };
+
+/** Per-sub_topic session status + progress for one assignment + one student. */
 async function sessionStatusFor(
   tx: Tx,
   assignmentId: string,
   studentId: string,
-): Promise<Map<string, "active" | "completed">> {
+): Promise<Map<string, SessionProgress>> {
   const sessions = await tx
     .select({
       subTopicId: practiceSession.subTopicId,
       status: practiceSession.status,
+      currentIndex: practiceSession.currentIndex,
     })
     .from(practiceSession)
     .where(
@@ -190,12 +197,21 @@ async function sessionStatusFor(
         eq(practiceSession.appUserId, studentId),
       ),
     );
-  const m = new Map<string, "active" | "completed">();
+  const m = new Map<string, SessionProgress>();
   for (const s of sessions) {
     const st = s.status as "active" | "completed";
+    const prev = m.get(s.subTopicId);
     // a completed session wins over an active one for the same sub_topic.
-    if (m.get(s.subTopicId) === "completed") continue;
-    m.set(s.subTopicId, st);
+    if (prev?.status === "completed") continue;
+    if (st === "completed") {
+      m.set(s.subTopicId, { status: "completed", currentIndex: s.currentIndex });
+      continue;
+    }
+    // among active sessions, keep the one with the most progress (that's what
+    // 'continue' would resume) so the label reflects real work, not a stray idx=0.
+    if (!prev || s.currentIndex > prev.currentIndex) {
+      m.set(s.subTopicId, { status: "active", currentIndex: s.currentIndex });
+    }
   }
   return m;
 }
@@ -210,11 +226,13 @@ async function buildView(
   const sessions = await sessionStatusFor(tx, row.id, row.studentId);
   const subTopics: SubTopicProgress[] = ids.map((id) => {
     const r = byId.get(id)!;
+    const s = sessions.get(id);
     return {
       subTopicId: id,
       subTopicName: r.subTopicName,
       chapterName: r.chapterName,
-      sessionStatus: sessions.get(id) ?? "not_started",
+      sessionStatus: s?.status ?? "not_started",
+      currentIndex: s?.currentIndex ?? 0,
     };
   });
   const completedCount = subTopics.filter((s) => s.sessionStatus === "completed").length;

@@ -72,7 +72,7 @@ export function AppShell({
             onClick={() => onNavigate("pace")}
           />
           <RailItem label="Search" icon={<SearchIcon />} soon />
-          <button className="nav-avatar" aria-label={`${userName} — sign out`} onClick={onSignOut}>
+          <button className="nav-avatar" aria-label={`${userName} - sign out`} onClick={onSignOut}>
             {initials}
             <span className="nav-tip">Sign out</span>
           </button>

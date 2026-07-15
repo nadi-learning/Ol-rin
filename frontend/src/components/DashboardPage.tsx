@@ -70,19 +70,19 @@ export function DashboardPage({
         <StatCard
           tint="lilac"
           icon={<BookIcon />}
-          value={summary ? String(summary.completedSessions) : "—"}
+          value={summary ? String(summary.completedSessions) : "-"}
           label="Lessons completed"
         />
         <StatCard
           tint="yellow"
           icon={<ClockIcon />}
-          value={summary ? time.value : "—"}
+          value={summary ? time.value : "-"}
           label={summary ? `${time.unit} practised` : "Time practised"}
         />
         <StatCard
           tint="pink"
           icon={<SpinnerIcon />}
-          value={summary ? String(summary.activeSessions) : "—"}
+          value={summary ? String(summary.activeSessions) : "-"}
           label="In progress"
         />
       </section>

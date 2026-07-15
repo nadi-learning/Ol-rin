@@ -242,7 +242,7 @@ export function LandingPage() {
             <div className="or-phrase">
               <div className="or-belt-mini" aria-hidden="true"><i /><i /><i /></div>
               <p className="or-quote">{QUOTE[c.p]}</p>
-              <span className="or-sign">— Olórin</span>
+              <span className="or-sign">- Olórin</span>
             </div>
             <div className="or-textblock">
               <span className="or-eyebrow">{c.eyebrow}</span>
@@ -265,7 +265,7 @@ export function LandingPage() {
             <p className="or-sub">{SUB[chosen ?? "student"]}</p>
             <button className="or-gbtn" type="button" onClick={onGoogle}>Continue with Google</button>
             <div className="or-dev">
-              <span className="or-dev-label">dev login (bypass — local only)</span>
+              <span className="or-dev-label">dev login (bypass - local only)</span>
               <div className="or-dev-row">
                 <input
                   className="or-dev-input"
