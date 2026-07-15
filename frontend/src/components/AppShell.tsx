@@ -1,4 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { PikaSplash } from "./PikaSplash";
+
+// Idle screensaver: after this long with no keystroke / cursor movement / touch /
+// scroll anywhere on the platform, the full-page Pikachu appears on its own.
+const IDLE_MS = 4 * 60 * 1000;
 
 // The shared TAITOR app shell — a floating white left nav rail beside a
 // graph-paper canvas (the tutor-canvas layout from the reference). For the
@@ -27,12 +32,52 @@ export function AppShell({
   wide = false,
 }: Props) {
   const initials = userName.trim().slice(0, 1).toUpperCase() || "?";
+  const [pikaOpen, setPikaOpen] = useState(false);
+  const [logoPulse, setLogoPulse] = useState(false);
+  const logoRef = useRef<HTMLButtonElement>(null);
+  const lastActivityRef = useRef(Date.now());
+
+  // Idle watch — bump a timestamp on any activity; a light interval trips the
+  // screensaver once the user has been still past IDLE_MS. Cheap: event handlers
+  // only stamp a ref (no state churn on every mousemove); the interval polls.
+  useEffect(() => {
+    const bump = () => {
+      lastActivityRef.current = Date.now();
+    };
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "touchmove", "scroll", "wheel", "click"];
+    events.forEach((e) => window.addEventListener(e, bump, { passive: true }));
+    const id = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current >= IDLE_MS) setPikaOpen(true);
+    }, 5000);
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, bump));
+      window.clearInterval(id);
+    };
+  }, []);
+
+  // Called by PikaSplash AFTER its minimize-into-the-logo animation finishes:
+  // drop the overlay, reset the idle clock (so it doesn't instantly re-trip if
+  // the user is still idle), and pulse the logo so they see where it went.
+  const closePika = () => {
+    setPikaOpen(false);
+    lastActivityRef.current = Date.now();
+    setLogoPulse(true);
+    window.setTimeout(() => setLogoPulse(false), 900);
+  };
+
   return (
     <div className="app-shell">
+      {pikaOpen && <PikaSplash onClose={closePika} logoRef={logoRef} />}
       <nav className="nav-rail">
-        <div className="nav-logo" title="b2c">
+        <button
+          ref={logoRef}
+          className={`nav-logo${logoPulse ? " nav-logo--pulse" : ""}`}
+          title="b2c"
+          aria-label="Pikachu"
+          onClick={() => setPikaOpen(true)}
+        >
           <Logo />
-        </div>
+        </button>
 
         <div className="nav-group">
           <RailItem
