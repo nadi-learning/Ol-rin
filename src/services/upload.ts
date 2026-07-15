@@ -145,21 +145,30 @@ export type UploadSlotStatus = {
   expiresAt: Date | null;
 };
 
-/** The desktop's 3s poll: the latest token for a (session, question) slot. */
+/**
+ * The desktop's 3s poll. When the caller passes the token it is actually showing
+ * in the QR, we report THAT token's status — not merely "the newest token for the
+ * slot". This matters because a re-mint (or a double mint under React StrictMode)
+ * can leave two same-slot tokens: the phone uploads to the one in the QR, and a
+ * "newest wins" poll could latch onto the *other* one and wait forever. Falls back
+ * to newest-for-slot when no token is supplied (older callers).
+ */
 export async function getUploadStatus(
   tx: Tx,
-  args: { sessionId: string; questionId: string; appUserId: string },
+  args: { sessionId: string; questionId: string; appUserId: string; token?: string },
 ): Promise<UploadSlotStatus> {
+  const conds = [
+    eq(uploadToken.appUserId, args.appUserId),
+    eq(uploadToken.practiceSessionId, args.sessionId),
+    eq(uploadToken.questionId, args.questionId),
+  ];
+  // Owner+slot conditions stay even with a token so a caller can't poll a token
+  // that isn't theirs / isn't for this slot.
+  if (args.token) conds.push(eq(uploadToken.token, args.token));
   const [row] = await tx
     .select()
     .from(uploadToken)
-    .where(
-      and(
-        eq(uploadToken.appUserId, args.appUserId),
-        eq(uploadToken.practiceSessionId, args.sessionId),
-        eq(uploadToken.questionId, args.questionId),
-      ),
-    )
+    .where(and(...conds))
     .orderBy(sql`${uploadToken.createdAt} desc`)
     .limit(1);
   if (!row) return { status: "none", token: null, photoCount: 0, expiresAt: null };

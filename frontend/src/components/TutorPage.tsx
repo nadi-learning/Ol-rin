@@ -21,6 +21,14 @@ type PendingItem = Awaited<
 type ObservationView = Awaited<
   ReturnType<typeof trpc.tutor.getObservations.query>
 >[number];
+// A correction returns the read fields only (no recall context) — merged onto the row.
+type ObservationCorrection = Awaited<
+  ReturnType<typeof trpc.tutor.overrideObservation.mutate>
+>;
+// Assign-tab question preview (stem + authoring "why").
+type AssignQuestionView = Awaited<
+  ReturnType<typeof trpc.tutor.getSubTopicQuestions.query>
+>[number];
 type Stage2DraftResult = Awaited<
   ReturnType<typeof trpc.tutor.getStage2Draft.mutate>
 >;
@@ -928,6 +936,78 @@ function InterleaveAssign({
       >
         {busy ? "Assigning…" : `Assign ${picked.length} as interleaved set →`}
       </button>
+      <div className="tut-asg-previews">
+        {group.interleaved.map((id) => (
+          <SubTopicPreview key={id} subTopicId={id} name={nameOf.get(id) ?? ""} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Per-sub_topic question preview in the Assign composer: expand to see the
+// approved questions the student would get, each with a minimized "why"
+// (pedagogical_note). Lazy-loaded on first expand; collapsed by default.
+function SubTopicPreview({ subTopicId, name }: { subTopicId: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  const [qs, setQs] = useState<AssignQuestionView[] | null>(null);
+  useEffect(() => {
+    if (!open || qs) return;
+    trpc.tutor.getSubTopicQuestions
+      .query({ subTopicId })
+      .then(setQs)
+      .catch(() => setQs([]));
+  }, [open, qs, subTopicId]);
+  return (
+    <div className="tut-asg-preview">
+      <button
+        type="button"
+        className="tut-asg-preview-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? "▾" : "▸"} {name}
+        <span className="tut-asg-preview-hint">
+          {open ? " — hide questions" : " — preview questions"}
+        </span>
+      </button>
+      {open && (
+        <div className="tut-asg-preview-body">
+          {qs === null ? (
+            <p className="tut-muted">Loading questions…</p>
+          ) : qs.length === 0 ? (
+            <p className="tut-muted">No approved questions yet.</p>
+          ) : (
+            qs.map((q, i) => <AssignQuestionRow key={q.id} q={q} n={i + 1} />)
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One question in the Assign preview: stem + a minimized, light-background "why"
+// (the authoring pedagogical_note), expandable per question.
+function AssignQuestionRow({ q, n }: { q: AssignQuestionView; n: number }) {
+  const [whyOpen, setWhyOpen] = useState(false);
+  return (
+    <div className="tut-asg-q">
+      <p className="tut-asg-q-stem">
+        <span className="tut-asg-q-num">{n}.</span> {q.stem}
+      </p>
+      {q.pedagogicalNote && (
+        <div className="tut-asg-why">
+          <button
+            type="button"
+            className="tut-asg-why-toggle"
+            onClick={() => setWhyOpen((v) => !v)}
+            aria-expanded={whyOpen}
+          >
+            {whyOpen ? "▾" : "▸"} Why this question
+          </button>
+          {whyOpen && <p className="tut-asg-why-text">{q.pedagogicalNote}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1027,6 +1107,11 @@ function BlockedComposer({
           >
             {busy ? "Assigning…" : `Assign ${picked.length} (blocked) →`}
           </button>
+          <div className="tut-asg-previews">
+            {subTopics.map((st) => (
+              <SubTopicPreview key={st.id} subTopicId={st.id} name={st.name} />
+            ))}
+          </div>
         </>
       )}
     </div>
@@ -1441,7 +1526,12 @@ function Observations({
           key={o.id}
           o={o}
           onChanged={(next) =>
-            setObs((prev) => prev?.map((x) => (x.id === next.id ? next : x)) ?? null)
+            // Merge — the correction carries only the read fields; the recall
+            // context (question + answer) on the existing row is invariant to it.
+            setObs(
+              (prev) =>
+                prev?.map((x) => (x.id === next.id ? { ...x, ...next } : x)) ?? null,
+            )
           }
         />
       ))}
@@ -1452,12 +1542,103 @@ function Observations({
 // ASSESS-FIX-2 — one Stage-1 read, correctable. The machine's level and the
 // tutor's correction are shown SIDE BY SIDE (never silently replaced): the pair
 // is the labeled judgment, and the tutor should always see what they overruled.
+// Slice UPLOAD-UX recall panel — the question the student answered + their own
+// answer, collapsed by default so the tutor can expand it to recall context while
+// certifying a read. Only rendered when there is something to show.
+function ObsRecall({ o }: { o: ObservationView }) {
+  const [open, setOpen] = useState(false);
+  const hasAnswer =
+    !!o.answerText || o.answerPhotoIds.length > 0 || o.answerConfidence != null;
+  if (!o.questionStem && !hasAnswer) return null;
+  return (
+    <div className="tut-recall">
+      <button
+        type="button"
+        className="tut-recall-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? "▾" : "▸"} Question &amp; answer
+      </button>
+      {open && (
+        <div className="tut-recall-body">
+          {o.questionStem && (
+            <div className="tut-recall-block">
+              <p className="tut-recall-label">Question</p>
+              <p className="tut-recall-stem">{o.questionStem}</p>
+            </div>
+          )}
+          <div className="tut-recall-block">
+            <p className="tut-recall-label">
+              Student&apos;s answer
+              {o.answerConfidence != null && (
+                <span className="tut-recall-conf">
+                  {" "}
+                  · confidence {o.answerConfidence}/5
+                </span>
+              )}
+            </p>
+            {o.answerText ? (
+              <p className="tut-recall-answer">{o.answerText}</p>
+            ) : o.answerPhotoIds.length > 0 ? (
+              <div className="tut-recall-photos">
+                {o.answerPhotoIds.map((id) => (
+                  <TutorPhotoThumb key={id} imageId={id} />
+                ))}
+              </div>
+            ) : (
+              <p className="tut-recall-answer tut-recall-muted">
+                No written answer (skipped or teach-back).
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A minimized answer-photo thumbnail (tutor-scoped byte route) that expands to a
+// full-screen lightbox on click — mirrors the student-side PhotoThumb.
+function TutorPhotoThumb({ imageId }: { imageId: string }) {
+  const [open, setOpen] = useState(false);
+  const src = `/practice/tutor-answer-photo/${imageId}?board=${BOARD}`;
+  return (
+    <>
+      <button
+        type="button"
+        className="tut-recall-thumb"
+        onClick={() => setOpen(true)}
+        title="Tap to enlarge"
+      >
+        <img src={src} alt="Student's uploaded answer" loading="lazy" />
+      </button>
+      {open && (
+        <div
+          className="tut-recall-lightbox"
+          onClick={() => setOpen(false)}
+          role="dialog"
+          aria-label="Student's uploaded answer"
+        >
+          <img src={src} alt="Student's uploaded answer" />
+          <button
+            className="tut-recall-lightbox-close"
+            onClick={() => setOpen(false)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ObservationRow({
   o,
   onChanged,
 }: {
   o: ObservationView;
-  onChanged: (next: ObservationView) => void;
+  onChanged: (next: ObservationCorrection) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [level, setLevel] = useState<number>(o.effectiveLevel);
@@ -1521,6 +1702,8 @@ function ObservationRow({
       </div>
 
       <p className="tut-obs-reasoning">{o.reasoning}</p>
+
+      <ObsRecall o={o} />
 
       {corrected && !editing && o.overrideReason && (
         <p className="tut-obs-overridereason">Your reason: {o.overrideReason}</p>

@@ -22,7 +22,7 @@
  * post-submit reveal · D-L-4 table named practice_session (Better Auth owns
  * `sessions`).
  */
-import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { attempt, attemptImage, practiceSession, question } from "@b2c/kernel/schema";
@@ -96,6 +96,10 @@ export type SessionView = {
 export type AttemptResult = {
   attemptId: string; // Slice T1 — the FE requests immediate feedback for this id
   reveal: Reveal;
+  // Slice UPLOAD-UX — attempt_image ids for a photo answer, in ordinal order.
+  // Empty for a typed answer or a skip. The reveal thumbnail loads each via the
+  // owner-scoped /practice/answer-photo/:id route.
+  photoImageIds: string[];
   currentIndex: number;
   total: number;
   completed: boolean;
@@ -281,6 +285,9 @@ export type ReviewItem = {
   confidence: number | null;
   skipped: boolean;
   wasPhoto: boolean;
+  // Slice UPLOAD-UX — attempt_image ids (ordinal order) for a photo answer, so
+  // the review persists the same thumbnail the reveal showed. Empty otherwise.
+  photoImageIds: string[];
   reveal: Reveal;
 };
 
@@ -334,6 +341,7 @@ export async function reviewSession(
   // one, the latest submit wins (asc order → last overwrite).
   const rows = await tx
     .select({
+      attemptId: attempt.id,
       questionId: attempt.questionId,
       answerText: attempt.answerText,
       confidence: attempt.confidence,
@@ -344,6 +352,27 @@ export async function reviewSession(
     .orderBy(asc(attempt.submittedAt));
   const byQ = new Map<string, (typeof rows)[number]>();
   for (const r of rows) byQ.set(r.questionId, r);
+
+  // Slice UPLOAD-UX — the attempt_image ids for every attempt in this session,
+  // grouped by attempt (ordinal order) so a photo item can render its thumbnail.
+  const attemptIds = rows.map((r) => r.attemptId);
+  const photosByAttempt = new Map<string, string[]>();
+  if (attemptIds.length > 0) {
+    const imgs = await tx
+      .select({
+        id: attemptImage.id,
+        attemptId: attemptImage.attemptId,
+        ordinal: attemptImage.ordinal,
+      })
+      .from(attemptImage)
+      .where(inArray(attemptImage.attemptId, attemptIds))
+      .orderBy(asc(attemptImage.ordinal));
+    for (const im of imgs) {
+      const arr = photosByAttempt.get(im.attemptId) ?? [];
+      arr.push(im.id);
+      photosByAttempt.set(im.attemptId, arr);
+    }
+  }
 
   const items: ReviewItem[] = [];
   for (const qid of s.questionIds) {
@@ -358,6 +387,7 @@ export async function reviewSession(
       skipped: !!a?.skipReason,
       // photo answer (Q3): answer_text null AND not a skip → the answer was photos.
       wasPhoto: !!a && a.answerText == null && a.skipReason == null,
+      photoImageIds: a ? (photosByAttempt.get(a.attemptId) ?? []) : [],
       reveal,
     });
   }
@@ -385,16 +415,21 @@ async function recordAndAdvance(
   // A photo answer (Slice Q3): persist one attempt_image row per uploaded photo,
   // linked to the attempt. Bytes already live in object storage; these rows are
   // the durable evidence link Stage-1 vision reads (Q3-2).
+  const photoImageIds: string[] = [];
   if (inserted && photos.length > 0) {
-    await tx.insert(attemptImage).values(
-      photos.map((p, i) => ({
-        boardId: row.boardId,
-        attemptId: inserted.id,
-        storageKey: p.storageKey,
-        mime: p.mime,
-        ordinal: i,
-      })),
-    );
+    const rows = await tx
+      .insert(attemptImage)
+      .values(
+        photos.map((p, i) => ({
+          boardId: row.boardId,
+          attemptId: inserted.id,
+          storageKey: p.storageKey,
+          mime: p.mime,
+          ordinal: i,
+        })),
+      )
+      .returning({ id: attemptImage.id, ordinal: attemptImage.ordinal });
+    for (const r of rows.sort((a, b) => a.ordinal - b.ordinal)) photoImageIds.push(r.id);
   }
 
   // Stage-1 scoring trigger (Slice AI-1, widened by Q3-2). A TEXT answer OR a
@@ -425,6 +460,7 @@ async function recordAndAdvance(
   return {
     attemptId: inserted!.id,
     reveal,
+    photoImageIds,
     currentIndex: completed ? total : nextIndex,
     total,
     completed,

@@ -194,6 +194,18 @@ async function main() {
   const status = await withBoard(P.id, (tx) => getUploadStatus(tx, { sessionId, questionId: fx.q1, appUserId: userW }));
   check("poll getUploadStatus → uploaded, photoCount 2, token matches", status.status === "uploaded" && status.photoCount === 2 && status.token === mint.token);
 
+  // 8b. TOKEN-SCOPED poll (regression for the StrictMode double-mint bug). Two
+  // pending tokens can exist for one slot (dev double-effect / a re-mint); the
+  // phone uploaded to mint.token but a NEWER sibling is still pending. A poll that
+  // keys off the exact QR token must report THAT token's 'uploaded' status — while
+  // the legacy "newest for slot" poll would wrongly report the sibling's 'pending'.
+  const sibling = await withBoard(P.id, (tx) => mintUploadToken(tx, { boardId: P.id, appUserId: userW, sessionId, questionId: fx.q1 }));
+  check("double-mint made a distinct newer sibling token", sibling.token !== mint.token);
+  const byToken = await withBoard(P.id, (tx) => getUploadStatus(tx, { sessionId, questionId: fx.q1, appUserId: userW, token: mint.token }));
+  check("poll WITH token=QR token → uploaded (not stranded on the sibling)", byToken.status === "uploaded" && byToken.token === mint.token);
+  const bySlot = await withBoard(P.id, (tx) => getUploadStatus(tx, { sessionId, questionId: fx.q1, appUserId: userW }));
+  check("poll WITHOUT token → newest sibling (pending) — the exact bug the token guards against", bySlot.status === "pending" && bySlot.token === sibling.token);
+
   // 9. submit → attempt + attempt_image persist, token consumed, reveal
   const res = await withBoard(P.id, (tx) => submitPhotoAttempt(tx, { boardId: P.id, appUserId: userW, sessionId, questionId: fx.q1, uploadToken: mint.token, confidence: 3, timeMs: 45000 }));
   check("submit → reveal returns reference answer (post-submit)", res.reveal.referenceAnswer === "REF_SECRET_A1");

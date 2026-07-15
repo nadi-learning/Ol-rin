@@ -27,11 +27,14 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
+  attempt,
+  attemptImage,
   chapter,
   crossConceptFlag,
   eventLog,
   masteryState,
   observation,
+  question,
   subTopic,
   topic,
   tutorStudent,
@@ -106,7 +109,23 @@ export type ObservationView = {
   pedagogicalComment: string | null;
   questionId: string | null;
   createdAt: Date;
+  // Recall context (collapsed in the UI): the question the student answered and
+  // their own answer, so the tutor can judge the read against the raw work. All
+  // nullable — teach-back observations have no attempt/question; a photo answer
+  // has no answerText (answerPhotoIds instead); a skip has neither.
+  questionStem: string | null;
+  answerText: string | null;
+  answerConfidence: number | null;
+  answerPhotoIds: string[];
 };
+
+// What a correction returns: the read fields only. The recall context (question +
+// student answer) is invariant to a correction, so overrideObservation doesn't
+// re-fetch it — the client merges the returned fields onto the existing row.
+export type ObservationCorrection = Omit<
+  ObservationView,
+  "questionStem" | "answerText" | "answerConfidence" | "answerPhotoIds"
+>;
 
 /** ROLE gate — the CHECK side (M11). tutorProcedure calls this. */
 export function assertTutor(role: string): void {
@@ -481,8 +500,15 @@ export async function getObservations(
       pedagogicalComment: observation.pedagogicalComment,
       questionId: observation.questionId,
       createdAt: observation.createdAt,
+      // Recall context. LEFT joins — question/attempt are nullable on the row.
+      questionStem: question.stem,
+      attemptId: observation.attemptId,
+      answerText: attempt.answerText,
+      answerConfidence: attempt.confidence,
     })
     .from(observation)
+    .leftJoin(question, eq(question.id, observation.questionId))
+    .leftJoin(attempt, eq(attempt.id, observation.attemptId))
     .where(
       and(
         eq(observation.studentId, args.studentId),
@@ -491,12 +517,69 @@ export async function getObservations(
       ),
     )
     .orderBy(asc(observation.createdAt));
+
+  // Photo answers: the attempt's images (ordered), fetched in one pass for the
+  // attempts that have one. Served to the tutor via the tutor-scoped byte route.
+  const attemptIds = rows.map((r) => r.attemptId).filter((x): x is string => !!x);
+  const imgRows = attemptIds.length
+    ? await tx
+        .select({ id: attemptImage.id, attemptId: attemptImage.attemptId })
+        .from(attemptImage)
+        .where(inArray(attemptImage.attemptId, attemptIds))
+        .orderBy(asc(attemptImage.ordinal))
+    : [];
+  const photosByAttempt = new Map<string, string[]>();
+  for (const im of imgRows) {
+    const list = photosByAttempt.get(im.attemptId) ?? [];
+    list.push(im.id);
+    photosByAttempt.set(im.attemptId, list);
+  }
+
   // Surface BOTH numbers + the one that counts, so the tutor always sees what the
   // machine said next to what they changed it to (never a silently-replaced value).
-  return rows.map((r) => ({
+  return rows.map(({ attemptId, ...r }) => ({
     ...r,
     effectiveLevel: r.tutorLevel ?? r.observationLevel,
+    answerPhotoIds: attemptId ? photosByAttempt.get(attemptId) ?? [] : [],
   }));
+}
+
+export type AssignQuestionView = {
+  id: string;
+  stem: string;
+  axis: string;
+  pedagogicalNote: string | null; // the authoring "why" — tutor-facing, never shipped to students
+};
+
+/**
+ * The approved canonical questions for a sub_topic, for the tutor's Assign
+ * preview: what the student would get, plus each question's authoring intent
+ * (`pedagogical_note`). Canonical bank only (target_student_id NULL — private
+ * per-student questions aren't part of the shared assignment) + approved, in the
+ * same ordinal order startSession freezes. Board content, so no per-student
+ * ownership check — tutorProcedure already gates authed + board + role; RLS scopes
+ * the board. `pedagogical_note` is internal-to-students but tutor-facing here.
+ */
+export async function getSubTopicQuestions(
+  tx: Tx,
+  args: { subTopicId: string },
+): Promise<AssignQuestionView[]> {
+  return tx
+    .select({
+      id: question.id,
+      stem: question.stem,
+      axis: question.axis,
+      pedagogicalNote: question.pedagogicalNote,
+    })
+    .from(question)
+    .where(
+      and(
+        eq(question.subTopicId, args.subTopicId),
+        eq(question.status, "approved"),
+        isNull(question.targetStudentId),
+      ),
+    )
+    .orderBy(asc(question.ordinal), asc(question.createdAt));
 }
 
 export type CrossConceptFlagView = {
@@ -609,7 +692,7 @@ export async function overrideObservation(
     level: number | null; // null = clear the override, revert to the machine read
     reason: string | null;
   },
-): Promise<ObservationView> {
+): Promise<ObservationCorrection> {
   const [obs] = await tx
     .select()
     .from(observation)

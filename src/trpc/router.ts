@@ -63,6 +63,7 @@ import {
   getProgressTree,
   getStudentMastery,
   getStudentPacePlan,
+  getSubTopicQuestions,
   listPendingStage2,
   FlagNotFoundError,
   getCrossConceptFlags,
@@ -456,6 +457,10 @@ export const appRouter = router({
         z.object({
           sessionId: z.string().uuid(),
           questionId: z.string().uuid(),
+          // The exact token in the desktop's QR. When present, the poll reports
+          // that token's status rather than "newest for the slot" — so a stray
+          // sibling token can't strand the poll on "Waiting…".
+          token: z.string().min(1).optional(),
         }),
       )
       .query(({ ctx, input }) =>
@@ -463,6 +468,7 @@ export const appRouter = router({
           sessionId: input.sessionId,
           questionId: input.questionId,
           appUserId: ctx.membership.userId,
+          token: input.token,
         }),
       ),
 
@@ -834,6 +840,15 @@ export const appRouter = router({
           throw e;
         }
       }),
+
+    // Assign-tab question preview: the approved canonical questions for a
+    // sub_topic + each one's authoring "why" (pedagogical_note). Tutor-facing;
+    // board content, so no per-student scope.
+    getSubTopicQuestions: tutorProcedure
+      .input(z.object({ subTopicId: z.string().uuid() }))
+      .query(({ ctx, input }) =>
+        getSubTopicQuestions(ctx.tx, { subTopicId: input.subTopicId }),
+      ),
 
     // ASSESS-FIX-2: correct a Stage-1 observation (assessment.md §6 — "adjust an
     // observation level … with a reason"). Observations are the durable evidence

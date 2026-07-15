@@ -209,6 +209,87 @@
 .tut-obs-reasoning { margin: 0; font-size: 14px; line-height: 1.5; }
 .tut-obs-loading { padding: 12px 18px; }
 
+/* --- Slice UPLOAD-UX: collapsed question/answer recall panel per observation --- */
+.tut-recall { margin-top: 8px; }
+.tut-recall-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+}
+.tut-recall-toggle:hover { color: var(--ink, #1a1c25); }
+.tut-recall-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  border: 1px solid #eceef3;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-recall-label {
+  margin: 0 0 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+}
+.tut-recall-conf { font-weight: 500; text-transform: none; letter-spacing: 0; }
+.tut-recall-stem,
+.tut-recall-answer {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.tut-recall-muted { color: var(--muted, #6b6f80); font-style: italic; }
+.tut-recall-photos { display: flex; flex-wrap: wrap; gap: 8px; }
+.tut-recall-thumb {
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 1px solid #dfe2ea;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #fff;
+}
+.tut-recall-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tut-recall-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+}
+.tut-recall-lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.tut-recall-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 18px;
+  cursor: pointer;
+}
+
 /* --- ASSESS-FIX-2: correcting a Stage-1 read ---
    A corrected observation shows BOTH numbers — the machine's read and the tutor's
    — because the pair (and the reason) is the labeled judgment, not a replacement. */
@@ -552,6 +633,64 @@
 .tut-asg-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* --- Assign-tab per-question preview + authoring "why" (minimized by default) --- */
+.tut-asg-previews {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+.tut-asg-preview-toggle {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink, #1a1c25);
+}
+.tut-asg-preview-hint { font-weight: 500; color: var(--muted, #6b6f80); }
+.tut-asg-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0 8px 14px;
+}
+.tut-asg-q { display: flex; flex-direction: column; gap: 5px; }
+.tut-asg-q-stem {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.tut-asg-q-num { font-weight: 700; color: var(--muted, #6b6f80); margin-right: 2px; }
+/* the "why" box — light background, minimized to just its toggle by default */
+.tut-asg-why {
+  background: #f3f0fb; /* light violet, distinct from the card */
+  border: 1px solid #e6e0f7;
+  border-radius: 8px;
+  padding: 5px 10px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+.tut-asg-why-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #5b46b8;
+}
+.tut-asg-why-text {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #453a63;
+  white-space: pre-wrap;
 }
 .tut-asg-blocked {
   display: flex;

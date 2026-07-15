@@ -53,8 +53,15 @@ export function PracticePage() {
   // from the phone). Resets to "type" per question.
   const [inputMode, setInputMode] = useState<"type" | "photo">("type");
   const [lastWasPhoto, setLastWasPhoto] = useState(false);
-  // Guards the auto-submit so a photo can only be consumed once (StrictMode
-  // double-mount / a racing poll can't double-submit).
+  // Slice UPLOAD-UX — the phone has uploaded a photo for this slot (token held,
+  // NOT yet submitted). Set by UploadPanel once the poll sees 'uploaded'; the
+  // student then picks confidence and hits Submit (no more auto-submit).
+  const [uploadedToken, setUploadedToken] = useState<string | null>(null);
+  // Slice UPLOAD-UX — attempt_image ids of the just-submitted photo answer, for
+  // the reveal thumbnail (served via /practice/answer-photo/:id).
+  const [lastPhotoImageIds, setLastPhotoImageIds] = useState<string[]>([]);
+  // Guards the submit so a photo can only be consumed once (StrictMode double-
+  // mount / a double-click can't double-submit).
   const photoSubmittingRef = useRef(false);
 
   // read-only review of a completed sub_topic (the "✓ done" tile)
@@ -103,6 +110,8 @@ export function PracticePage() {
     setConfidence(null);
     setInputMode("type");
     photoSubmittingRef.current = false;
+    setUploadedToken(null);
+    setLastPhotoImageIds([]);
     setReveal(null);
     setAttemptId(null);
     setStartedAt(Date.now());
@@ -155,6 +164,7 @@ export function PracticePage() {
   const afterAttempt = (r: AttemptResult) => {
     setReveal(r.reveal);
     setAttemptId(r.attemptId);
+    setLastPhotoImageIds(r.photoImageIds);
     setPendingNext(r.next);
     setPendingCompleted(r.completed);
     setIdx(r.currentIndex);
@@ -182,9 +192,10 @@ export function PracticePage() {
     }
   };
 
-  // Q3-3 — the phone has uploaded a photo for this slot; consume the token into
-  // a photo attempt, carrying the confidence + timer captured on the desktop.
-  // Fired once by UploadPanel's poll (photoSubmittingRef guards re-entry).
+  // Q3-3 / UPLOAD-UX — the phone uploaded a photo for this slot and the student
+  // has now picked confidence; consume the token into a photo attempt (the
+  // Submit button fires this — no auto-submit; photoSubmittingRef guards a
+  // double-click / StrictMode re-entry).
   const submitPhoto = async (uploadToken: string) => {
     if (photoSubmittingRef.current) return;
     if (!sessionId || !question || confidence == null) return;
@@ -340,46 +351,40 @@ export function PracticePage() {
                     </div>
 
                     {inputMode === "type" && (
-                      <textarea
-                        className="prac-answer"
-                        placeholder="Write your answer…"
-                        value={answer}
-                        onChange={(e) => setAnswer(e.target.value)}
-                        rows={6}
-                        autoFocus
-                      />
+                      <>
+                        <textarea
+                          className="prac-answer"
+                          placeholder="Write your answer…"
+                          value={answer}
+                          onChange={(e) => setAnswer(e.target.value)}
+                          rows={6}
+                          autoFocus
+                        />
+                        {/* Typed answers set confidence inline before submit. */}
+                        <ConfidenceChips value={confidence} onChange={setConfidence} />
+                      </>
                     )}
 
-                    <div className="prac-confidence">
-                      <span className="prac-conf-label">How sure are you?</span>
-                      <div className="prac-conf-scale">
-                        {[1, 2, 3, 4, 5].map((n) => (
-                          <button
-                            key={n}
-                            className={`prac-conf-dot${confidence === n ? " is-on" : ""}`}
-                            onClick={() => setConfidence(n)}
-                            title={`${n}/5`}
-                          >
-                            {n}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {inputMode === "photo" &&
-                      (confidence == null ? (
-                        <p className="prac-note">
-                          Answer on paper, then set how sure you are - a QR code
-                          will appear to upload a photo from your phone.
-                        </p>
-                      ) : (
+                    {/* Slice UPLOAD-UX — QR appears immediately (no confidence
+                        gate). Once the phone uploads, UploadPanel shows the photo
+                        preview and reports the token; THEN we ask confidence and
+                        show an explicit Submit (no auto-submit). */}
+                    {inputMode === "photo" && (
+                      <>
                         <UploadPanel
                           sessionId={sessionId!}
                           questionId={question.id}
-                          onUploaded={submitPhoto}
+                          onUploaded={setUploadedToken}
                           onError={setError}
                         />
-                      ))}
+                        {uploadedToken && (
+                          <ConfidenceChips
+                            value={confidence}
+                            onChange={setConfidence}
+                          />
+                        )}
+                      </>
+                    )}
 
                     <div className="prac-actions">
                       <button
@@ -398,6 +403,15 @@ export function PracticePage() {
                           Submit answer
                         </button>
                       )}
+                      {inputMode === "photo" && uploadedToken && (
+                        <button
+                          className="prac-btn prac-btn-primary"
+                          onClick={() => submitPhoto(uploadedToken)}
+                          disabled={busy || confidence == null}
+                        >
+                          Submit answer
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -407,7 +421,21 @@ export function PracticePage() {
                     {lastWasPhoto ? (
                       <div className="prac-yours">
                         <p className="prac-reveal-label">Your answer</p>
-                        <p className="prac-yours-text">📷 You uploaded a photo of your answer.</p>
+                        {lastPhotoImageIds.length > 0 ? (
+                          <div className="prac-thumb-row">
+                            {lastPhotoImageIds.map((id) => (
+                              <PhotoThumb
+                                key={id}
+                                src={`/practice/answer-photo/${id}?board=${BOARD}`}
+                                alt="Your uploaded answer"
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="prac-yours-text">
+                            📷 You uploaded a photo of your answer.
+                          </p>
+                        )}
                       </div>
                     ) : (
                       answer.trim() && (
@@ -423,13 +451,10 @@ export function PracticePage() {
                     {!lastWasPhoto && attemptId && (
                       <FeedbackCard attemptId={attemptId} />
                     )}
-                    <div className="prac-model">
-                      <p className="prac-reveal-label">Model answer</p>
-                      <p className="prac-model-text">{reveal.referenceAnswer}</p>
-                      {reveal.explanation && (
-                        <p className="prac-explain">{reveal.explanation}</p>
-                      )}
-                    </div>
+                    {/* The model answer is ALWAYS collapsed behind a CTA (typed +
+                        photo): the student answers first, then opts in to compare
+                        against the model — it isn't handed to them by default. */}
+                    <ModelAnswer reveal={reveal} collapsible />
                     <div className="prac-actions">
                       <button className="prac-btn prac-btn-primary" onClick={next}>
                         {pendingCompleted ? "Finish" : "Next question"}
@@ -490,13 +515,25 @@ function ReviewView({
           <div className="prac-reveal">
             <div className="prac-yours">
               <p className="prac-reveal-label">Your answer</p>
-              <p className="prac-yours-text">
-                {it.skipped
-                  ? "- Skipped -"
-                  : it.wasPhoto
-                    ? "📷 You uploaded a photo of your answer."
-                    : it.answerText || "-"}
-              </p>
+              {it.wasPhoto && it.photoImageIds.length > 0 ? (
+                <div className="prac-thumb-row">
+                  {it.photoImageIds.map((id) => (
+                    <PhotoThumb
+                      key={id}
+                      src={`/practice/answer-photo/${id}?board=${BOARD}`}
+                      alt="Your uploaded answer"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="prac-yours-text">
+                  {it.skipped
+                    ? "- Skipped -"
+                    : it.wasPhoto
+                      ? "📷 You uploaded a photo of your answer."
+                      : it.answerText || "-"}
+                </p>
+              )}
             </div>
             <div className="prac-model">
               <p className="prac-reveal-label">Model answer</p>
@@ -705,9 +742,106 @@ function PickList({
 // question) slot, renders its QR (the phone opens {base}/u/:token), and polls
 // getUploadStatus every 3s. When the phone's photo lands (status 'uploaded') it
 // fires onUploaded ONCE → the parent consumes the token into a photo attempt.
-// The poll lives HERE and is torn down on unmount (mode-switch / next question);
-// onUploaded is read through a ref so the auto-submit always uses the latest
-// confidence, even if the student changes it after the QR appears.
+// Slice UPLOAD-UX — the three-way confidence chips (Guessing / Partially sure /
+// Nailed it), matching live b2c's subjective scale. Stored as smallint 1/3/5 so
+// the assessor's confidence "/5" calibration signal keeps working (no migration).
+const CONF_CHIPS: [number, string][] = [
+  [1, "Guessing"],
+  [3, "Partially sure"],
+  [5, "Nailed it"],
+];
+
+function ConfidenceChips({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <div className="prac-confidence">
+      <span className="prac-conf-label">How sure are you?</span>
+      <div className="prac-conf-chips">
+        {CONF_CHIPS.map(([v, label]) => (
+          <button
+            key={v}
+            className={`prac-conf-chip${value === v ? " is-on" : ""}${
+              value != null && value !== v ? " is-dim" : ""
+            }`}
+            onClick={() => onChange(v)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Slice UPLOAD-UX — a minimized answer-photo thumbnail that expands to a full-
+// screen lightbox on click. Kept mounted (M31); the lightbox is a sibling overlay
+// toggled by local state, so hiding it never unmounts anything doing work.
+function PhotoThumb({ src, alt }: { src: string; alt?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="prac-thumb"
+        onClick={() => setOpen(true)}
+        title="Tap to enlarge"
+      >
+        <img src={src} alt={alt ?? "Uploaded answer"} loading="lazy" />
+      </button>
+      {open && (
+        <div
+          className="prac-lightbox"
+          onClick={() => setOpen(false)}
+          role="dialog"
+          aria-label="Uploaded answer"
+        >
+          <img src={src} alt={alt ?? "Uploaded answer"} />
+          <button className="prac-lightbox-close" onClick={() => setOpen(false)}>
+            ✕
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Slice UPLOAD-UX — the post-submit model answer. On a PHOTO reveal it's collapsed
+// behind a "Show model answer" toggle (the student just uploaded a worked answer;
+// the model answer is opt-in). On a typed reveal it renders inline as before.
+function ModelAnswer({
+  reveal,
+  collapsible,
+}: {
+  reveal: { referenceAnswer: string; explanation: string | null };
+  collapsible: boolean;
+}) {
+  const [open, setOpen] = useState(!collapsible);
+  if (collapsible && !open) {
+    return (
+      <button className="prac-model-toggle" onClick={() => setOpen(true)}>
+        What&apos;s the model answer for this?
+      </button>
+    );
+  }
+  return (
+    <div className="prac-model">
+      <p className="prac-reveal-label">Model answer</p>
+      <p className="prac-model-text">{reveal.referenceAnswer}</p>
+      {reveal.explanation && <p className="prac-explain">{reveal.explanation}</p>}
+    </div>
+  );
+}
+
+// The poll lives HERE and is torn down on unmount (mode-switch / next question).
+// Slice UPLOAD-UX — the QR shows immediately; once the phone uploads, the poll
+// stops, the QR is swapped for a thumbnail preview of the uploaded photo, and
+// onUploaded(token) reports the token to the parent ONCE. There is NO auto-
+// submit: the parent then asks for confidence and shows an explicit Submit.
 function UploadPanel({
   sessionId,
   questionId,
@@ -720,38 +854,47 @@ function UploadPanel({
   onError: (msg: string) => void;
 }) {
   const [mint, setMint] = useState<{ token: string; uploadUrl: string } | null>(null);
-  const [status, setStatus] = useState<string>("pending");
+  const [received, setReceived] = useState(false);
   const firedRef = useRef(false);
   const cbRef = useRef(onUploaded);
   useEffect(() => {
     cbRef.current = onUploaded;
   });
 
-  // Mint (or reuse) the token once for this slot.
+  // Mint the token ONCE per (session, question) slot. The slot-keyed guard is what
+  // stops React StrictMode's double-invoked effect (dev) — and any re-render —
+  // from firing createUploadToken twice, which would insert two same-slot pending
+  // tokens and let the QR and the poll disagree about which one to watch.
+  const mintedSlotRef = useRef<string>("");
   useEffect(() => {
-    let alive = true;
+    const slot = `${sessionId}::${questionId}`;
+    if (mintedSlotRef.current === slot) return;
+    mintedSlotRef.current = slot;
+    // A new slot means a fresh QR to wait on.
+    setMint(null);
+    setReceived(false);
+    firedRef.current = false;
     trpc.practice.createUploadToken
       .mutate({ sessionId, questionId })
-      .then((r) => {
-        if (alive) setMint({ token: r.token, uploadUrl: r.uploadUrl });
-      })
+      .then((r) => setMint({ token: r.token, uploadUrl: r.uploadUrl }))
       .catch((e) => onError(String(e?.message ?? e)));
-    return () => {
-      alive = false;
-    };
   }, [sessionId, questionId, onError]);
 
-  // Poll for the phone's upload; auto-submit once when it arrives.
+  // Poll for the phone's upload; report the token ONCE when it lands, then stop.
   useEffect(() => {
-    if (!mint) return;
+    if (!mint || received) return;
     let alive = true;
     const tick = async () => {
       try {
-        const s = await trpc.practice.getUploadStatus.query({ sessionId, questionId });
+        const s = await trpc.practice.getUploadStatus.query({
+          sessionId,
+          questionId,
+          token: mint.token, // watch the exact token in our QR, not "newest for slot"
+        });
         if (!alive) return;
-        setStatus(s.status);
         if (s.status === "uploaded" && !firedRef.current) {
           firedRef.current = true;
+          setReceived(true); // stops the poll (effect dep) and swaps QR → preview
           cbRef.current(mint.token);
         }
       } catch {
@@ -764,10 +907,27 @@ function UploadPanel({
       alive = false;
       clearInterval(id);
     };
-  }, [mint, sessionId, questionId]);
+  }, [mint, sessionId, questionId, received]);
 
   if (!mint) return <p className="prac-muted">Preparing upload…</p>;
-  const received = status === "uploaded";
+
+  // Uploaded — show the photo the student just took (expand on click), so they
+  // can confirm the right page went up before setting confidence + submitting.
+  if (received) {
+    return (
+      <div className="prac-upload-done">
+        <p className="prac-qr-status is-live">✓ Photo received</p>
+        <PhotoThumb
+          src={`/practice/upload-preview/${mint.token}?board=${BOARD}`}
+          alt="Your uploaded answer"
+        />
+        <p className="prac-muted">
+          Check it&apos;s the right page, then set how sure you are and submit.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="prac-qr">
       <div className="prac-qr-code">
@@ -777,11 +937,9 @@ function UploadPanel({
         <p className="prac-qr-title">Scan to upload your answer</p>
         <p className="prac-muted">
           Point your phone camera at the code, then take a photo of your written
-          answer. It’ll submit here automatically.
+          answer. It&apos;ll appear here automatically.
         </p>
-        <p className={`prac-qr-status${received ? " is-live" : ""}`}>
-          {received ? "✓ Photo received - submitting…" : "Waiting for your photo…"}
-        </p>
+        <p className="prac-qr-status">Waiting for your photo…</p>
       </div>
     </div>
   );

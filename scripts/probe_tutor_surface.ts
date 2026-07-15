@@ -28,12 +28,16 @@ import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
+  attempt,
+  attemptImage,
   board,
   chapter,
   eventLog,
   masteryState,
   membership,
   observation,
+  practiceSession,
+  question,
   subTopic,
   subject,
   topic,
@@ -46,6 +50,7 @@ import { resolveMembership } from "../src/services/membership";
 import {
   assertTutor,
   getObservations,
+  getSubTopicQuestions,
   getStudentMastery,
   listPendingStage2,
   listStudents,
@@ -196,6 +201,63 @@ async function main() {
   check("getObservations(A) → createdAt ascending", obsA[0]!.createdAt <= obsA[1]!.createdAt && obsA[1]!.createdAt <= obsA[2]!.createdAt);
   check("getObservations(A) → carries axis + level + reasoning", obsA[0]!.axis === "conceptual" && obsA[0]!.observationLevel === 4 && obsA[0]!.reasoning.length > 0);
   check("getObservations payload has no answer-key fields (REF_/reference)", !/referenceAnswer|REF_|EXPL_/.test(JSON.stringify(obsA)));
+  // Recall fields are null/empty when the observation has no question/attempt link
+  // (these seeds don't) — the LEFT joins must not drop the row.
+  check("getObservations(A) → recall fields null/empty when unlinked", obsA[0]!.questionStem === null && obsA[0]!.answerText === null && obsA[0]!.answerPhotoIds.length === 0);
+
+  // 6b. RECALL CONTEXT (Slice UPLOAD-UX) — an observation linked to a real
+  // question + the student's own attempt surfaces the stem + answer for tutor
+  // recall. Seed one typed attempt and one photo attempt under sub_topic B.
+  const recall = await withBoard(P.id, async (tx: Tx) => {
+    const [q] = await tx.insert(question).values({
+      boardId: P.id, subTopicId: fx.B, axis: "conceptual", kind: "subjective",
+      stem: "What is a mixture? RECALL_STEM", referenceAnswer: "REF_SECRET_recall",
+      pedagogicalNote: "WHY_NOTE: establish the mixture baseline", ordinal: 1, source: "b2c_authoring",
+    }).returning();
+    // a DRAFT and a PRIVATE question that getSubTopicQuestions must EXCLUDE
+    await tx.insert(question).values({
+      boardId: P.id, subTopicId: fx.B, axis: "conceptual", kind: "subjective",
+      stem: "DRAFT_Q — not approved", referenceAnswer: "x", ordinal: 2, source: "b2c_authoring", status: "draft",
+    });
+    await tx.insert(question).values({
+      boardId: P.id, subTopicId: fx.B, axis: "conceptual", kind: "subjective",
+      stem: "PRIVATE_Q — targeted", referenceAnswer: "x", ordinal: 3, source: "b2c_authoring", targetStudentId: userS2,
+    });
+    const [ps] = await tx.insert(practiceSession).values({
+      boardId: P.id, appUserId: userS1, subTopicId: fx.B, questionIds: [q!.id],
+    }).returning();
+    // typed attempt
+    const [aTyped] = await tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: ps!.id, questionId: q!.id, appUserId: userS1,
+      answerText: "A mixture keeps each part RECALL_ANSWER", confidence: 4, timeMs: 30000,
+    }).returning();
+    // photo attempt (+ 2 images)
+    const [aPhoto] = await tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: ps!.id, questionId: q!.id, appUserId: userS1,
+      answerText: null, confidence: 3, timeMs: 45000,
+    }).returning();
+    const [im0] = await tx.insert(attemptImage).values({ boardId: P.id, attemptId: aPhoto!.id, storageKey: `recall/${tag}/0.jpg`, mime: "image/jpeg", ordinal: 0 }).returning();
+    const [im1] = await tx.insert(attemptImage).values({ boardId: P.id, attemptId: aPhoto!.id, storageKey: `recall/${tag}/1.jpg`, mime: "image/jpeg", ordinal: 1 }).returning();
+    // two observations: one on the typed attempt, one on the photo attempt
+    await tx.insert(observation).values({ boardId: P.id, studentId: userS1, subTopicId: fx.B, axis: "conceptual", observationLevel: 4, reasoning: "typed read", source: STAGE1, questionId: q!.id, attemptId: aTyped!.id, createdAt: at(9000) });
+    await tx.insert(observation).values({ boardId: P.id, studentId: userS1, subTopicId: fx.B, axis: "procedural", observationLevel: 3, reasoning: "photo read", source: STAGE1, questionId: q!.id, attemptId: aPhoto!.id, createdAt: at(9001) });
+    return { qId: q!.id, im0: im0!.id, im1: im1!.id };
+  });
+  const obsB = await withBoard(P.id, (tx) => getObservations(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.B }));
+  const typedObs = obsB.find((o) => o.reasoning === "typed read");
+  const photoObs = obsB.find((o) => o.reasoning === "photo read");
+  check("recall: typed obs carries the question stem", typedObs?.questionStem === "What is a mixture? RECALL_STEM");
+  check("recall: typed obs carries the student's answer + confidence", typedObs?.answerText === "A mixture keeps each part RECALL_ANSWER" && typedObs?.answerConfidence === 4);
+  check("recall: typed obs has NO photo ids", typedObs?.answerPhotoIds.length === 0);
+  check("recall: photo obs carries ordered image ids, null answerText", photoObs?.answerText === null && photoObs?.answerPhotoIds.length === 2 && photoObs?.answerPhotoIds[0] === recall.im0 && photoObs?.answerPhotoIds[1] === recall.im1);
+  check("recall: reference answer NEVER surfaces in the recall payload", !/REF_SECRET/.test(JSON.stringify(obsB)));
+
+  // 6c. getSubTopicQuestions (Assign-tab preview) — approved canonical only, with
+  // the authoring "why" (pedagogical_note); draft + private questions excluded.
+  const asgQs = await withBoard(P.id, (tx) => getSubTopicQuestions(tx, { subTopicId: fx.B }));
+  check("assign-preview: exactly 1 question (draft + private excluded)", asgQs.length === 1 && asgQs[0]!.stem === "What is a mixture? RECALL_STEM");
+  check("assign-preview: carries the pedagogical 'why' + axis", asgQs[0]!.pedagogicalNote === "WHY_NOTE: establish the mixture baseline" && asgQs[0]!.axis === "conceptual");
+  check("assign-preview: no reference-answer leak", !/REF_SECRET|reference/i.test(JSON.stringify(asgQs)));
 
   // An observation belonging to the UNLINKED student S2 — the ownership guard on
   // overrideObservation must reject it (RLS scopes by board, not by user).
@@ -285,7 +347,13 @@ async function main() {
     // event_log first: the override legs write observation_override rows that FK
     // to app_user / sub_topic / board.
     await tx.delete(eventLog).where(eq(eventLog.boardId, P.id));
+    // Recall fixtures (6b): images → attempts → sessions → questions, all FK
+    // to sub_topic/attempt, so they must go before observation/subTopic below.
+    await tx.delete(attemptImage).where(eq(attemptImage.boardId, P.id));
     await tx.delete(observation).where(eq(observation.boardId, P.id));
+    await tx.delete(attempt).where(eq(attempt.boardId, P.id));
+    await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
+    await tx.delete(question).where(eq(question.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));

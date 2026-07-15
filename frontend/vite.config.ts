@@ -20,6 +20,12 @@ export default defineConfig({
       // stem + POSTs photos to the backend's `/upload/:token` same-origin
       // through this proxy (Option B — page path ≠ API path, no collision).
       "/upload": "http://localhost:3010",
+      // Answer-photo bytes (Slice UPLOAD-UX). The practice flow renders answer
+      // photos via plain <img src="/practice/upload-preview/:token"> and
+      // <img src="/practice/answer-photo/:id"> — same-origin so the session
+      // cookie rides. Without this the SPA index-fallback (200 text/html) is
+      // served for the img and the thumbnail renders broken.
+      "/practice": "http://localhost:3010",
       // Voice tutoring WebSocket (Slice VOICE-2b). Proxied same-origin so the
       // Better Auth session cookie rides the upgrade (the WS can't set the
       // x-board header, hence board is a query param — the D-S4-1 pattern).

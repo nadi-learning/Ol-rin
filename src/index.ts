@@ -13,6 +13,11 @@ import { createContext } from "./trpc/context";
 import { BundleError, resolveBundle } from "./services/content";
 import { ImageError, resolveImageBytes } from "./services/image_serve";
 import {
+  resolveAnswerPhotoBytes,
+  resolveTutorAnswerPhotoBytes,
+  resolveUploadPreviewBytes,
+} from "./services/answer_photo_serve";
+import {
   getUploadTokenForPhone,
   recordPhoneUpload,
   UploadError,
@@ -110,6 +115,78 @@ app.get("/content/image/:imageId", async (c) => {
     if (e instanceof ImageError) {
       return c.json({ error: e.code }, e.status as any);
     }
+    throw e;
+  }
+});
+
+// Answer-photo bytes (Slice UPLOAD-UX). Same transport as /content/image — a
+// plain <img src> can't send x-board, so board rides in ?board= and the session
+// cookie rides along. OWNER-scoped in the resolver (a student's own answer only).
+//   /practice/upload-preview/:token   — transient, pre-submit preview by token
+//   /practice/answer-photo/:imageId   — durable, post-submit reveal + review
+app.get("/practice/upload-preview/:token", async (c) => {
+  const token = c.req.param("token");
+  const boardSlug = c.req.query("board") ?? "";
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  try {
+    const { bytes, mime } = await resolveUploadPreviewBytes({
+      token,
+      boardSlug,
+      email: session?.user?.email ?? null,
+    });
+    // The just-uploaded photo can still be replaced by a re-mint before submit,
+    // so DON'T cache it (unlike the immutable attempt_image below).
+    return new Response(bytes, {
+      status: 200,
+      headers: { "Content-Type": mime, "Cache-Control": "private, no-store" },
+    });
+  } catch (e) {
+    if (e instanceof ImageError) return c.json({ error: e.code }, e.status as any);
+    throw e;
+  }
+});
+
+app.get("/practice/answer-photo/:imageId", async (c) => {
+  const imageId = c.req.param("imageId");
+  const boardSlug = c.req.query("board") ?? "";
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  try {
+    const { bytes, mime } = await resolveAnswerPhotoBytes({
+      imageId,
+      boardSlug,
+      email: session?.user?.email ?? null,
+    });
+    // A submitted answer photo is immutable bytes at a stable id → private cache.
+    return new Response(bytes, {
+      status: 200,
+      headers: { "Content-Type": mime, "Cache-Control": "private, max-age=300" },
+    });
+  } catch (e) {
+    if (e instanceof ImageError) return c.json({ error: e.code }, e.status as any);
+    throw e;
+  }
+});
+
+// Tutor-scoped answer photo (Slice UPLOAD-UX recall panel): a linked tutor pulls
+// their student's answer photo for the collapsed Q&A preview in Assess. Same
+// transport (?board= + session cookie); the resolver gates on the tutor↔student
+// link, so a non-tutor / unlinked tutor gets 404.
+app.get("/practice/tutor-answer-photo/:imageId", async (c) => {
+  const imageId = c.req.param("imageId");
+  const boardSlug = c.req.query("board") ?? "";
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  try {
+    const { bytes, mime } = await resolveTutorAnswerPhotoBytes({
+      imageId,
+      boardSlug,
+      email: session?.user?.email ?? null,
+    });
+    return new Response(bytes, {
+      status: 200,
+      headers: { "Content-Type": mime, "Cache-Control": "private, max-age=300" },
+    });
+  } catch (e) {
+    if (e instanceof ImageError) return c.json({ error: e.code }, e.status as any);
     throw e;
   }
 });
