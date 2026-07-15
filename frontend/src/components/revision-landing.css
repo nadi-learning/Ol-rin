@@ -1,0 +1,172 @@
+/* Slice REV-LAND — the Revision landing (typewriter hero + chips + chapter grid). */
+
+.rev-landing {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 8px 48px;
+}
+
+/* ── Hero ── */
+.rev-landing-hero {
+  min-height: 180px;
+  padding: 48px 0 28px;
+  text-align: center;
+}
+/* First-time theatre: start zoomed in, settle out while the greeting types. */
+.rev-landing.is-theatre .rev-landing-hero {
+  animation: rev-landing-zoom 1.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes rev-landing-zoom {
+  from {
+    transform: scale(1.45);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rev-landing.is-theatre .rev-landing-hero {
+    animation: none;
+  }
+}
+
+.rev-landing-headline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+  min-height: 1.3em;
+}
+.rev-landing-caret {
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  background: var(--primary);
+  border-radius: 2px;
+  animation: rev-landing-blink 0.9s steps(1) infinite;
+}
+@keyframes rev-landing-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.rev-landing-sub {
+  margin: 12px 0 0;
+  font-size: 15px;
+  color: var(--ink-soft);
+  transition: opacity 0.4s ease;
+}
+
+.rev-landing-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 22px;
+  transition: opacity 0.4s ease;
+}
+.rev-landing-chip {
+  padding: 11px 20px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.rev-landing-chip:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+.rev-landing-chip.is-plan {
+  background: var(--yellow);
+  color: var(--ink);
+}
+.rev-landing-chip.is-plan:hover {
+  background: var(--yellow-hover);
+}
+
+/* Elements below the headline hold until the typing finishes (theatre only). */
+.is-waiting {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Browse: search + chapter grid ── */
+.rev-landing-browse {
+  margin-top: 36px;
+  transition: opacity 0.5s ease 0.15s;
+}
+.rev-landing-search {
+  display: block;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto 22px;
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-family: var(--font-body);
+  font-size: 15px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.rev-landing-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.rev-landing-search::placeholder {
+  color: var(--ink-muted);
+}
+
+.rev-landing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.rev-landing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.rev-landing-card:hover {
+  border-color: var(--primary-soft);
+  box-shadow: var(--shadow-card);
+  transform: translateY(-2px);
+}
+.rev-landing-card-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.rev-landing-card-meta {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.rev-landing-card-cta {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.rev-landing-card-cta.is-resume {
+  color: var(--ink-soft);
+}

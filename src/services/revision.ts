@@ -17,7 +17,7 @@
  * `bundleUrl` pointing at the S4 route that serves them — never the bytes
  * themselves (keeps the read response small; the FE fetches the bundle once).
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
@@ -25,9 +25,14 @@ import {
   contentUnit,
   contentVersion,
   eventLog,
+  pacePlan,
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
+import { computeDueQueue } from "./scheduler";
+import { getPlan } from "./pace";
+import type { PreparednessLabel } from "./pace";
+import type { ChildSummary } from "./parent";
 
 export class SlideNotFoundError extends Error {
   readonly code = "SLIDE_NOT_FOUND";
@@ -499,4 +504,215 @@ export async function checkAnswer(
     marksAwarded,
     marksMax,
   };
+}
+
+// ── Revision landing (Slice REV-LAND) ──────────────────────────────────────
+//
+// The entry surface before the slide view: a templated greeting + suggestion
+// chips driven by DETERMINISTIC scheduler/plan/mastery data — no AI call on
+// landing (locked in brainstorm; the intelligence comes from the scheduler).
+//
+//  - D-REV-1: last-visited persistence = `revision_visit` rows in event_log
+//    (durable, cross-device; NOT localStorage — anti-pattern "FE-only ephemeral
+//    state"). The FE fires recordVisit when a slide resolves; getLandingState
+//    reads the newest visit back. event_log's generic (event_type, payload)
+//    shape means NO migration — same pattern as mcq_check.
+//  - D-REV-2: the student reads their OWN due queue via computeDueQueue (the
+//    tutor wall stays on getDueQueue). DueItem's raw 1–5 levels never reach the
+//    student (D-INS-1): the landing projection is an ALLOWLIST of name/chapter/
+//    overdue only.
+//  - One aggregate read: the FE calls getLandingState once per landing, not
+//    four endpoints. Everything derived is recomputed here (D-PACE-5 spirit).
+
+/** event_log eventType for a recorded slide visit (G1 typed firehose). */
+export const REVISION_VISIT_EVENT = "revision_visit";
+
+/**
+ * Record that the caller opened a slide. Fire-and-forget from the FE (a lost
+ * visit only costs resume freshness). The explicit sub_topic visibility check
+ * matters: FK validation BYPASSES RLS, so without it an insert referencing
+ * another board's sub_topic id would succeed and become an existence oracle.
+ */
+export async function recordVisit(
+  tx: PgTransaction<any, any, any>,
+  args: { boardId: string; appUserId: string; subTopicId: string },
+): Promise<void> {
+  const [st] = await tx
+    .select({ id: subTopic.id })
+    .from(subTopic)
+    .where(eq(subTopic.id, args.subTopicId))
+    .limit(1);
+  if (!st) throw new SlideNotFoundError(args.subTopicId);
+
+  await tx.insert(eventLog).values({
+    boardId: args.boardId,
+    eventType: REVISION_VISIT_EVENT,
+    studentId: args.appUserId,
+    subTopicId: args.subTopicId,
+    payload: {},
+  });
+}
+
+export type LandingLastVisited = {
+  subTopicId: string;
+  subTopicName: string;
+  topicName: string;
+  chapterId: string;
+  chapterName: string;
+  visitedAt: Date;
+};
+
+/** Student-safe due projection (D-REV-2): NO mastery levels, ever. */
+export type LandingDueTop = {
+  subTopicId: string;
+  subTopicName: string;
+  chapterName: string;
+  overdueDays: number;
+};
+
+export type LandingPlan = {
+  subjectId: string;
+  subjectName: string;
+  /** The chapter whose projected window contains today; falls back to the
+   *  first non-completed chapter when the student is ahead/behind the plan. */
+  currentChapter: { chapterId: string; name: string } | null;
+  /** Highest preparedness roll-up among assessed chapters (null = none assessed). */
+  strongestChapter: { chapterId: string; name: string; label: PreparednessLabel } | null;
+};
+
+export type LandingState = {
+  /** True until the student's first recorded visit — drives the one-time theatre. */
+  firstTime: boolean;
+  lastVisited: LandingLastVisited | null;
+  /** chapterId → last-visited sub_topic in that chapter (chapter-grid resume). */
+  lastVisitedByChapter: Record<string, string>;
+  dueTop: LandingDueTop | null;
+  /** null = no set-up pace plan (the landing offers "Set my plan"). */
+  plan: LandingPlan | null;
+};
+
+/**
+ * Everything the landing's template tree needs, in one board-scoped read.
+ * `asOf` is injectable purely so probes can pin the clock (pace/scheduler
+ * pattern); real callers omit it.
+ */
+export async function getLandingState(
+  tx: PgTransaction<any, any, any>,
+  args: { self: ChildSummary; asOf?: Date },
+): Promise<LandingState> {
+  const appUserId = args.self.studentId;
+  const asOf = args.asOf ?? new Date();
+  const todayIso = asOf.toISOString().slice(0, 10);
+
+  // firstTime — from the RAW event table, NOT the joined read below: a visit
+  // whose sub_topic was since unpublished must still count as "has visited"
+  // (a veteran student must never get the first-time theatre back).
+  const [anyVisit] = await tx
+    .select({ id: eventLog.id })
+    .from(eventLog)
+    .where(
+      and(
+        eq(eventLog.studentId, appUserId),
+        eq(eventLog.eventType, REVISION_VISIT_EVENT),
+      ),
+    )
+    .limit(1);
+  const firstTime = !anyVisit;
+
+  // Newest visit PER CHAPTER in one pass (DISTINCT ON) — powers both the
+  // global resume chip (row with the max visitedAt) and the chapter grid's
+  // per-chapter entry point. Inner joins re-resolve the spine under RLS, so a
+  // cross-board or unpublished sub_topic simply drops out.
+  const visitRows = await tx
+    .selectDistinctOn([chapter.id], {
+      chapterId: chapter.id,
+      chapterName: chapter.name,
+      topicName: topic.name,
+      subTopicId: subTopic.id,
+      subTopicName: subTopic.name,
+      visitedAt: eventLog.createdAt,
+    })
+    .from(eventLog)
+    .innerJoin(subTopic, eq(eventLog.subTopicId, subTopic.id))
+    .innerJoin(topic, eq(subTopic.topicId, topic.id))
+    .innerJoin(chapter, eq(topic.chapterId, chapter.id))
+    .where(
+      and(
+        eq(eventLog.studentId, appUserId),
+        eq(eventLog.eventType, REVISION_VISIT_EVENT),
+      ),
+    )
+    .orderBy(chapter.id, desc(eventLog.createdAt));
+
+  let lastVisited: LandingLastVisited | null = null;
+  const lastVisitedByChapter: Record<string, string> = {};
+  for (const r of visitRows) {
+    lastVisitedByChapter[r.chapterId] = r.subTopicId;
+    if (!lastVisited || r.visitedAt > lastVisited.visitedAt) lastVisited = r;
+  }
+
+  // dueTop — the single most-overdue item across every subject, projected to
+  // the student-safe shape (D-REV-2: levels stripped).
+  let dueTop: LandingDueTop | null = null;
+  for (const group of await computeDueQueue(tx, { studentId: appUserId, asOf })) {
+    for (const it of group.items) {
+      if (!dueTop || it.overdueDays > dueTop.overdueDays) {
+        dueTop = {
+          subTopicId: it.subTopicId,
+          subTopicName: it.subTopicName,
+          chapterName: it.chapterName,
+          overdueDays: it.overdueDays,
+        };
+      }
+    }
+  }
+
+  // plan — the caller's most recently touched SET-UP pace plan (one subject at
+  // a time on this board today; updatedAt breaks ties if that changes).
+  let plan: LandingPlan | null = null;
+  const [planRow] = await tx
+    .select({ subjectId: pacePlan.subjectId })
+    .from(pacePlan)
+    .where(
+      and(eq(pacePlan.appUserId, appUserId), isNotNull(pacePlan.setupCompletedAt)),
+    )
+    .orderBy(desc(pacePlan.updatedAt))
+    .limit(1);
+  if (planRow) {
+    const view = await getPlan(tx, {
+      self: args.self,
+      subjectId: planRow.subjectId,
+      today: todayIso,
+    });
+    if (!view.needsSetup) {
+      const open = view.chapters.filter((c) => !c.completed);
+      const current =
+        open.find(
+          (c) =>
+            c.projectedStartDate! <= todayIso && todayIso < c.projectedEndDate!,
+        ) ??
+        open[0] ??
+        null;
+      let strongest: LandingPlan["strongestChapter"] = null;
+      let strongestValue = -Infinity;
+      for (const c of view.chapters) {
+        const p = c.preparedness;
+        if (!p || p.value == null) continue;
+        if (p.value > strongestValue) {
+          strongestValue = p.value;
+          strongest = { chapterId: c.chapterId, name: c.name, label: p.label };
+        }
+      }
+      plan = {
+        subjectId: view.subject.id,
+        subjectName: view.subject.name,
+        currentChapter: current
+          ? { chapterId: current.chapterId, name: current.name }
+          : null,
+        strongestChapter: strongest,
+      };
+    }
+  }
+
+  return { firstTime, lastVisited, lastVisitedByChapter, dueTop, plan };
 }

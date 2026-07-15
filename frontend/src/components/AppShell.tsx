@@ -3,7 +3,7 @@ import { PikaSplash } from "./PikaSplash";
 
 // Idle screensaver: after this long with no keystroke / cursor movement / touch /
 // scroll anywhere on the platform, the full-page Pikachu appears on its own.
-const IDLE_MS = 4 * 60 * 1000;
+const IDLE_MS = 45 * 1000;
 
 // The shared TAITOR app shell — a floating white left nav rail beside a
 // graph-paper canvas (the tutor-canvas layout from the reference). For the

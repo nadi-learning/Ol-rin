@@ -134,6 +134,21 @@ export async function getDueQueue(
   args: { tutorUserId: string; studentId: string; asOf?: Date },
 ): Promise<SubjectDueGroup[]> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  return computeDueQueue(tx, args);
+}
+
+/**
+ * The queue computation itself, with NO ownership wall — every caller must gate
+ * access first (getDueQueue's assertTutorsStudent for tutors; the revision
+ * landing passes the CALLER's own id from ctx, so self-access is structural).
+ * Split out (Slice REV-LAND) so the student landing can read their own due
+ * queue; note DueItem carries raw 1–5 levels, which must never reach a student
+ * surface (D-INS-1) — student-facing callers strip them (D-REV-2).
+ */
+export async function computeDueQueue(
+  tx: Tx,
+  args: { studentId: string; asOf?: Date },
+): Promise<SubjectDueGroup[]> {
   const asOfStr = toDateStr(args.asOf ?? new Date());
 
   // The retention anchor: when the student LAST PRACTISED each sub-topic (the most

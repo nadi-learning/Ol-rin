@@ -3,6 +3,7 @@ import { trpc } from "../trpc";
 import { PreviewShell } from "./PreviewShell";
 import { QuickCheck } from "./QuickCheck";
 import { VoicePanel } from "./VoicePanel";
+import { RevisionLanding } from "./RevisionLanding";
 import "./revision.css";
 import "./revision-nav.css";
 
@@ -14,6 +15,12 @@ import "./revision-nav.css";
 // Selecting/advancing → revision.getSlide → PreviewShell + the Slice-A QuickCheck.
 // Nav source is revision.getChapterNav (RLS-scoped tree); the flat prev/next
 // order is derived from it in tree order (D-B-2).
+//
+// Slice REV-LAND: a LANDING mode fronts the slide view (D-REV-3) — templated
+// greeting + chips + chapter grid (RevisionLanding). Nav-rail entry always
+// lands here; the dashboard's deep-link (initialSubTopicId) skips straight to
+// the slide. Each successful slide resolve records a `revision_visit`
+// (fire-and-forget) so the landing can resume durably (D-REV-1).
 
 type Nav = Awaited<ReturnType<typeof trpc.revision.getChapterNav.query>>;
 type Slide = Awaited<ReturnType<typeof trpc.revision.getSlide.query>>;
@@ -29,13 +36,19 @@ type FlatSlide = {
 export function RevisionPage({
   studentName,
   initialSubTopicId = null,
+  onOpenPace,
 }: {
   studentName: string;
   /** Slice DASH: a sub_topic to open at (from the dashboard "Continue lesson"
-   *  deep-link). Snaps once the nav tree is loaded; null = open at the default. */
+   *  deep-link). Snaps once the nav tree is loaded; null = open at the landing. */
   initialSubTopicId?: string | null;
+  /** REV-LAND: the landing's "Set my plan" chip → the Pace Plan surface. */
+  onOpenPace?: () => void;
 }) {
   const [nav, setNav] = useState<Nav | null>(null);
+  const [mode, setMode] = useState<"landing" | "slide">(
+    initialSubTopicId ? "slide" : "landing",
+  );
   const [currentIdx, setCurrentIdx] = useState(0);
   const [slide, setSlide] = useState<Slide | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,19 +93,30 @@ export function RevisionPage({
   useEffect(() => {
     if (!initialSubTopicId) return;
     const idx = flat.findIndex((f) => f.id === initialSubTopicId);
-    if (idx !== -1) setCurrentIdx(idx);
+    if (idx !== -1) {
+      setCurrentIdx(idx);
+      setMode("slide"); // a deep-link always skips the landing (D-REV-3)
+    }
   }, [initialSubTopicId, flat]);
 
-  // resolve the slide whenever the selection changes
+  // Resolve the slide whenever the selection changes — SLIDE MODE ONLY. In
+  // landing mode `selected` defaults to flat[0] the moment nav loads; fetching
+  // (and worse, recording a visit) there would fabricate resume state for a
+  // slide the student never opened.
   useEffect(() => {
-    if (!selected) return;
+    if (mode !== "slide" || !selected) return;
     setSlide(null);
     setError(null);
     trpc.revision.getSlide
       .query({ subTopicId: selected })
-      .then(setSlide)
+      .then((s) => {
+        setSlide(s);
+        // D-REV-1: durable resume. Fire-and-forget — a lost visit only costs
+        // resume freshness, never the slide render.
+        trpc.revision.recordVisit.mutate({ subTopicId: selected }).catch(() => {});
+      })
       .catch((e) => setError(String(e?.message ?? e)));
-  }, [selected]);
+  }, [selected, mode]);
 
   // auto-expand the section (topic) containing the active slide
   useEffect(() => {
@@ -120,8 +144,10 @@ export function RevisionPage({
   // Keyboard ← / → step slides (same as the top-bar Prev/Next). Skipped when the
   // user is typing in a field or a modifier is held (so it never hijacks form
   // input or browser shortcuts like ⌘←). Re-bound when the slide count changes
-  // so goPrev/goNext clamp against the current total.
+  // so goPrev/goNext clamp against the current total. Landing mode unbinds —
+  // arrows must not step slides behind an unrendered slide view.
   useEffect(() => {
+    if (mode !== "slide") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
@@ -143,7 +169,27 @@ export function RevisionPage({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [flat.length]);
+  }, [flat.length, mode]);
+
+  // REV-LAND: landing → slide hand-off (chips + chapter grid land here).
+  const openFromLanding = (subTopicId: string) => {
+    const idx = flat.findIndex((f) => f.id === subTopicId);
+    if (idx !== -1) {
+      setCurrentIdx(idx);
+      setMode("slide");
+    }
+  };
+
+  if (mode === "landing") {
+    return (
+      <RevisionLanding
+        studentName={studentName}
+        nav={nav}
+        onOpen={openFromLanding}
+        onOpenPace={onOpenPace ?? (() => {})}
+      />
+    );
+  }
 
   return (
     <div className={`rev-layout${collapsed ? " is-collapsed" : ""}`}>
@@ -207,6 +253,12 @@ export function RevisionPage({
       <section className="rev-main">
         <header className="rev-topbar">
           <div className="rev-topbar-info">
+            <button
+              className="rev-topbar-overview"
+              onClick={() => setMode("landing")}
+            >
+              <Chevron dir="left" /> Overview
+            </button>
             <p className="rev-topbar-eyebrow">
               {current ? current.topicName : "Revision"}
             </p>

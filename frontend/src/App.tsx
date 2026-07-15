@@ -99,7 +99,12 @@ export function App() {
       userName={studentName}
       onSignOut={() => signOut()}
       view={view}
-      onNavigate={setView}
+      onNavigate={(v) => {
+        // REV-LAND: a manual nav to Revision opens the LANDING — clear any
+        // stale dashboard deep-link so it can't skip it forever after.
+        if (v === "revision") setRevisionTarget(null);
+        setView(v);
+      }}
       wide={view === "revision"}
     >
       {view === "dashboard" ? (
@@ -109,7 +114,11 @@ export function App() {
           onOpenPace={() => setView("pace")}
         />
       ) : view === "revision" ? (
-        <RevisionPage studentName={studentName} initialSubTopicId={revisionTarget} />
+        <RevisionPage
+          studentName={studentName}
+          initialSubTopicId={revisionTarget}
+          onOpenPace={() => setView("pace")}
+        />
       ) : view === "insights" ? (
         <InsightsPage onOpenLesson={openLesson} />
       ) : view === "pace" ? (

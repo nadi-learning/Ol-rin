@@ -175,6 +175,24 @@
   margin-bottom: 20px;
   flex-wrap: wrap;
 }
+/* REV-LAND: back to the landing overview. */
+.rev-topbar-overview {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.rev-topbar-overview:hover {
+  color: var(--primary);
+}
 .rev-topbar-eyebrow {
   margin: 0 0 4px;
   font-size: 12px;

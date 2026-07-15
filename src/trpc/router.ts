@@ -22,10 +22,12 @@ import { NotWhitelistedError, resolveMembership } from "../services/membership";
 import {
   checkAnswer,
   getChapterNav,
+  getLandingState,
   getQuestions,
   getSlide,
   listSubTopics,
   QuestionNotFoundError,
+  recordVisit,
   SlideNotFoundError,
 } from "../services/revision";
 import {
@@ -259,6 +261,42 @@ export const appRouter = router({
             e instanceof SlideNotFoundError ||
             e instanceof QuestionNotFoundError
           ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Slice REV-LAND: the landing aggregate — one read powering the templated
+    // greeting + chips (first-time flag, resume, self due-top with levels
+    // STRIPPED per D-REV-2/D-INS-1, pace-plan chapter, strongest chapter).
+    // Self-scoped by ctx.membership.userId inside the board tx (D-L-5).
+    getLandingState: protectedProcedure.query(({ ctx }) =>
+      getLandingState(ctx.tx, {
+        self: {
+          studentId: ctx.membership.userId,
+          name: ctx.realUser.name,
+          email: ctx.realUser.email,
+        },
+      }),
+    ),
+
+    // Slice REV-LAND: record a slide visit (D-REV-1 durable resume). Fired
+    // fire-and-forget by the FE when a slide resolves; NOT_FOUND on a
+    // cross-board/unknown sub_topic (visibility checked under RLS — FK checks
+    // alone would bypass it).
+    recordVisit: protectedProcedure
+      .input(z.object({ subTopicId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await recordVisit(ctx.tx, {
+            boardId: ctx.board.id,
+            appUserId: ctx.membership.userId,
+            subTopicId: input.subTopicId,
+          });
+          return { ok: true as const };
+        } catch (e) {
+          if (e instanceof SlideNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;
