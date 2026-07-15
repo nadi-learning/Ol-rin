@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { trpc, BOARD } from "../trpc";
+import { MathText } from "./MathText";
 import "./practice.css";
 
 // The Practice surface (Slice L) — self-serve subjective practice capture.
@@ -323,7 +324,9 @@ export function PracticePage() {
                     {question.axis}
                   </span>
                 </div>
-                <p className="prac-stem">{question.stem}</p>
+                <p className="prac-stem">
+                  <MathText text={question.stem} />
+                </p>
                 {question.imageId && (
                   <img
                     className="prac-figure"
@@ -503,7 +506,9 @@ function ReviewView({
               {i + 1} / {review.total}
             </span>
           </div>
-          <p className="prac-stem">{it.question.stem}</p>
+          <p className="prac-stem">
+            <MathText text={it.question.stem} />
+          </p>
           {it.question.imageId && (
             <img
               className="prac-figure"
@@ -527,19 +532,25 @@ function ReviewView({
                 </div>
               ) : (
                 <p className="prac-yours-text">
-                  {it.skipped
-                    ? "- Skipped -"
-                    : it.wasPhoto
-                      ? "📷 You uploaded a photo of your answer."
-                      : it.answerText || "-"}
+                  {it.skipped ? (
+                    "- Skipped -"
+                  ) : it.wasPhoto ? (
+                    "📷 You uploaded a photo of your answer."
+                  ) : (
+                    <MathText text={it.answerText || "-"} />
+                  )}
                 </p>
               )}
             </div>
             <div className="prac-model">
               <p className="prac-reveal-label">Model answer</p>
-              <p className="prac-model-text">{it.reveal.referenceAnswer}</p>
+              <p className="prac-model-text">
+                <MathText text={it.reveal.referenceAnswer} />
+              </p>
               {it.reveal.explanation && (
-                <p className="prac-explain">{it.reveal.explanation}</p>
+                <p className="prac-explain">
+                  <MathText text={it.reveal.explanation} />
+                </p>
               )}
             </div>
           </div>
@@ -831,8 +842,14 @@ function ModelAnswer({
   return (
     <div className="prac-model">
       <p className="prac-reveal-label">Model answer</p>
-      <p className="prac-model-text">{reveal.referenceAnswer}</p>
-      {reveal.explanation && <p className="prac-explain">{reveal.explanation}</p>}
+      <p className="prac-model-text">
+        <MathText text={reveal.referenceAnswer} />
+      </p>
+      {reveal.explanation && (
+        <p className="prac-explain">
+          <MathText text={reveal.explanation} />
+        </p>
+      )}
     </div>
   );
 }

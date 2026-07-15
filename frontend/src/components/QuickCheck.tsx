@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { trpc } from "../trpc";
+import { MathText } from "./MathText";
 import "./quick-check.css";
 
 type Question = Awaited<
@@ -146,7 +147,9 @@ export function QuickCheck({ subTopicId }: { subTopicId: string }) {
             <span className="qc-label">Quick Check</span>
             <span className="qc-count">{remaining} remaining</span>
           </div>
-          <p className="qc-question">{q.question}</p>
+          <p className="qc-question">
+            <MathText text={q.question} />
+          </p>
 
           <div className="qc-options">
             {q.options.map((opt) => (
@@ -157,7 +160,9 @@ export function QuickCheck({ subTopicId }: { subTopicId: string }) {
                 disabled={!!result}
               >
                 <span className="qc-option-letter">{opt.label}</span>
-                <span>{opt.text}</span>
+                <span>
+                  <MathText text={opt.text} />
+                </span>
               </button>
             ))}
           </div>
@@ -179,7 +184,11 @@ export function QuickCheck({ subTopicId }: { subTopicId: string }) {
                   ? `Correct! +${result.marksAwarded} mark${result.marksMax !== 1 ? "s" : ""}`
                   : "Not quite"}
               </p>
-              {result.explanation && <p className="qc-feedback-text">{result.explanation}</p>}
+              {result.explanation && (
+                <p className="qc-feedback-text">
+                  <MathText text={result.explanation} />
+                </p>
+              )}
               <div className="qc-feedback-foot">
                 {next !== -1 ? (
                   <button className="qc-next-btn" onClick={() => setCurrentIdx(next)}>

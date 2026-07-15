@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MathText } from "./MathText";
 import "./upload.css";
 
 // Cross-Device Upload — the UNAUTHENTICATED phone page (Slice Q3-3, Option B).
@@ -170,7 +171,9 @@ export function MobileUploadPage({ token }: { token: string }) {
         {(phase === "ready" || phase === "uploading") && view && (
           <>
             <p className="up-eyebrow">Upload your answer</p>
-            <p className="up-stem">{view.stem}</p>
+            <p className="up-stem">
+              <MathText text={view.stem} />
+            </p>
 
             <label className="up-pick">
               <input

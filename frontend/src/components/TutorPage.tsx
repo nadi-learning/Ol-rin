@@ -993,7 +993,7 @@ function AssignQuestionRow({ q, n }: { q: AssignQuestionView; n: number }) {
   return (
     <div className="tut-asg-q">
       <p className="tut-asg-q-stem">
-        <span className="tut-asg-q-num">{n}.</span> {q.stem}
+        <span className="tut-asg-q-num">{n}.</span> <MathText text={q.stem} />
       </p>
       {q.pedagogicalNote && (
         <div className="tut-asg-why">
@@ -1565,7 +1565,9 @@ function ObsRecall({ o }: { o: ObservationView }) {
           {o.questionStem && (
             <div className="tut-recall-block">
               <p className="tut-recall-label">Question</p>
-              <p className="tut-recall-stem">{o.questionStem}</p>
+              <p className="tut-recall-stem">
+                <MathText text={o.questionStem} />
+              </p>
             </div>
           )}
           <div className="tut-recall-block">
@@ -1579,7 +1581,9 @@ function ObsRecall({ o }: { o: ObservationView }) {
               )}
             </p>
             {o.answerText ? (
-              <p className="tut-recall-answer">{o.answerText}</p>
+              <p className="tut-recall-answer">
+                <MathText text={o.answerText} />
+              </p>
             ) : o.answerPhotoIds.length > 0 ? (
               <div className="tut-recall-photos">
                 {o.answerPhotoIds.map((id) => (
@@ -3258,7 +3262,9 @@ function AuthoredQuestionCard({ q }: { q: AuthoredQuestion }) {
         {q.hasImage && <span className="tut-saved-fig">figure</span>}
         {q.hasImage && <VerifierBadge imageId={q.imageId} label={q.verifierLabel} />}
       </div>
-      <p className="tut-saved-stem">{q.stem}</p>
+      <p className="tut-saved-stem">
+        <MathText text={q.stem} />
+      </p>
       {q.imageId && (
         <img
           className="tut-saved-thumb"
@@ -3269,8 +3275,14 @@ function AuthoredQuestionCard({ q }: { q: AuthoredQuestion }) {
       )}
       <details className="tut-saved-ref">
         <summary>Reference answer</summary>
-        <p>{q.referenceAnswer}</p>
-        {q.explanation && <p className="tut-saved-expl">{q.explanation}</p>}
+        <p>
+          <MathText text={q.referenceAnswer} />
+        </p>
+        {q.explanation && (
+          <p className="tut-saved-expl">
+            <MathText text={q.explanation} />
+          </p>
+        )}
       </details>
     </div>
   );
