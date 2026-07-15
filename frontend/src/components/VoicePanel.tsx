@@ -26,6 +26,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import { trpc, BOARD } from "../trpc";
+import { MathText } from "./MathText";
 import {
   startMicCapture,
   createPlaybackQueue,
@@ -298,7 +299,9 @@ export function VoicePanel({
           {c.turns.map((turn, i) => (
             <div key={i} className={`voice-turn voice-turn--${turn.role}`}>
               <span className="voice-turn-role">{turn.role === "student" ? "You" : "Tutor"}</span>
-              <p className="voice-turn-text">{turn.text}</p>
+              <p className="voice-turn-text">
+                <MathText text={turn.text} />
+              </p>
             </div>
           ))}
           {c.liveStudent.trim() && (

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { trpc, BOARD } from "../trpc";
 import { MathText } from "./MathText";
 import "./tutor.css";
@@ -3045,7 +3047,11 @@ function AuthorChat({
                 m.text
               ) : (
                 <div className="tut-chat-md">
-                  <ReactMarkdown>{m.text}</ReactMarkdown>
+                  {/* remark-math + rehype-katex: the master chat embeds draft
+                      stems with $...$ TeX — render it, not raw dollars. */}
+                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                    {m.text}
+                  </ReactMarkdown>
                 </div>
               )}
             </div>

@@ -674,13 +674,17 @@ function FeedbackCard({ attemptId }: { attemptId: string }) {
           <span className={`prac-fb-verdict prac-fb-verdict--${fb.verdict}`}>
             {VERDICT_LABEL[fb.verdict]}
           </span>
-          <p className="prac-fb-text">{fb.feedback}</p>
+          <p className="prac-fb-text">
+            <MathText text={fb.feedback} />
+          </p>
           {fb.strengths.length > 0 && (
             <div className="prac-fb-block">
               <p className="prac-fb-block-label">What you did well</p>
               <ul className="prac-fb-list prac-fb-list--good">
                 {fb.strengths.map((s, i) => (
-                  <li key={i}>{s}</li>
+                  <li key={i}>
+                    <MathText text={s} />
+                  </li>
                 ))}
               </ul>
             </div>
@@ -690,7 +694,9 @@ function FeedbackCard({ attemptId }: { attemptId: string }) {
               <p className="prac-fb-block-label">To improve</p>
               <ul className="prac-fb-list prac-fb-list--work">
                 {fb.improvements.map((s, i) => (
-                  <li key={i}>{s}</li>
+                  <li key={i}>
+                    <MathText text={s} />
+                  </li>
                 ))}
               </ul>
             </div>
