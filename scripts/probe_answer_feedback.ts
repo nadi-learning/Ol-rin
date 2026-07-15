@@ -7,7 +7,10 @@
  *   1. DB connectivity as the app role.
  *   2. getAnswerFeedback on a typed attempt → well-formed AnswerFeedback:
  *      verdict ∈ {strong,partial,off_track}, non-empty feedback, arrays present.
- *   3. NO NUMBER (Fork B): the returned + stored shapes carry NO score/marks key.
+ *   3. MARKS (Fork B reversed 2026-07-15): marksAwarded/marksMax are integers,
+ *      1 ≤ max, 0 ≤ awarded ≤ max; a stem with declared "[n marks]" parts gets
+ *      marksMax = their SUM exactly (the deterministic anchor overrides the AI);
+ *      declaredMarksTotal parses/sums correctly (pure, no AI).
  *   4. PERSISTED: attempt.feedback jsonb set with verdict/feedback + model + ts.
  *   5. IDEMPOTENT (D-T1-3): a second call returns the byte-identical cached read
  *      (proves it did NOT re-call Gemini).
@@ -41,6 +44,7 @@ import { withBoard } from "../src/db/with-board";
 import { startSession, submitAttempt, skip } from "../src/services/practice";
 import {
   AttemptFeedbackNotFoundError,
+  declaredMarksTotal,
   getAnswerFeedback,
   NotEvaluableError,
 } from "../src/services/answer_feedback";
@@ -93,7 +97,14 @@ async function main() {
       referenceAnswer: "About 9.8 m/s^2 directed downward.",
       explanation: null, pedagogicalNote: null, ordinal: 2, source: "b2c_authoring",
     }).returning();
-    return { subTopic: st!.id, q1: q1!.id, q2: q2!.id };
+    // q3: S82 exam-format stem with DECLARED marks — the anchor leg. Sum = 5.
+    const [q3] = await tx.insert(question).values({
+      boardId: T.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective",
+      stem: "A ball is thrown straight up.\n(a) State its velocity at the highest point. [2 marks]\n(b) Explain why its acceleration at that instant is NOT zero. [3 marks]",
+      referenceAnswer: "(a) Zero. [2 marks]\n(b) Gravity acts on the ball throughout the flight, so the acceleration stays 9.8 m/s^2 downward even at the instant the velocity is zero. [3 marks]",
+      explanation: null, pedagogicalNote: null, ordinal: 3, source: "b2c_authoring",
+    }).returning();
+    return { subTopic: st!.id, q1: q1!.id, q2: q2!.id, q3: q3!.id };
   });
 
   // two members on T: owner W + bystander X (REAL flow, M11)
@@ -129,15 +140,25 @@ async function main() {
     console.warn("    ~ SOFT: strong on-reference answer scored off_track — review the prompt (not a failure)");
   }
 
-  // 3. NO NUMBER (Fork B structural guarantee) — no score-like key anywhere.
-  const serialized = JSON.stringify(fb1).toLowerCase();
-  const noScoreKey =
-    !("score" in (fb1 as any)) && !("scoreAwarded" in (fb1 as any)) &&
-    !("scoreMax" in (fb1 as any)) && !("marks" in (fb1 as any));
-  check("returned feedback carries NO score/marks key (Fork B)", noScoreKey);
-  check("returned feedback keys are exactly {verdict,feedback,strengths,improvements}",
-    JSON.stringify(Object.keys(fb1).sort()) === JSON.stringify(["feedback", "improvements", "strengths", "verdict"]));
-  void serialized;
+  // 3. MARKS (Fork B reversed) — a real score rides along.
+  check("marksMax is an integer ≥ 1",
+    Number.isInteger(fb1.marksMax) && (fb1.marksMax as number) >= 1);
+  check("marksAwarded is an integer in 0..marksMax",
+    Number.isInteger(fb1.marksAwarded) &&
+    (fb1.marksAwarded as number) >= 0 &&
+    (fb1.marksAwarded as number) <= (fb1.marksMax as number));
+  console.log(`    → score ${fb1.marksAwarded}/${fb1.marksMax}`);
+  check("returned feedback keys are exactly {verdict,feedback,strengths,improvements,marksAwarded,marksMax}",
+    JSON.stringify(Object.keys(fb1).sort()) ===
+    JSON.stringify(["feedback", "improvements", "marksAwarded", "marksMax", "strengths", "verdict"]));
+
+  // 3b. declaredMarksTotal — pure parser (no AI).
+  check("declaredMarksTotal sums multi-part [n marks] tags",
+    declaredMarksTotal("(a) State X. [2 marks]\n(b) Explain Y. [3 marks]") === 5);
+  check("declaredMarksTotal handles [1 mark] singular + spacing",
+    declaredMarksTotal("Define Z. [ 1 mark ]") === 1);
+  check("declaredMarksTotal → null when the stem declares none",
+    declaredMarksTotal("Explain why the sky is blue.") === null);
 
   // 4. PERSISTED on attempt.feedback
   const [row] = await withBoard(T.id, (tx) => tx.select().from(attempt).where(eq(attempt.id, r1.attemptId)));
@@ -160,6 +181,19 @@ async function main() {
     notEvaluable = e instanceof NotEvaluableError;
   }
   check("getAnswerFeedback on a skip attempt → NotEvaluableError", notEvaluable);
+
+  // 6b. STEM ANCHOR — after the q2 skip, q3 (declared "[2 marks]"+"[3 marks]")
+  // is current in the SAME session: its marksMax must be EXACTLY the sum, 5.
+  const r3 = await withBoard(T.id, (tx) => submitAttempt(tx, {
+    boardId: T.id, appUserId: userW, sessionId: s1.sessionId, questionId: fx.q3,
+    answerText: "(a) Zero.\n(b) The acceleration is 9.8 m/s^2 downward, unchanged, because gravity keeps acting on the ball even when its velocity is momentarily zero.",
+    confidence: 3, timeMs: 30000,
+  }));
+  const fb3 = await withBoard(T.id, (tx) => getAnswerFeedback(tx, { appUserId: userW, attemptId: r3.attemptId }));
+  check(`declared-marks stem → marksMax EXACTLY the declared sum 5 (got ${fb3.marksMax})`, fb3.marksMax === 5);
+  check("declared-marks stem → awarded within 0..5",
+    Number.isInteger(fb3.marksAwarded) && (fb3.marksAwarded as number) >= 0 && (fb3.marksAwarded as number) <= 5);
+  console.log(`    → anchored score ${fb3.marksAwarded}/${fb3.marksMax}`);
 
   // 7. ownership — bystander X cannot read W's attempt feedback.
   let notOwned = false;

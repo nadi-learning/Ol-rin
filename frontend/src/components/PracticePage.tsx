@@ -671,8 +671,13 @@ function FeedbackCard({ attemptId }: { attemptId: string }) {
         </p>
       ) : (
         <>
+          {/* Score chip (founder call, 2026-07-15): the number replaces the
+              verdict tag; tone still follows the verdict. Pre-marks cached
+              feedback has null marks → fall back to the old tag. */}
           <span className={`prac-fb-verdict prac-fb-verdict--${fb.verdict}`}>
-            {VERDICT_LABEL[fb.verdict]}
+            {fb.marksAwarded != null && fb.marksMax != null
+              ? `${fb.marksAwarded}/${fb.marksMax} marks`
+              : VERDICT_LABEL[fb.verdict]}
           </span>
           <p className="prac-fb-text">
             <MathText text={fb.feedback} />

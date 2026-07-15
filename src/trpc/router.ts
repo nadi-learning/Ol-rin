@@ -546,8 +546,8 @@ export const appRouter = router({
 
     // ── Immediate answer feedback (Slice T1) ──────────────────────────────
     // On demand after a typed submit: compute (or return the cached) student-
-    // facing eval of THIS answer. Qualitative only (Fork B, no grade); never
-    // moves mastery (D1 v0). A mutation because it does an AI call + caches on
+    // facing eval of THIS answer: prose + a marks score (Fork B reversed
+    // 2026-07-15); never moves mastery (D1 v0). A mutation because it does an AI call + caches on
     // first hit. An AI failure maps to a soft error the FE swallows — the reveal
     // + model answer are already shown, so feedback is strictly additive.
     getAnswerFeedback: protectedProcedure

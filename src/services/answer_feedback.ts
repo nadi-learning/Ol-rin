@@ -6,9 +6,11 @@
  * the student's worked answer against the reference and returns a warm, honest
  * read: a soft verdict + prose + a couple of strengths/improvements.
  *
- * Fork B (D-T1-2): QUALITATIVE ONLY — NO numeric grade. The self-serve sandbox is
- * a no-grade space (G3 + D-L-3); the rigorous 1–5 lives in the blind Stage-1
- * `observation` pipeline for the tutor, not here.
+ * Fork B (D-T1-2) REVERSED by the founder 2026-07-15: the read now carries a
+ * numeric score (marksAwarded/marksMax) shown in place of the verdict tag.
+ * marksMax anchors to the stem's declared "[n marks]" (S82 format) when present;
+ * legacy stems get an AI-chosen total. The rigorous 1–5 still lives in the blind
+ * Stage-1 `observation` pipeline for the tutor — this score never moves mastery.
  *
  * D1 v0 (D-T1-1): this NEVER moves mastery. Stage-2 (tutor-in-the-loop) stays the
  * sole mastery gate. This is a separate, single, student-facing Gemini call —
@@ -52,12 +54,22 @@ export class NotEvaluableError extends Error {
 
 // ───────────────────────── the student-facing read contract ─────────────────────────
 
-/** What the student sees. Fork B: a soft verdict, NOT a number. */
+/**
+ * What the student sees. Founder reversal of Fork B (2026-07-15): the practice
+ * feedback now SHOWS a numeric score — marksAwarded/marksMax — instead of the
+ * verdict tag. marksMax is anchored to the stem's declared "[n marks]" when
+ * present (every question authored after the S82 prompt change); for the
+ * legacy bank the AI picks a sensible total from the reference answer. The
+ * verdict stays in the contract (stored + FE fallback for pre-marks cached
+ * feedback). Marks are nullable so old cached attempt.feedback still parses.
+ */
 export const answerFeedbackSchema = z.object({
   verdict: z.enum(["strong", "partial", "off_track"]),
   feedback: z.string().min(1),
   strengths: z.array(z.string()).default([]),
   improvements: z.array(z.string()).default([]),
+  marksAwarded: z.number().int().min(0).nullable().default(null),
+  marksMax: z.number().int().min(1).nullable().default(null),
 });
 export type AnswerFeedback = z.infer<typeof answerFeedbackSchema>;
 
@@ -91,8 +103,17 @@ const geminiResponseSchema = {
       items: { type: Type.STRING },
       description: "0–3 short, actionable phrases for what to add/fix next time",
     },
+    marksAwarded: {
+      type: Type.INTEGER,
+      description: "marks earned by THIS answer, 0..marksMax, per the marking rules",
+    },
+    marksMax: {
+      type: Type.INTEGER,
+      description:
+        "total marks this question is worth: the sum of the stem's declared [n marks] when present, else your own sensible total (2–5) from the reference answer's demands",
+    },
   },
-  required: ["verdict", "feedback"],
+  required: ["verdict", "feedback", "marksAwarded", "marksMax"],
 } as const;
 
 const FEEDBACK_SYSTEM = `You give a student immediate, encouraging feedback on ONE subjective answer they just wrote, in a low-stakes practice sandbox. Your job is to help them SEE how their answer compares to a good one and what to do next — NOT to grade them.
@@ -106,11 +127,22 @@ VERDICT — pick one, honestly:
 
 TONE: address the student directly ("you"). Be warm but honest — never inflate. If they're off track, say so kindly and point the way; do not pretend a wrong answer is partly right. If they're strong, affirm specifically (name WHAT was good), don't just praise.
 
-NO GRADE: never output or imply a score, mark, percentage, or "X out of Y". This is a no-grade space. The word "correct/incorrect" is fine; a number is not.
+MARKS — award a score alongside the prose:
+- marksMax (the total this question is worth): if the question text declares marks — "[2 marks]" per part or overall — marksMax is their SUM. If it declares none, choose a sensible total yourself (2–5) from how much the reference answer demands (one idea = 2, a multi-part or multi-step answer = 3–5).
+- marksAwarded: mark the student's answer against the reference like a fair examiner — credit each key idea/step they got, no credit for what's missing or wrong. 0..marksMax; full marks is fine for a complete answer, 0 for off_track.
+- Keep the marks OUT of the prose — the feedback text explains, the numbers score. Never mention a different score in words than the numbers say.
 
 Keep feedback to 2–4 sentences. strengths = up to 3 short phrases of what they did well (leave empty if off_track). improvements = up to 3 short, actionable things to add or fix. Ground every point in THIS answer vs the reference — no generic study advice.
 
 Return the structured JSON.`;
+
+// Sum the stem's declared "[n marks]" / "[n mark]" annotations (the S82 exam-
+// presentation format). null when the stem declares none (the legacy bank).
+export function declaredMarksTotal(stem: string): number | null {
+  const m = stem.match(/\[\s*\d+\s*marks?\s*\]/gi);
+  if (!m) return null;
+  return m.reduce((sum, tag) => sum + Number(tag.match(/\d+/)![0]), 0);
+}
 
 // ───────────────────────── the read ─────────────────────────
 
@@ -176,6 +208,18 @@ Give this student your feedback per your instructions. Return the structured JSO
   });
 
   const feedback = answerFeedbackSchema.parse(raw);
+
+  // Deterministic anchor: when the stem declares marks ("[2 marks]" per part),
+  // their sum IS marksMax — the model's total is only trusted for the legacy
+  // bank with no declared marks. Awarded is clamped into 0..max either way.
+  const declaredMax = declaredMarksTotal(q.stem);
+  if (declaredMax != null) feedback.marksMax = declaredMax;
+  if (feedback.marksMax != null) {
+    feedback.marksAwarded = Math.max(
+      0,
+      Math.min(feedback.marksAwarded ?? 0, feedback.marksMax),
+    );
+  }
 
   // Cache on the attempt (idempotent). Store forensics meta alongside; the FE
   // reads only the AnswerFeedback fields.
