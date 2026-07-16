@@ -985,6 +985,59 @@ export const attemptImage = pgTable(
   (t) => [unique().on(t.attemptId, t.ordinal)],
 );
 
+// onboarding — the conversational welcome, Slice ONB-1. Tenant-scoped + RLS.
+//
+// It runs on first LOGIN, not signup: the platform is whitelist-gated, so we
+// already know who they are before they ever arrive (services/membership.ts).
+// This is the FIRST personal data the platform stores about a student — until
+// now it held only email + name from the OAuth identity.
+//
+// ONE table, not profile-split-from-stage-machine: nothing outside this flow
+// reads the profile yet, so splitting is premature. Every answer column is
+// nullable because every beat after `grade` is skippable and because a row is
+// written at beat 1, long before any of them have answers.
+//
+// D-ONB-1 (write-per-answer): `current_step` + a row per answer is what makes
+// the flow resumable — close the tab at beat 4, come back to beat 4. The
+// alternative (buffer client-side, commit once at the end) loses everything on
+// a refresh, which for a child on a phone is the common case, not the edge.
+export const onboarding = pgTable(
+  "onboarding",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => appUser.id),
+    // text + CHECK, never a pg enum (M23 — see the header conventions).
+    status: text("status").notNull().default("in_progress"),
+    // The step id from onboarding.copy.ts — the resume point, not an index, so
+    // reordering or inserting a beat can't silently teleport a half-done user.
+    currentStep: text("current_step").notNull(),
+    // The answers. `grade` is the ONLY one with a consumer waiting (subject.grade
+    // filtering); the rest are stored for when there IS something to do with
+    // them. `phone` is child PII and optional by deliberate design — see the
+    // slice notes on DPDP + verifiable parental consent.
+    grade: text("grade"),
+    school: text("school"),
+    favCharacter: text("fav_character"),
+    phone: text("phone"),
+    // Spelled out rather than createdAt(): that helper emits a column literally
+    // named created_at, and started_at/completed_at is the pair that says what
+    // this row actually tracks.
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique().on(t.userId, t.boardId),
+    check("onboarding_status", sql`${t.status} IN ('in_progress', 'completed')`),
+  ],
+);
+
 /**
  * Tables carrying board_id → get RLS ENABLE + FORCE + a board-claim policy.
  * Single source of truth for src/db/migrate.ts (rls application). board,
@@ -1022,6 +1075,7 @@ export const TENANT_SCOPED_TABLES = [
   "pace_plan",
   "voice_session",
   "attempt_image", // Slice Q3 — subjective answer photos (tenant-scoped + RLS)
+  "onboarding", // Slice ONB-1 — the conversational welcome (tenant-scoped + RLS)
 ] as const;
 
 // All table names (for blanket GRANTs to the app role). Includes the GLOBAL

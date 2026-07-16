@@ -9,6 +9,14 @@ import {
   router,
   tutorProcedure,
 } from "./init";
+import { OnboardingStep } from "@b2c/kernel/contracts";
+import {
+  complete as completeOnboarding,
+  getState as getOnboardingState,
+  listGradeOptions,
+  OnboardingValidationError,
+  saveStep as saveOnboardingStep,
+} from "../services/onboarding";
 import {
   ChapterHasDependentDataError,
   ChapterNotFoundError,
@@ -184,6 +192,63 @@ export const appRouter = router({
       }
       throw e;
     }
+  }),
+
+  // Slice ONB-1 — the conversational welcome. Its own namespace, deliberately
+  // NOT folded into `me` (D-AVAIL-1's reasoning): additive and fault-isolated,
+  // so a broken welcome can never take the login path down with it.
+  onboarding: router({
+    // FAIL-OPEN: if this read throws for any reason the student must still land
+    // on the dashboard, never be trapped behind a broken welcome. Swallowing
+    // errors is normally a smell — here it is the requirement (G3 spirit), so
+    // it is loud in the log and silent to the user.
+    getState: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        return await getOnboardingState(ctx.tx, {
+          userId: ctx.membership.userId,
+          boardId: ctx.board.id,
+          role: ctx.membership.role,
+        });
+      } catch (e) {
+        console.error("[onboarding.getState] failing open:", e);
+        return {
+          needsOnboarding: false,
+          status: "completed" as const,
+          currentStep: "done" as const,
+          answers: { grade: null, school: null, favCharacter: null, phone: null },
+        };
+      }
+    }),
+
+    // The grade chips (D-ONB-2) — the board's REAL distinct subject.grade values.
+    listGradeOptions: protectedProcedure.query(({ ctx }) => listGradeOptions(ctx.tx)),
+
+    // One beat, committed (D-ONB-1). Unlike getState this does NOT fail open: a
+    // silently-dropped answer would make the flow lie about having saved.
+    saveStep: protectedProcedure
+      .input(z.object({ step: OnboardingStep, value: z.string().nullable() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await saveOnboardingStep(ctx.tx, {
+            userId: ctx.membership.userId,
+            boardId: ctx.board.id,
+            step: input.step,
+            value: input.value,
+          });
+        } catch (e) {
+          if (e instanceof OnboardingValidationError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    complete: protectedProcedure.mutation(({ ctx }) =>
+      completeOnboarding(ctx.tx, {
+        userId: ctx.membership.userId,
+        boardId: ctx.board.id,
+      }),
+    ),
   }),
 
   // S3 contract: revision.getSlide({ subTopicId }) → { versionNo, slideId,

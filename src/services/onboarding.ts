@@ -1,0 +1,206 @@
+/**
+ * Slice ONB-1 — the conversational welcome.
+ *
+ * Runs on first LOGIN, not signup. The platform is whitelist-gated
+ * (services/membership.ts throws NOT_WHITELISTED for anyone not pre-invited),
+ * so by the time a student reaches this flow we already know who they are and
+ * which board they belong to. It is a welcome, not a registration — that is
+ * why nothing here can reject a user, only ask them things.
+ *
+ * Load-bearing decisions realized here:
+ *  - D-ONB-1  WRITE-PER-ANSWER. Each beat commits on answer and advances
+ *             current_step, so closing the tab at beat 4 resumes at beat 4.
+ *             A client-side buffer committed once at the end loses everything
+ *             to a refresh — for a child on a phone that is the common case.
+ *  - D-ONB-2  GRADE IS CHIPS DERIVED FROM REAL subject.grade. Free text yields
+ *             "10th" / "X" / "tenth" and the one field with a consumer waiting
+ *             becomes unparseable. The options are whatever the BOARD actually
+ *             has, so they cannot drift from the catalogue.
+ *  - FAIL-OPEN. getState never throws on a missing/º broken row: a student is
+ *             never locked out of the product by a broken welcome. Same stance
+ *             as D-AVAIL-1's `availIds: null` (G3 spirit).
+ *
+ * Tutors/parents/admins are EXEMPT, not forbidden — getState reports
+ * needsOnboarding:false for them rather than erroring. Onboarding is a student
+ * surface; a tutor hitting it should be a no-op, not a 403.
+ */
+import { and, eq, isNotNull, sql } from "drizzle-orm";
+import type { PgTransaction } from "drizzle-orm/pg-core";
+import {
+  ONBOARDING_ANSWER_COLUMNS,
+  ONBOARDING_STEPS,
+  type OnboardingStep,
+} from "@b2c/kernel/contracts";
+import { onboarding, subject } from "@b2c/kernel/schema";
+
+type Tx = PgTransaction<any, any, any>;
+
+export class OnboardingValidationError extends Error {
+  readonly code = "ONBOARDING_INVALID";
+  constructor(message: string) {
+    super(message);
+    this.name = "OnboardingValidationError";
+  }
+}
+
+export type OnboardingState = {
+  needsOnboarding: boolean;
+  status: "in_progress" | "completed";
+  currentStep: OnboardingStep;
+  answers: {
+    grade: string | null;
+    school: string | null;
+    favCharacter: string | null;
+    phone: string | null;
+  };
+};
+
+const FIRST_STEP: OnboardingStep = ONBOARDING_STEPS[0];
+
+/** The beat after `step`; `done` is terminal and is its own successor. */
+export function nextStep(step: OnboardingStep): OnboardingStep {
+  const i = ONBOARDING_STEPS.indexOf(step);
+  if (i < 0) throw new OnboardingValidationError(`unknown step: ${step}`);
+  return ONBOARDING_STEPS[Math.min(i + 1, ONBOARDING_STEPS.length - 1)]!;
+}
+
+/**
+ * The grade chips (D-ONB-2) — the DISTINCT grades this board's catalogue really
+ * has. RLS scopes `subject` to the active board, so this is board-correct
+ * without a board_id predicate.
+ */
+export async function listGradeOptions(tx: Tx): Promise<string[]> {
+  const rows = await tx
+    .selectDistinct({ grade: subject.grade })
+    .from(subject)
+    .orderBy(subject.grade);
+  return rows.map((r) => r.grade).filter((g): g is string => Boolean(g));
+}
+
+/**
+ * Read-only (a tRPC query must not write). No row yet = "needs it, start at the
+ * top" rather than provisioning one — the row is born on the first ANSWER, so a
+ * student who never engages leaves no trace.
+ */
+export async function getState(
+  tx: Tx,
+  args: { userId: string; boardId: string; role: string },
+): Promise<OnboardingState> {
+  const empty = { grade: null, school: null, favCharacter: null, phone: null };
+
+  // Exempt, not forbidden.
+  if (args.role !== "student") {
+    return { needsOnboarding: false, status: "completed", currentStep: "done", answers: empty };
+  }
+
+  const [row] = await tx
+    .select()
+    .from(onboarding)
+    .where(and(eq(onboarding.userId, args.userId), eq(onboarding.boardId, args.boardId)))
+    .limit(1);
+
+  if (!row) {
+    return { needsOnboarding: true, status: "in_progress", currentStep: FIRST_STEP, answers: empty };
+  }
+
+  return {
+    needsOnboarding: row.status !== "completed",
+    status: row.status as "in_progress" | "completed",
+    currentStep: row.currentStep as OnboardingStep,
+    answers: {
+      grade: row.grade,
+      school: row.school,
+      favCharacter: row.favCharacter,
+      phone: row.phone,
+    },
+  };
+}
+
+/**
+ * Commit ONE beat and advance (D-ONB-1). `value` is null for a talk-only beat
+ * (greet/pikachu/lore) and for a skipped optional answer — both simply move
+ * current_step on.
+ *
+ * Idempotent: re-saving the same step overwrites its answer rather than
+ * inserting a second row (UNIQUE(user_id, board_id) + upsert), so a double-tap
+ * or a retried request can't fork the flow.
+ */
+export async function saveStep(
+  tx: Tx,
+  args: {
+    userId: string;
+    boardId: string;
+    step: OnboardingStep;
+    value: string | null;
+  },
+): Promise<OnboardingState> {
+  const { userId, boardId, step } = args;
+  let value = args.value?.trim() ? args.value.trim() : null;
+
+  const column = (ONBOARDING_ANSWER_COLUMNS as Record<string, string | undefined>)[step];
+
+  if (!column && value !== null) {
+    throw new OnboardingValidationError(`step '${step}' does not take an answer`);
+  }
+
+  // The one answer with a consumer waiting must be a grade the board really has
+  // (D-ONB-2) — otherwise subject filtering silently matches nothing later.
+  if (step === "grade") {
+    if (!value) throw new OnboardingValidationError("grade is required");
+    const options = await listGradeOptions(tx);
+    if (!options.includes(value)) {
+      throw new OnboardingValidationError(
+        `grade '${value}' is not a grade on this board (${options.join(", ") || "none"})`,
+      );
+    }
+  }
+
+  if (step === "done") {
+    throw new OnboardingValidationError("use complete() to finish onboarding");
+  }
+
+  const advanced = nextStep(step);
+  const set: Record<string, unknown> = { currentStep: advanced };
+  if (column) set[column] = value;
+
+  await tx
+    .insert(onboarding)
+    .values({
+      userId,
+      boardId,
+      currentStep: advanced,
+      ...(column ? { [column]: value } : {}),
+    })
+    .onConflictDoUpdate({
+      target: [onboarding.userId, onboarding.boardId],
+      set,
+    });
+
+  return getState(tx, { userId, boardId, role: "student" });
+}
+
+/**
+ * Finish. Flips the flag the FE gates on; the loader beat covers the latency.
+ * Idempotent — completing twice keeps the FIRST completed_at (re-running the
+ * flow should not rewrite when the student actually finished).
+ */
+export async function complete(
+  tx: Tx,
+  args: { userId: string; boardId: string },
+): Promise<OnboardingState> {
+  const { userId, boardId } = args;
+
+  await tx
+    .insert(onboarding)
+    .values({ userId, boardId, currentStep: "done", status: "completed", completedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [onboarding.userId, onboarding.boardId],
+      set: {
+        status: "completed",
+        currentStep: "done",
+        completedAt: sql`COALESCE(${onboarding.completedAt}, now())`,
+      },
+    });
+
+  return getState(tx, { userId, boardId, role: "student" });
+}

@@ -68,6 +68,42 @@ export const ChatMessage = z.object({
 });
 export type ChatMessage = z.infer<typeof ChatMessage>;
 
+// ── Slice ONB-1 — the conversational welcome ──────────────────────────────
+//
+// The ORDER of the beats lives here, not in the FE copy file, so there is one
+// source of truth: the copy file is keyed BY these ids (prompts + reactions),
+// and the server computes the resume point from this array. Two ordered lists
+// would drift, and a drifted resume point sends a half-done student to the
+// wrong beat.
+//
+// Beats that only TALK (greet, pikachu, lore) are steps too — current_step has
+// to be able to name them, or closing the tab on the Pikachu beat resumes you
+// at the last thing you TYPED, replaying dialogue you already saw.
+export const ONBOARDING_STEPS = [
+  "greet",
+  "grade",
+  "school",
+  "fav_character",
+  "pikachu",
+  "phone",
+  "lore",
+  "done",
+] as const;
+export const OnboardingStep = z.enum(ONBOARDING_STEPS);
+export type OnboardingStep = z.infer<typeof OnboardingStep>;
+
+// The only beats that persist an answer → the onboarding column each writes.
+// Anything not in here is a talk-only beat and must not carry a value.
+export const ONBOARDING_ANSWER_COLUMNS = {
+  grade: "grade",
+  school: "school",
+  fav_character: "favCharacter",
+  phone: "phone",
+} as const satisfies Partial<Record<OnboardingStep, string>>;
+
+export const OnboardingStatus = z.enum(["in_progress", "completed"]);
+export type OnboardingStatus = z.infer<typeof OnboardingStatus>;
+
 // event_log.event_type enum (v0) — rewrite/spine-schema.md §4b.
 export const EventType = z.enum([
   "assessment_override",
