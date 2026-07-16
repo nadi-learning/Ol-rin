@@ -264,29 +264,30 @@ export function LandingPage() {
             <h2 className="or-welcome">Continue as <b>{chosen ?? "student"}</b></h2>
             <p className="or-sub">{SUB[chosen ?? "student"]}</p>
             <button className="or-gbtn" type="button" onClick={onGoogle}>Continue with Google</button>
-            {/* The label used to say "local only" while shipping to prod: the block
-                rendered unconditionally, pre-filled with a seed email, next to a
-                password hardcoded in the bundle. import.meta.env.DEV is inlined as
-                a literal at build time, so this whole subtree — and the dev-password
-                constant it reaches — is dropped from the production bundle.
-                probe:authhardening asserts that on the built artifact. */}
-            {import.meta.env.DEV && (
-              <div className="or-dev">
-                <span className="or-dev-label">dev login (bypass - local only)</span>
-                <div className="or-dev-row">
-                  <input
-                    className="or-dev-input"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    aria-label="Dev email"
-                  />
-                  <button className="or-dev-btn" type="button" onClick={onDevSignIn} disabled={busy}>
-                    {busy ? "Signing in…" : "Dev sign in"}
-                  </button>
-                </div>
-                {err && <p className="or-err">{err}</p>}
+            {/* This block ships to production ON PURPOSE, and must keep shipping
+                until a real Google sign-in is proven end-to-end. Every prod account
+                is email/password, and Google cannot link onto a pre-existing user
+                (see the note in src/auth/auth.ts) — so gating this on
+                import.meta.env.DEV, which Vite inlines as false at build time,
+                removes the only login prod actually has.
+                The live gate is the BACKEND's NODE_ENV !== "production" check in
+                auth.ts, which prod does not currently trip. Closing that is the
+                fix; hiding the form is not. */}
+            <div className="or-dev">
+              <span className="or-dev-label">dev login (bypass)</span>
+              <div className="or-dev-row">
+                <input
+                  className="or-dev-input"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  aria-label="Dev email"
+                />
+                <button className="or-dev-btn" type="button" onClick={onDevSignIn} disabled={busy}>
+                  {busy ? "Signing in…" : "Dev sign in"}
+                </button>
               </div>
-            )}
+              {err && <p className="or-err">{err}</p>}
+            </div>
             <button className="or-back" type="button" onClick={() => setChosen(null)}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 6l-6 6 6 6" /></svg> Choose a different role
             </button>

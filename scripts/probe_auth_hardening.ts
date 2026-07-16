@@ -14,12 +14,15 @@
  *      about to make on the box, exercised locally first rather than assumed.
  *      It also asserts dev mode still HAS the bypass (probe:session needs it).
  *
- *   3. THE PRODUCTION BUNDLE — builds the FE and asserts the dev-login block
- *      and the hardcoded dev password are NOT in the emitted JS. The original
- *      bug was exactly this: source said "local only", the artifact shipped it
- *      to prod. Asserting on source would re-make the bug. Every negative grep
- *      is paired with a POSITIVE control ("Continue with Google" must be
- *      present) so an empty/missing bundle can't masquerade as a pass (M39).
+ *   3. THE PRODUCTION BUNDLE — builds the FE and asserts the dev-login block IS
+ *      in the emitted JS. That is deliberately the OPPOSITE of what this probe
+ *      first asserted; see the long note at section 4. Short version: prod runs
+ *      NODE_ENV=development and every prod account is email/password, so the
+ *      dev form is the only login prod has. Hiding it behind import.meta.env.DEV
+ *      (inlined false at build time) locked everyone out — the bundle is still
+ *      the right thing to assert on, the direction was wrong. Greps are paired
+ *      with a POSITIVE control so a missing bundle can't masquerade as a pass
+ *      (M39).
  *
  * Self-contained: no dev server needed, no DB writes, no network calls out.
  */
@@ -232,13 +235,33 @@ async function main() {
       bundle.includes("Continue with Google"),
     );
 
-    for (const forbidden of [
-      "dev-password-123",
-      "dev login (bypass",
-      "Dev sign in",
-    ]) {
-      check(`bundle does NOT ship ${JSON.stringify(forbidden)}`, !bundle.includes(forbidden));
+    // This assertion is INVERTED from how it was first written, deliberately.
+    // It used to demand the dev-login block be absent from the artifact. That
+    // is the right end state and the wrong assertion TODAY: every prod account
+    // is email/password and Google cannot link onto one (auth.ts), so an
+    // artifact without this block is an artifact nobody can log into. The probe
+    // now guards the login that actually works, and will fail the moment
+    // someone hides the form again — which is the mistake we are undoing.
+    //
+    // TO RE-INVERT (the real fix, as its own slice): set trustedProviders:
+    // ["google"] AND users.email_verified=true, prove a real Google sign-in on
+    // prod end to end, THEN flip the box to NODE_ENV=production (which kills
+    // the backend route — see section 3) and restore these as negative greps.
+    for (const required of ["dev login (bypass", "Dev sign in"]) {
+      check(
+        `bundle SHIPS ${JSON.stringify(required)} (prod's only working login — see auth.ts)`,
+        bundle.includes(required),
+      );
     }
+
+    // Shipping the form ships the password next to it. Stated, not hidden: this
+    // is a real exposure and it is NOT what gates entry — the whitelist +
+    // NODE_ENV are. Closing it means closing the backend route, not the UI.
+    check(
+      "known + accepted: the dev password ships with the form",
+      bundle.includes(DEV_PASSWORD),
+      "expected while the bypass is prod's login",
+    );
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
