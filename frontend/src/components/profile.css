@@ -1,0 +1,133 @@
+/* Slice PROF — the student profile surface. All `.prof-`-scoped. */
+
+/* Narrower than the 920px canvas cap: these rows are label/value pairs, and at
+   full width "Board" and "cbse" drift to opposite ends of the screen. */
+.prof-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 620px;
+  padding-bottom: 40px;
+}
+
+.prof-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.prof-avatar {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--lilac);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 26px;
+}
+
+.prof-id {
+  min-width: 0;
+}
+
+.prof-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.prof-email {
+  margin: 2px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.prof-card {
+  padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
+.prof-card-title {
+  margin: 0 0 14px;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.prof-rows {
+  margin: 0;
+}
+
+.prof-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.prof-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.prof-row dt {
+  color: var(--ink-muted);
+  font-size: 0.88rem;
+}
+
+.prof-row dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.prof-note {
+  margin: 0 0 14px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Sign-out is the one destructive control on the page — outlined in the house
+   red rather than filled, so it reads as available, not as the primary action. */
+.prof-signout {
+  padding: 9px 18px;
+  border: 1px solid #f04438;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: #b42318;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.prof-signout:hover {
+  background: #f04438;
+  color: #fff;
+}
+
+@media (max-width: 560px) {
+  .prof-row {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .prof-row dd {
+    text-align: left;
+  }
+}

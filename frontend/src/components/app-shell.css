@@ -9,7 +9,11 @@
 }
 
 /* --- left nav rail --- */
+/* positioned + lifted so the hover tooltips, which fly out over the canvas,
+   win the paint order against `.canvas` (also positioned, and later in DOM). */
 .nav-rail {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -100,6 +104,23 @@
   color: var(--ink-faint, #b6b6c6);
 }
 
+/* red dot — a rail slot worth noticing. Sits on the icon's top-right corner
+   with a ring in the rail's own white so it reads as a badge, not a smudge. */
+.nav-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f04438;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+/* on the active (blue) item the ring must match the tile, not the rail */
+.nav-item--active .nav-dot {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
 /* instant hover flyout label — the native title tooltip is too slow to feel
    like navigation, so each rail item names itself on hover/focus. */
 .nav-tip {
@@ -138,7 +159,8 @@
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
-.nav-tip-soon {
+.nav-tip-soon,
+.nav-tip-new {
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 999px;
@@ -148,6 +170,10 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+.nav-tip-new {
+  background: #f04438;
+  color: #fff;
 }
 
 .nav-avatar {
@@ -168,6 +194,11 @@
 }
 .nav-avatar:hover {
   filter: brightness(0.97);
+}
+/* the avatar is now a nav destination (Profile) — it needs the same
+   you-are-here signal the rail items have, in its own lilac idiom. */
+.nav-avatar--active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--primary);
 }
 
 /* --- canvas --- */

@@ -8,6 +8,7 @@ import { RevisionPage } from "./components/RevisionPage";
 import { PracticePage } from "./components/PracticePage";
 import { InsightsPage } from "./components/InsightsPage";
 import { PacePlanPage } from "./components/PacePlanPage";
+import { ProfilePage } from "./components/ProfilePage";
 import { TutorPage } from "./components/TutorPage";
 import { ParentPage } from "./components/ParentPage";
 import { AdminPage } from "./components/AdminPage";
@@ -97,7 +98,6 @@ export function App() {
   return (
     <AppShell
       userName={studentName}
-      onSignOut={() => signOut()}
       view={view}
       onNavigate={(v) => {
         // REV-LAND: a manual nav to Revision opens the LANDING — clear any
@@ -123,6 +123,14 @@ export function App() {
         <InsightsPage onOpenLesson={openLesson} />
       ) : view === "pace" ? (
         <PacePlanPage />
+      ) : view === "profile" ? (
+        <ProfilePage
+          name={studentName}
+          email={me.user.email}
+          role={me.role}
+          boardSlug={me.board.slug}
+          onSignOut={() => signOut()}
+        />
       ) : (
         <PracticePage />
       )}

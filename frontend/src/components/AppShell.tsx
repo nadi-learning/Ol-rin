@@ -1,21 +1,16 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { PikaSplash } from "./PikaSplash";
-
-// Idle screensaver: after this long with no keystroke / cursor movement / touch /
-// scroll anywhere on the platform, the full-page Pikachu appears on its own.
-const IDLE_MS = 45 * 1000;
 
 // The shared TAITOR app shell — a floating white left nav rail beside a
 // graph-paper canvas (the tutor-canvas layout from the reference). For the
 // walking skeleton only "Revision" (book) is wired; the other rail items are
 // on-design placeholders for later surfaces.
 
-export type AppView = "dashboard" | "revision" | "practice" | "insights" | "pace";
+export type AppView = "dashboard" | "revision" | "practice" | "insights" | "pace" | "profile";
 
 type Props = {
   children: ReactNode;
   userName: string;
-  onSignOut: () => void;
   /** Active surface — drives which rail item is highlighted. */
   view: AppView;
   onNavigate: (view: AppView) => void;
@@ -23,44 +18,16 @@ type Props = {
   wide?: boolean;
 };
 
-export function AppShell({
-  children,
-  userName,
-  onSignOut,
-  view,
-  onNavigate,
-  wide = false,
-}: Props) {
+export function AppShell({ children, userName, view, onNavigate, wide = false }: Props) {
   const initials = userName.trim().slice(0, 1).toUpperCase() || "?";
   const [pikaOpen, setPikaOpen] = useState(false);
   const [logoPulse, setLogoPulse] = useState(false);
   const logoRef = useRef<HTMLButtonElement>(null);
-  const lastActivityRef = useRef(Date.now());
 
-  // Idle watch — bump a timestamp on any activity; a light interval trips the
-  // screensaver once the user has been still past IDLE_MS. Cheap: event handlers
-  // only stamp a ref (no state churn on every mousemove); the interval polls.
-  useEffect(() => {
-    const bump = () => {
-      lastActivityRef.current = Date.now();
-    };
-    const events = ["mousemove", "mousedown", "keydown", "touchstart", "touchmove", "scroll", "wheel", "click"];
-    events.forEach((e) => window.addEventListener(e, bump, { passive: true }));
-    const id = window.setInterval(() => {
-      if (Date.now() - lastActivityRef.current >= IDLE_MS) setPikaOpen(true);
-    }, 5000);
-    return () => {
-      events.forEach((e) => window.removeEventListener(e, bump));
-      window.clearInterval(id);
-    };
-  }, []);
-
-  // Called by PikaSplash AFTER its minimize-into-the-logo animation finishes:
-  // drop the overlay, reset the idle clock (so it doesn't instantly re-trip if
-  // the user is still idle), and pulse the logo so they see where it went.
+  // Pikachu is summoned by the logo ONLY — he never appears on his own. An
+  // easter egg you can't trigger on purpose is an interruption, not a reward.
   const closePika = () => {
     setPikaOpen(false);
-    lastActivityRef.current = Date.now();
     setLogoPulse(true);
     window.setTimeout(() => setLogoPulse(false), 900);
   };
@@ -86,7 +53,7 @@ export function AppShell({
             active={view === "dashboard"}
             onClick={() => onNavigate("dashboard")}
           />
-          <RailItem label="Library" icon={<FolderIcon />} soon />
+          <RailItem label="Journal" icon={<JournalIcon />} badge soon />
         </div>
 
         <div className="nav-spacer" />
@@ -117,9 +84,14 @@ export function AppShell({
             onClick={() => onNavigate("pace")}
           />
           <RailItem label="Search" icon={<SearchIcon />} soon />
-          <button className="nav-avatar" aria-label={`${userName} - sign out`} onClick={onSignOut}>
+          <button
+            className={`nav-avatar${view === "profile" ? " nav-avatar--active" : ""}`}
+            aria-label={`${userName} - profile`}
+            aria-current={view === "profile" ? "page" : undefined}
+            onClick={() => onNavigate("profile")}
+          >
             {initials}
-            <span className="nav-tip">Sign out</span>
+            <span className="nav-tip">Profile</span>
           </button>
         </div>
       </nav>
@@ -140,6 +112,7 @@ function RailItem({
   icon,
   active = false,
   soon = false,
+  badge = false,
   onClick,
 }: {
   label: string;
@@ -147,6 +120,8 @@ function RailItem({
   active?: boolean;
   /** Not-yet-wired destination — shown but inert, tooltip flags "soon". */
   soon?: boolean;
+  /** Red dot — draws the eye to a rail slot worth noticing. */
+  badge?: boolean;
   onClick?: () => void;
 }) {
   return (
@@ -158,9 +133,12 @@ function RailItem({
       onClick={soon ? undefined : onClick}
     >
       {icon}
+      {badge && <span className="nav-dot" aria-hidden />}
       <span className="nav-tip">
         {label}
-        {soon && <em className="nav-tip-soon">soon</em>}
+        {/* one tag only — "NEW SOON" side by side contradicts itself. The badge
+            wins: it's the louder claim, and the dot has already made it. */}
+        {badge ? <em className="nav-tip-new">new</em> : soon && <em className="nav-tip-soon">soon</em>}
       </span>
     </button>
   );
@@ -196,10 +174,21 @@ function HomeIcon() {
     </svg>
   );
 }
-function FolderIcon() {
+function JournalIcon() {
+  // The butterfly mark, redrawn in the rail's idiom: mono `currentColor`, so it
+  // greys when inert and flips white on the active tile like every sibling.
+  //
+  // FILLED, not stroked — deliberate. The mark is four solid wings around a
+  // centre seam; outlining them turns the negative space into cells and it
+  // reads as a 2x2 grid icon at 22px. Filled keeps the silhouette (tall upper
+  // wings, half-round lower wings, pinched waist) legible at rail size. The
+  // cost is that it sits heavier than the 1.7-stroke siblings.
   return (
-    <svg {...ic} aria-hidden>
-      <path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M11.1 3.4H8.2A3.6 3.6 0 0 0 4.6 7v3.8c0 .9.5 1.7 1.4 2l5.1 2z" />
+      <path d="M12.9 3.4h2.9A3.6 3.6 0 0 1 19.4 7v3.8c0 .9-.5 1.7-1.4 2l-5.1 2z" />
+      <path d="M11.1 12.8v7.8H8.6a4 4 0 0 1 0-8c.9 0 1.7.2 2.5.2z" />
+      <path d="M12.9 12.8v7.8h2.5a4 4 0 0 0 0-8c-.9 0-1.7.2-2.5.2z" />
     </svg>
   );
 }
