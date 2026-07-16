@@ -226,11 +226,35 @@
   gap: 10px;
   align-items: stretch;
 }
+/* S92 — sized UP for the real sticker art (founder: "can be a bigger size").
+   The art IS the beat, so the card is mostly art with the label playing support.
+   Five across no longer has to fit — the hatch moved out of the row. */
+/* 140px is not a taste number: the column is 620 wide with 8px side padding, so
+   four cards + three 10px gaps must fit inside 604. At 150 they wrapped 3+1 and
+   left Groot stranded on his own row, which reads as a mistake rather than a
+   grid. The ART grew instead — that is what the founder asked for. */
 .onb-chips.is-cards .onb-choice {
-  flex: 0 1 132px;
-  max-width: 132px;
-  gap: 8px;
-  padding: 16px 10px;
+  flex: 0 1 140px;
+  max-width: 143px;
+  gap: 6px;
+  padding: 14px 8px 12px;
+}
+
+/* A fixed BOX, not a fixed height: the four stickers have different aspect
+   ratios (the owl is tall, the direwolf wide), and letting each size itself
+   would leave the labels dancing on different baselines. `contain` keeps every
+   one whole inside the same square. */
+.onb-choice-img {
+  width: 100%;
+  height: 104px;
+  object-fit: contain;
+  display: block;
+  /* The art already carries a white halo; this lifts it off the grid. */
+  filter: drop-shadow(0 3px 5px rgba(20, 22, 40, 0.16));
+  transition: transform 0.15s ease;
+}
+.onb-choice:hover:not(:disabled) .onb-choice-img {
+  transform: scale(1.06) rotate(-1.5deg);
 }
 
 /* The "something else" hatch — deliberately quieter than the pets and on its
@@ -258,12 +282,84 @@
   cursor: default;
 }
 
-/* ⚠️ Emoji are a PLACEHOLDER for real sticker art (founder call, S91) — they
-   clash with Pikachu's painted style on purpose-for-now. Swapping in PNGs
-   should touch PET_COPY + this rule, nothing else. */
-.onb-choice-emoji {
-  font-size: 40px;
+/* ── the about-you beat (S92) ──
+   Two picks laid out as a SENTENCE the student completes. Left-aligned and
+   ragged on purpose: centred rows would read as a form's field list, and the
+   whole point is that this still sounds like Olórin talking. */
+.onb-duo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.onb-duo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.onb-duo-label {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--ink-soft, var(--ink));
+}
+
+.onb-duo-opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.onb-duo-empty {
+  color: var(--ink-muted);
+  font-size: 15px;
+}
+
+.onb-duo-cta {
+  margin-top: 6px;
+}
+
+/* ── the class board (S92, founder: "a small rectangle board with 9 and 10") ──
+   A little classroom slate, not a pill: chalk-white numerals on dark green with
+   a wooden frame. It says "class" without a word of copy doing the work. */
+.onb-board {
+  min-width: 58px;
+  padding: 10px 14px;
+  border-radius: 5px;
+  background: #2f4739;
+  border: 3px solid #a9773f;
+  color: #f4f1e4;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
   line-height: 1;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.35);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+.onb-board:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+/* The picked state must be unmissable — it is half of what the CTA is waiting
+   on, and a student who can't tell what they picked can't tell why it's
+   disabled. */
+.onb-board.is-picked {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.35), 0 0 0 3px var(--primary-soft);
+}
+.onb-board:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.onb-chip.is-picked {
+  background: var(--primary);
+  color: #fff;
 }
 
 .onb-choice {
@@ -412,10 +508,16 @@
   gap: 6px;
 }
 
+/* S92 — real art, and bigger than Pikachu: this is the thing being handed over,
+   he is only the courier. Height-locked (not width) so the tall owl and the
+   wide direwolf both stand on the same line as Pikachu. */
 .onb-delivery-pet {
-  font-size: 92px;
-  line-height: 1;
+  height: 150px;
+  width: auto;
+  max-width: 210px;
+  object-fit: contain;
   transform-origin: 50% 100%;
+  filter: drop-shadow(0 4px 8px rgba(20, 22, 40, 0.2));
   animation: onb-pika-enter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
 }
 
@@ -504,18 +606,32 @@
     max-width: none;
     padding: 16px;
   }
-  /* Pets stay a GRID on a phone — stacking five cards into a column would push
+  /* Pets stay a GRID on a phone — stacking four cards into a column would push
      the last ones under the fold, which is the exact bug S90 fixed. Two up. */
   .onb-chips.is-cards .onb-choice {
     flex: 0 1 calc(50% - 5px);
     max-width: none;
-    padding: 12px 8px;
+    padding: 10px 6px 8px;
   }
-  .onb-choice-emoji {
-    font-size: 32px;
+  .onb-choice-img {
+    height: 78px;
   }
   .onb-delivery-pet {
-    font-size: 64px;
+    height: 104px;
+    max-width: 150px;
+  }
+  .onb-loader-img {
+    width: 104px;
+  }
+  /* The sentence has to breathe on a phone: its rows stack, so the label sits
+     over its own options instead of wrapping mid-phrase. */
+  .onb-duo-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .onb-duo-label {
+    font-size: 17px;
+    text-align: center;
   }
   /* The skip must not get pushed off the row next to a shrinking field. */
   .onb-form {

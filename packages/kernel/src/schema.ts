@@ -1022,6 +1022,11 @@ export const onboarding = pgTable(
     // them. `phone` is child PII and optional by deliberate design — see the
     // slice notes on DPDP + verifiable parental consent.
     grade: text("grade"),
+    // S92 — how Olórin refers to the student to a tutor/parent: 'he' | 'she' |
+    // 'name' (use their first name). Asked on the same screen as grade, by the
+    // `about_you` beat. NOT a gender field — see the PRONOUNS contract for why
+    // that distinction is load-bearing rather than cosmetic.
+    pronoun: text("pronoun"),
     // ⚠️ NO LONGER ASKED (S90, founder call) — `school` is not in
     // ONBOARDING_STEPS any more. The column stays because it holds real
     // answers and dropping it buys nothing; expect it NULL on every row

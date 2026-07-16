@@ -30,6 +30,7 @@ import {
   FAV_CHARACTERS,
   ONBOARDING_ANSWER_COLUMNS,
   ONBOARDING_STEPS,
+  PRONOUNS,
   type OnboardingStep,
 } from "@b2c/kernel/contracts";
 import { onboarding, subject } from "@b2c/kernel/schema";
@@ -50,6 +51,7 @@ export type OnboardingState = {
   currentStep: OnboardingStep;
   answers: {
     grade: string | null;
+    pronoun: string | null;
     favCharacter: string | null;
     pet: string | null;
     phone: string | null;
@@ -107,6 +109,7 @@ export async function getState(
   // state stops carrying them. State tracks the FLOW, not the table.
   const empty = {
     grade: null,
+    pronoun: null,
     favCharacter: null,
     pet: null,
     phone: null,
@@ -133,11 +136,59 @@ export async function getState(
     currentStep: row.currentStep as OnboardingStep,
     answers: {
       grade: row.grade,
+      pronoun: row.pronoun,
       favCharacter: row.favCharacter,
       pet: row.pet,
       phone: row.phone,
     },
   };
+}
+
+/**
+ * S92 — the `about_you` beat: class + pronoun, committed together because they
+ * are asked on one screen (founder). It gets its own mutation rather than
+ * bending saveStep, which is one-step-one-column by design; generalising that
+ * to n-columns for a single caller would be machinery nobody else wants.
+ *
+ * BOTH are required and both are closed sets: grade because it is the one
+ * answer with a consumer waiting (D-ONB-2, subject filtering), pronoun because
+ * every option — including "just use my name" — is one we authored.
+ *
+ * It writes both in ONE upsert: a half-written screen (class saved, pronoun
+ * not) would resume with the beat already answered and the student unable to
+ * finish it.
+ */
+export async function saveAboutYou(
+  tx: Tx,
+  args: { userId: string; boardId: string; grade: string | null; pronoun: string | null },
+): Promise<OnboardingState> {
+  const { userId, boardId } = args;
+  const grade = args.grade?.trim() || null;
+  const pronoun = args.pronoun?.trim() || null;
+
+  if (!grade) throw new OnboardingValidationError("grade is required");
+  const options = await listGradeOptions(tx);
+  if (!options.includes(grade)) {
+    throw new OnboardingValidationError(
+      `grade '${grade}' is not a grade on this board (${options.join(", ") || "none"})`,
+    );
+  }
+
+  if (!pronoun) throw new OnboardingValidationError("pronoun is required");
+  if (!(PRONOUNS as readonly string[]).includes(pronoun)) {
+    throw new OnboardingValidationError(`pronoun must be one of: ${PRONOUNS.join(", ")}`);
+  }
+
+  const advanced = nextStep("about_you");
+  await tx
+    .insert(onboarding)
+    .values({ userId, boardId, currentStep: advanced, grade, pronoun })
+    .onConflictDoUpdate({
+      target: [onboarding.userId, onboarding.boardId],
+      set: { currentStep: advanced, grade, pronoun },
+    });
+
+  return getState(tx, { userId, boardId, role: "student" });
 }
 
 /**
@@ -167,16 +218,10 @@ export async function saveStep(
     throw new OnboardingValidationError(`step '${step}' does not take an answer`);
   }
 
-  // The one answer with a consumer waiting must be a grade the board really has
-  // (D-ONB-2) — otherwise subject filtering silently matches nothing later.
-  if (step === "grade") {
-    if (!value) throw new OnboardingValidationError("grade is required");
-    const options = await listGradeOptions(tx);
-    if (!options.includes(value)) {
-      throw new OnboardingValidationError(
-        `grade '${value}' is not a grade on this board (${options.join(", ") || "none"})`,
-      );
-    }
+  // S92 — about_you writes TWO columns, so it cannot come through here: this
+  // path would silently drop one of them. Loud rejection, not a partial write.
+  if (step === "about_you") {
+    throw new OnboardingValidationError("use saveAboutYou() for the 'about_you' beat");
   }
 
   // S91 — fav_character is chips, so it is closed-set and required. Two

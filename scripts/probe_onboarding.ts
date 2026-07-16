@@ -27,6 +27,7 @@ import {
   getState,
   listGradeOptions,
   OnboardingValidationError,
+  saveAboutYou,
   saveStep,
 } from "../src/services/onboarding";
 import { db, queryClient } from "../src/db/client";
@@ -117,14 +118,15 @@ async function main() {
     check("control: board B has none of A's grades (RLS scopes the chips)", opts.length === 0, JSON.stringify(opts));
   });
 
-  // ── 3. persists + advances ──────────────────────────────────────────────
+  // ── 3. persists + advances (S92: the duo beat) ──────────────────────────
   console.log("\n3. persists + advances");
   await withBoard(boardA!.id, async (tx) => {
     const st = await saveStep(tx, { ...S, step: "greet", value: null });
-    check("talk-only beat advances greet → grade", st.currentStep === "grade", st.currentStep);
-    const st2 = await saveStep(tx, { ...S, step: "grade", value: "Class_10" });
+    check("talk-only beat advances greet → about_you", st.currentStep === "about_you", st.currentStep);
+    const st2 = await saveAboutYou(tx, { ...S, grade: "Class_10", pronoun: "she" });
     check("grade persisted", st2.answers.grade === "Class_10", String(st2.answers.grade));
-    check("advanced grade → fav_character", st2.currentStep === "fav_character", st2.currentStep);
+    check("pronoun persisted in the SAME write", st2.answers.pronoun === "she", String(st2.answers.pronoun));
+    check("advanced about_you → fav_character", st2.currentStep === "fav_character", st2.currentStep);
   });
 
   // ── 4. resume mid-flow ──────────────────────────────────────────────────
@@ -136,17 +138,40 @@ async function main() {
     check("still needs onboarding (not complete)", st.needsOnboarding === true);
   });
 
-  // ── 5. grade must be a real board grade ─────────────────────────────────
+  // ── 5. validation ───────────────────────────────────────────────────────
   console.log("\n5. validation");
   await withBoard(boardA!.id, async (tx) => {
-    const e = await expectThrow(() => saveStep(tx, { ...S, step: "grade", value: "10th" }));
+    const e = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10th", pronoun: "he" }));
     check(
       "a free-text grade ('10th') is rejected",
       e instanceof OnboardingValidationError,
       e ? e.message : "did not throw",
     );
-    const e2 = await expectThrow(() => saveStep(tx, { ...S, step: "grade", value: null }));
+    const e2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: null, pronoun: "he" }));
     check("grade cannot be skipped (it is the one field with a consumer)", e2 instanceof OnboardingValidationError);
+
+    // S92 — pronoun is closed-set + required. 'name' (use my name) is the
+    // dignified way through, so there is no reason to allow a null.
+    const eP = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "Class_10", pronoun: null }));
+    check("pronoun cannot be skipped ('name' is the opt-out)", eP instanceof OnboardingValidationError);
+    const eP2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "Class_10", pronoun: "male" }));
+    check(
+      "pronoun rejects a value outside the contract",
+      eP2 instanceof OnboardingValidationError,
+      eP2 ? eP2.message : "did not throw",
+    );
+
+    // The multi-answer beat must NOT be reachable through the single-answer
+    // path — that would write one column and silently drop the other.
+    const eDuo = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "about_you", value: "Class_10" }),
+    );
+    check(
+      "saveStep('about_you') is rejected — it writes two columns",
+      eDuo instanceof OnboardingValidationError,
+      eDuo ? eDuo.message : "did not throw",
+    );
+
     const e3 = await expectThrow(() => saveStep(tx, { ...S, step: "greet", value: "hi" }));
     check("a talk-only beat refuses an answer", e3 instanceof OnboardingValidationError);
     const e4 = await expectThrow(() =>
@@ -181,7 +206,7 @@ async function main() {
   // A deletion nobody asserts is a deletion that quietly comes back. These
   // beats must be unreachable as STEPS even though their columns still exist.
   console.log("\n5b. removed beats");
-  for (const gone of ["school", "fun_fact_about", "fun_fact"]) {
+  for (const gone of ["school", "fun_fact_about", "fun_fact", "grade"]) {
     check(`'${gone}' is not in ONBOARDING_STEPS`, !(ONBOARDING_STEPS as readonly string[]).includes(gone));
   }
   await withBoard(boardA!.id, async (tx) => {
@@ -213,7 +238,7 @@ async function main() {
   check(
     "ONBOARDING_STEPS is the S91 flow",
     JSON.stringify(ONBOARDING_STEPS) ===
-      JSON.stringify(["greet", "grade", "fav_character", "pikachu", "pet", "phone", "lore", "done"]),
+      JSON.stringify(["greet", "about_you", "fav_character", "pikachu", "pet", "phone", "lore", "done"]),
     JSON.stringify(ONBOARDING_STEPS),
   );
   check("every FAV_CHARACTERS id has copy (no chip can be speechless)", FAV_CHARACTERS.length === 6);
@@ -250,8 +275,8 @@ async function main() {
   // ── 7. idempotent ───────────────────────────────────────────────────────
   console.log("\n7. idempotent");
   await withBoard(boardA!.id, async (tx) => {
-    await saveStep(tx, { ...S, step: "grade", value: "Class_9" });
-    await saveStep(tx, { ...S, step: "grade", value: "Class_9" });
+    await saveAboutYou(tx, { ...S, grade: "Class_9", pronoun: "name" });
+    await saveAboutYou(tx, { ...S, grade: "Class_9", pronoun: "name" });
     const rows = await tx
       .select()
       .from(onboarding)

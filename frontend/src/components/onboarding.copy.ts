@@ -1,6 +1,10 @@
 import type { OnboardingStep } from "@b2c/kernel/contracts";
 import { FAV_CHARACTERS, isKnownPet } from "@b2c/kernel/contracts";
 import { canEcho, looksLikeRefusal } from "../lib/safeEcho";
+import petOwl from "../assets/pets/owl.png";
+import petDragon from "../assets/pets/dragon.png";
+import petDirewolf from "../assets/pets/direwolf.png";
+import petGroot from "../assets/pets/groot.png";
 
 // Slice ONB-1 — every word Olórin says, in one file. OnboardingPage is a dumb
 // walker over this; changing the script should never mean touching the
@@ -30,7 +34,20 @@ import { canEcho, looksLikeRefusal } from "../lib/safeEcho";
 // child's answer back in 52px display type is the charm AND the risk.
 
 /** One option on a chip beat. `value` is what persists; `label` is what they read. */
-export type ChipOption = { value: string; label: string; hint?: string; emoji?: string };
+export type ChipOption = { value: string; label: string; hint?: string; img?: string };
+
+/**
+ * S92 — one row of a duo beat: a label and its options, rendered as a line of a
+ * sentence the student fills in. `style` picks the control's look.
+ */
+export type DuoRow = {
+  key: "grade" | "pronoun";
+  label: string | ((ctx: BeatCtx) => string);
+  /** 'board' = little classroom slates (founder); 'pill' = the usual chips. */
+  style: "board" | "pill";
+  /** Literal options, or null to use the board's REAL grades (D-ONB-2). */
+  chips: ChipOption[] | null;
+};
 
 /**
  * The "something else" escape hatch on a chip beat (S91, founder). Tapping it
@@ -53,10 +70,12 @@ export type BeatInput =
       source: "grades" | "literal";
       chips?: ChipOption[];
       big?: boolean;
-      /** Emoji-forward picker cards — the sticker IS the appeal (S91, pets). */
+      /** Sticker-forward picker cards — the art IS the appeal (S91/S92, pets). */
       cards?: boolean;
       other?: OtherOption;
     }
+  /** S92 — two picks on one screen, committed together (founder). */
+  | { kind: "duo"; rows: DuoRow[]; cta: string }
   | { kind: "text"; placeholder: string };
 
 /** What a beat knows when it composes its words: the name, and what's been answered. */
@@ -64,6 +83,7 @@ export type BeatCtx = {
   name: string;
   answers: {
     grade: string | null;
+    pronoun: string | null;
     favCharacter: string | null;
     pet: string | null;
     phone: string | null;
@@ -144,38 +164,48 @@ export function characterLabel(value: string | null): string | null {
   return CHARACTERS[value]?.label ?? value;
 }
 
-// ── the pets (S91, founder) ────────────────────────────────────────────────
+// ── the pets (S91, art S92) ────────────────────────────────────────────────
 //
 // Four temperaments, not four animals: the pick is the only read we get on how
-// a student sees themselves. Emoji stickers are a deliberate placeholder
-// (founder call) — they clash with Pikachu's painted style and are meant to be
-// swapped for real art. Everything about a pet lives in this one table.
-type PetCopy = { label: string; emoji: string; reaction: string; pika: string };
+// a student sees themselves. S92 replaced the placeholder emoji with the
+// founder's sticker art (background removed, white halo added) — the art is the
+// beat, and it is why this ask earns a whole screen. Everything about a pet
+// lives in this one table: swap `img` and the label and nothing else moves.
+// `spoken` is how the pet is named INSIDE a sentence ("Getting your owl…").
+// It exists because lowercasing the label is wrong for a proper noun: it
+// produced "Getting your groot…". Species go lowercase, names keep their
+// capital, and only this table knows which is which.
+type PetCopy = { label: string; spoken: string; img: string; reaction: string; pika: string };
 
 export const PET_COPY: Record<string, PetCopy> = {
   owl: {
     label: "Owl",
-    emoji: "🦉",
+    spoken: "owl",
+    img: petOwl,
     reaction: "An owl. Quiet, watches everything, misses nothing. Good company for late nights.",
     pika: "Pika-pi! One owl, coming right up!",
   },
   dragon: {
     label: "Dragon",
-    emoji: "🐉",
-    reaction: "A dragon. Ambitious. I'll pretend I didn't see the scorch marks.",
+    spoken: "dragon",
+    img: petDragon,
+    reaction: "A dragon. Small now. That doesn't last - ask anyone who's raised one.",
     pika: "Pika! One dragon! ...Pikachu is fireproof. Probably.",
   },
-  fox: {
-    label: "Fox",
-    emoji: "🦊",
-    reaction: "A fox. Clever, and a little bit of trouble. You two will get on.",
-    pika: "Pika-pi! One fox! Keep an eye on your things!",
+  direwolf: {
+    label: "Direwolf",
+    spoken: "direwolf",
+    img: petDirewolf,
+    reaction: "A direwolf. Loyal to the people it picks, and it has picked you. Winter's fine, then.",
+    pika: "Pika-pi! One direwolf! It's bigger than Pikachu!",
   },
-  panda: {
-    label: "Panda",
-    emoji: "🐼",
-    reaction: "A panda. Completely unbothered. Honestly? Wise.",
-    pika: "Pika! One panda! It's already asleep!",
+  groot: {
+    label: "Groot",
+    // A name, not a species — this is the whole reason `spoken` exists.
+    spoken: "Groot",
+    img: petGroot,
+    reaction: "Groot. Says one sentence, means about nine. I like him already.",
+    pika: "Pika! One Groot! ...He said his name. That's it. That's the whole conversation.",
   },
 };
 
@@ -185,7 +215,7 @@ const STAND_IN_PET = "owl";
 export const PET_CHIPS: ChipOption[] = Object.entries(PET_COPY).map(([value, c]) => ({
   value,
   label: c.label,
-  emoji: c.emoji,
+  img: c.img,
 }));
 
 export const PET_OTHER: OtherOption = {
@@ -194,6 +224,38 @@ export const PET_OTHER: OtherOption = {
   placeholder: "e.g. a llama",
   back: "← back to the list",
 };
+
+// ── the about-you beat (S92, founder: "ask class and gender together") ─────
+//
+// Written as a SENTENCE the student completes, not two stacked form fields —
+// "I'm in class __ , and when I talk about you I'll say __". That framing is
+// what keeps a two-input screen inside the conversation instead of dropping out
+// of it into a form, which is the failure the whole slice exists to avoid.
+//
+// The pronoun row is NOT "what is your gender". Olórin asks for what he
+// actually needs — the word he'll use when he mentions you to a tutor — and
+// "just my name" is a first-class answer, so a child who would rather not say
+// still gives a usable one. See the PRONOUNS contract.
+export const ABOUT_ROWS: DuoRow[] = [
+  {
+    key: "grade",
+    label: "I'm in class",
+    style: "board",
+    chips: null, // the board's REAL grades (D-ONB-2)
+  },
+  {
+    key: "pronoun",
+    label: "and when I mention you to a tutor, I'll say",
+    style: "pill",
+    chips: [
+      { value: "he", label: "he" },
+      { value: "she", label: "she" },
+      // The opt-out that still answers. Filled with their real first name at
+      // render time, so it reads as a choice rather than a refusal.
+      { value: "name", label: "just {name}" },
+    ],
+  },
+];
 
 export const BEATS: Beat[] = [
   {
@@ -206,11 +268,14 @@ export const BEATS: Beat[] = [
     reaction: () => "",
   },
   {
-    id: "grade",
-    // The ONLY asked field with a consumer waiting (D-ONB-2). Chips, never free
-    // text — "10th" / "X" / "tenth" all mean class 10 and none of them parse.
-    prompt: "First things first - which class are you in?",
-    input: { kind: "chips", source: "grades" },
+    id: "about_you",
+    // S92 — class + pronoun on ONE screen (founder). Grade is still the only
+    // asked field with a consumer waiting (D-ONB-2) and is still chips, never
+    // free text: "10th" / "X" / "tenth" all mean class 10 and none of them parse.
+    prompt: "First things first.",
+    input: { kind: "duo", rows: ABOUT_ROWS, cta: "That's me" },
+    // The reaction reads the GRADE (the pronoun's payoff is that Olórin simply
+    // uses it later — announcing it back would make a quiet courtesy loud).
     reaction: (v) =>
       v === "10" || v === "12"
         ? `Class ${v}! Board year - the big one. We'll make it count.`
@@ -352,13 +417,19 @@ export const LOADER_LINES = [
 ];
 
 /** The sticker that lands on the loader. A custom pet gets the stand-in. */
-export function loaderPetEmoji(pet: string | null): string {
-  if (isKnownPet(pet)) return PET_COPY[pet]!.emoji;
-  return PET_COPY[STAND_IN_PET]!.emoji;
+export function loaderPetImg(pet: string | null): string {
+  if (isKnownPet(pet)) return PET_COPY[pet]!.img;
+  return PET_COPY[STAND_IN_PET]!.img;
+}
+
+/** Alt text — the sticker is the payoff, so it must not be invisible to a reader. */
+export function loaderPetAlt(pet: string | null): string {
+  if (isKnownPet(pet)) return PET_COPY[pet]!.label;
+  return PET_COPY[STAND_IN_PET]!.label;
 }
 
 export function loaderTitle(pet: string | null): string {
-  if (isKnownPet(pet)) return `Getting your ${PET_COPY[pet]!.label.toLowerCase()}…`;
+  if (isKnownPet(pet)) return `Getting your ${PET_COPY[pet]!.spoken}…`;
   return "Setting up your account…";
 }
 

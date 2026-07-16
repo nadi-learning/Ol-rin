@@ -12,7 +12,8 @@ import {
   LOADER_LINES,
   LOADER_MIN_MS,
   firstName,
-  loaderPetEmoji,
+  loaderPetAlt,
+  loaderPetImg,
   loaderPikaSay,
   loaderTitle,
   pikachuLine,
@@ -83,6 +84,12 @@ export function OnboardingPage({
   // send, so abandoning here resumes on the chips with nothing lost — which is
   // why this doesn't need to exist on the server.
   const [otherOpen, setOtherOpen] = useState(false);
+  // S92 — the duo beat's two picks, held until "That's me". They commit in ONE
+  // write (saveAboutYou), so a half-answered screen can't be persisted.
+  const [duo, setDuo] = useState<{ grade: string | null; pronoun: string | null }>({
+    grade: null,
+    pronoun: null,
+  });
 
   const beat: Beat | undefined = BEAT_BY_ID[stepId];
   const name = useMemo(() => firstName(studentName), [studentName]);
@@ -163,6 +170,49 @@ export function OnboardingPage({
     return null;
   }
 
+  /**
+   * The shared choreography once a beat's answer is in: swap in the reply, hold
+   * it, then advance. Both commit paths (saveStep and the duo's saveAboutYou)
+   * land here so there is exactly one place that decides how a beat ends.
+   */
+  function land(next: { currentStep: OnboardingStep; answers: BeatCtx["answers"] }, said: string) {
+    setAnswers(next.answers);
+    setDraft("");
+    // The hatch belongs to the beat we're leaving, not the next one.
+    setOtherOpen(false);
+
+    if (said) {
+      setReaction(said);
+      setPhase("reacting");
+      // Let the reaction land before the next ask — this pause is what makes it
+      // read as a reply rather than a form advancing. It is the only thing on
+      // screen now, so it holds longer than it did as a chat bubble.
+      setTimeout(() => {
+        setReaction("");
+        setStepId(next.currentStep);
+        setPhase("typing");
+      }, REACTION_HOLD_MS);
+    } else {
+      setStepId(next.currentStep);
+      setPhase("typing");
+    }
+  }
+
+  /** S92 — the duo beat: both picks, one write, one reaction (keyed off grade). */
+  async function commitAboutYou() {
+    if (!beat || saving || !duo.grade || !duo.pronoun) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await trpc.onboarding.saveAboutYou.mutate(duo);
+      land(next, beat.reaction(duo.grade));
+    } catch (e: any) {
+      setError(String(e?.message ?? e).replace(/^BAD_REQUEST:\s*/, ""));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function commit(value: string | null) {
     if (!beat || saving) return;
     setSaving(true);
@@ -184,28 +234,7 @@ export function OnboardingPage({
         step: beat.id,
         value: persists ? value : null,
       });
-      setAnswers(next.answers);
-      setDraft("");
-      // The hatch belongs to the beat we're leaving, not the next one.
-      setOtherOpen(false);
-
-      const said = beat.reaction(value);
-
-      if (said) {
-        setReaction(said);
-        setPhase("reacting");
-        // Let the reaction land before the next ask — this pause is what makes
-        // it read as a reply rather than a form advancing. It is the only thing
-        // on screen now, so it holds longer than it did as a chat bubble.
-        setTimeout(() => {
-          setReaction("");
-          setStepId(next.currentStep);
-          setPhase("typing");
-        }, REACTION_HOLD_MS);
-      } else {
-        setStepId(next.currentStep);
-        setPhase("typing");
-      }
+      land(next, beat.reaction(value));
     } catch (e: any) {
       // saveStep deliberately does NOT fail open — a dropped answer would make
       // the flow lie about having saved. So surface it and let them retry.
@@ -268,6 +297,56 @@ export function OnboardingPage({
               <button className="onb-btn" disabled={saving} onClick={() => commit(null)}>
                 {beat.input.cta}
               </button>
+            )}
+
+            {/* S92 — the duo beat. Two picks written as a sentence the student
+                completes, so a two-input screen still reads as Olórin talking
+                rather than as a form. Nothing commits until "That's me": the
+                two columns land in one write, so the screen cannot end up
+                half-answered and unfinishable on resume. */}
+            {beat.input.kind === "duo" && (
+              <div className="onb-duo">
+                {beat.input.rows.map((row) => {
+                  const opts: ChipOption[] =
+                    row.chips === null ? grades.map((g) => ({ value: g, label: g })) : row.chips;
+                  const label = (typeof row.label === "function" ? row.label(ctx) : row.label)
+                    .replace("{name}", name);
+                  return (
+                    <div key={row.key} className="onb-duo-row">
+                      <span className="onb-duo-label">{label}</span>
+                      <div className="onb-duo-opts">
+                        {opts.length === 0 && row.key === "grade" ? (
+                          // An empty catalogue is broken configuration, not a
+                          // state to trap a child in — say so plainly.
+                          <span className="onb-duo-empty">— no classes set up yet —</span>
+                        ) : (
+                          opts.map((o) => (
+                            <button
+                              key={o.value}
+                              className={
+                                (row.style === "board" ? "onb-board" : "onb-chip") +
+                                (duo[row.key] === o.value ? " is-picked" : "")
+                              }
+                              disabled={saving}
+                              aria-pressed={duo[row.key] === o.value}
+                              onClick={() => setDuo((d) => ({ ...d, [row.key]: o.value }))}
+                            >
+                              {o.label.replace("{name}", name)}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                <button
+                  className="onb-btn onb-duo-cta"
+                  disabled={saving || !duo.grade || !duo.pronoun}
+                  onClick={commitAboutYou}
+                >
+                  {saving ? "…" : beat.input.cta}
+                </button>
+              </div>
             )}
 
             {/* S91 — the "something else" hatch, once tapped, replaces the
@@ -348,11 +427,7 @@ export function OnboardingPage({
                         disabled={saving}
                         onClick={() => commit(c.value)}
                       >
-                        {c.emoji && (
-                          <span className="onb-choice-emoji" aria-hidden="true">
-                            {c.emoji}
-                          </span>
-                        )}
+                        {c.img && <img src={c.img} alt="" className="onb-choice-img" />}
                         <span className="onb-choice-label">{c.label}</span>
                         {c.hint && <span className="onb-choice-hint">{c.hint}</span>}
                       </button>
@@ -450,9 +525,7 @@ function OnboardingLoader({ pet, onDone }: { pet: string | null; onDone: () => v
         {/* The pet leads — it is the thing being handed over. Pikachu is the
             courier, so he stands next to it, not in front of it. */}
         <div className="onb-delivery">
-          <span className="onb-delivery-pet" aria-hidden="true">
-            {loaderPetEmoji(pet)}
-          </span>
+          <img src={loaderPetImg(pet)} alt={loaderPetAlt(pet)} className="onb-delivery-pet" />
           <img src={pikachuWave} alt="" className="onb-loader-img" />
         </div>
         <div className="onb-pika-say onb-delivery-say">{loaderPikaSay(pet)}</div>

@@ -16,8 +16,15 @@
  * No DB, no network — safeEcho is pure. It imports FE modules directly because
  * that is where the guard lives and a copy in scripts/ would drift.
  */
+import { PETS } from "@b2c/kernel/contracts";
 import { canEcho, looksLikeRefusal } from "../frontend/src/lib/safeEcho";
-import { BEAT_BY_ID, loaderPikaSay, pikachuLine } from "../frontend/src/components/onboarding.copy";
+import {
+  BEAT_BY_ID,
+  PET_COPY,
+  loaderPikaSay,
+  loaderTitle,
+  pikachuLine,
+} from "../frontend/src/components/onboarding.copy";
 
 let passed = 0;
 let failed = 0;
@@ -103,8 +110,20 @@ check(
   petReaction("no"),
 );
 check("a real custom pet IS taken seriously", petReaction("llama").includes("llama"), petReaction("llama"));
-check("a known pet gets its own line", petReaction("dragon").includes("scorch"), petReaction("dragon"));
 check("a blocked pet is never repeated", !petReaction("fuck you").includes("fuck"), petReaction("fuck you"));
+
+// Every known pet gets its OWN line — asserted as a PROPERTY, not by grepping
+// for a word. The previous version looked for "scorch" in the dragon's reply and
+// broke the moment the copy was rewritten, which is a probe failing for a
+// non-reason. What actually matters: four pets, four distinct authored lines,
+// none of them the generic fallback.
+const petLines = PETS.map((p) => petReaction(p));
+check("every known pet has a line", petLines.every((l) => l.length > 0));
+check("and no two pets share one", new Set(petLines).size === PETS.length, JSON.stringify(petLines));
+check(
+  "each pet's line is the one authored in PET_COPY",
+  PETS.every((p) => petReaction(p) === PET_COPY[p]!.reaction),
+);
 
 const phoneReaction = BEAT_BY_ID["phone"]!.reaction;
 check(
@@ -117,6 +136,17 @@ check("a real number is accepted", phoneReaction("9876543210").includes("Got it"
 // ── 8. Pikachu's delivery line (S91) ───────────────────────────────────────
 console.log("\n8. the pet delivery");
 check("a known pet arrives now, no promise made", loaderPikaSay("owl").includes("owl") && !loaderPikaSay("owl").includes("2-3"));
+
+// S92 — the loader used to lowercase the label, which printed "Getting your
+// groot…". Every green gate passed; only looking at the screen caught it. A
+// name keeps its capital, a species does not.
+check("a species is spoken in lower case", loaderTitle("owl") === "Getting your owl…", loaderTitle("owl"));
+check("a NAME keeps its capital", loaderTitle("groot") === "Getting your Groot…", loaderTitle("groot"));
+check(
+  "a custom pet promises nothing in the title",
+  loaderTitle("llama") === "Setting up your account…",
+  loaderTitle("llama"),
+);
 check("a custom pet gets the 2-3 dayssss gag", loaderPikaSay("llama").includes("2-3 dayssss"));
 check("...and the owl covers, so nobody leaves petless", loaderPikaSay("llama").includes("owl"));
 check("a refused pet is never repeated in the gag", !loaderPikaSay("no").includes("One no"), loaderPikaSay("no"));

@@ -15,6 +15,7 @@ import {
   getState as getOnboardingState,
   listGradeOptions,
   OnboardingValidationError,
+  saveAboutYou as saveOnboardingAboutYou,
   saveStep as saveOnboardingStep,
   type OnboardingState,
 } from "../services/onboarding";
@@ -223,6 +224,7 @@ export const appRouter = router({
           currentStep: "done",
           answers: {
             grade: null,
+            pronoun: null,
             favCharacter: null,
             pet: null,
             phone: null,
@@ -245,6 +247,27 @@ export const appRouter = router({
             boardId: ctx.board.id,
             step: input.step,
             value: input.value,
+          });
+        } catch (e) {
+          if (e instanceof OnboardingValidationError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    // S92 — the one beat that answers TWO things on one screen (class +
+    // pronoun). Same no-fail-open stance as saveStep, and both values land in a
+    // single write so the screen can never be half-answered.
+    saveAboutYou: protectedProcedure
+      .input(z.object({ grade: z.string().nullable(), pronoun: z.string().nullable() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await saveOnboardingAboutYou(ctx.tx, {
+            userId: ctx.membership.userId,
+            boardId: ctx.board.id,
+            grade: input.grade,
+            pronoun: input.pronoun,
           });
         } catch (e) {
           if (e instanceof OnboardingValidationError) {

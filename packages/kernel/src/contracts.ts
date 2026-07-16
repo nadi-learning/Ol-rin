@@ -91,9 +91,13 @@ export type ChatMessage = z.infer<typeof ChatMessage>;
 // proves nobody is listening. Chips fix that at the root rather than patching
 // it — every answer we can receive is one we authored a reaction for.
 // `fun_fact_about`/`fun_fact` COLUMNS survive, same reasoning as `school`.
+// S92 — `grade` became `about_you` (founder): class and pronoun are asked on ONE
+// screen. It is the flow's only multi-answer beat, so it does NOT go through
+// saveStep (which is one-step-one-column by design) — it has its own mutation,
+// saveAboutYou. saveStep REJECTS it rather than half-writing it.
 export const ONBOARDING_STEPS = [
   "greet",
-  "grade",
+  "about_you",
   "fav_character",
   "pikachu",
   "pet",
@@ -103,6 +107,19 @@ export const ONBOARDING_STEPS = [
 ] as const;
 export const OnboardingStep = z.enum(ONBOARDING_STEPS);
 export type OnboardingStep = z.infer<typeof OnboardingStep>;
+
+// S92 — how Olórin refers to the student when he talks ABOUT them (to a tutor,
+// in a report). Deliberately NOT a gender field:
+//  - it has a consumer the moment tutor/parent copy needs a pronoun, whereas
+//    "gender" would be stored and never read — the exact shape of `school`,
+//    which S90 cut for being askable rather than needed;
+//  - "just use my name" is a real answer, not a refusal, so a child who does
+//    not want to answer has a dignified way through that still returns
+//    something usable.
+// 'name' means: use their first name instead of a pronoun.
+export const PRONOUNS = ["he", "she", "name"] as const;
+export const Pronoun = z.enum(PRONOUNS);
+export type Pronoun = z.infer<typeof Pronoun>;
 
 // S91 — fav_character is a CLOSED SET (founder: "we should not show input bar
 // instead give option chips"). These are IDS, not words: the labels and every
@@ -132,7 +149,10 @@ export type FavCharacter = z.infer<typeof FavCharacter>;
 // Deliberately four distinct self-images rather than four animals: the pick is
 // the only read we get on how a student sees themselves, and 'owl vs dragon'
 // says something that 'dog vs cat' does not.
-export const PETS = ["owl", "dragon", "fox", "panda"] as const;
+//
+// S92 — fox/panda gave way to direwolf/groot when the founder supplied real
+// sticker art for all four. The art is the beat; emoji were always a stand-in.
+export const PETS = ["owl", "dragon", "direwolf", "groot"] as const;
 export const Pet = z.enum(PETS);
 export type Pet = z.infer<typeof Pet>;
 
@@ -141,10 +161,10 @@ export function isKnownPet(pet: string | null | undefined): pet is Pet {
   return Boolean(pet) && (PETS as readonly string[]).includes(pet!);
 }
 
-// The only beats that persist an answer → the onboarding column each writes.
-// Anything not in here is a talk-only beat and must not carry a value.
+// The only SINGLE-answer beats → the onboarding column each writes. Anything
+// not in here either takes no answer (greet/pikachu/lore) or is the multi-answer
+// beat `about_you`, which has its own mutation. Both are rejected by saveStep.
 export const ONBOARDING_ANSWER_COLUMNS = {
-  grade: "grade",
   fav_character: "favCharacter",
   pet: "pet",
   phone: "phone",
