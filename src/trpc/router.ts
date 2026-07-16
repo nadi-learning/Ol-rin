@@ -16,6 +16,7 @@ import {
   listGradeOptions,
   OnboardingValidationError,
   saveStep as saveOnboardingStep,
+  type OnboardingState,
 } from "../services/onboarding";
 import {
   ChapterHasDependentDataError,
@@ -202,7 +203,12 @@ export const appRouter = router({
     // on the dashboard, never be trapped behind a broken welcome. Swallowing
     // errors is normally a smell — here it is the requirement (G3 spirit), so
     // it is loud in the log and silent to the user.
-    getState: protectedProcedure.query(async ({ ctx }) => {
+    // The `: Promise<OnboardingState>` annotation is load-bearing, not decoration
+    // (S90): without it the fallback below is just an object literal in a catch,
+    // so tsc widens the return to a UNION and the fail-open shape is free to
+    // drift from the contract. It did — it still carried `school` (removed) and
+    // lacked the fun-fact fields, and a clean typecheck said nothing.
+    getState: protectedProcedure.query(async ({ ctx }): Promise<OnboardingState> => {
       try {
         return await getOnboardingState(ctx.tx, {
           userId: ctx.membership.userId,
@@ -213,9 +219,14 @@ export const appRouter = router({
         console.error("[onboarding.getState] failing open:", e);
         return {
           needsOnboarding: false,
-          status: "completed" as const,
-          currentStep: "done" as const,
-          answers: { grade: null, school: null, favCharacter: null, phone: null },
+          status: "completed",
+          currentStep: "done",
+          answers: {
+            grade: null,
+            favCharacter: null,
+            pet: null,
+            phone: null,
+          },
         };
       }
     }),

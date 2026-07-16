@@ -27,6 +27,7 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
+  FAV_CHARACTERS,
   ONBOARDING_ANSWER_COLUMNS,
   ONBOARDING_STEPS,
   type OnboardingStep,
@@ -49,8 +50,8 @@ export type OnboardingState = {
   currentStep: OnboardingStep;
   answers: {
     grade: string | null;
-    school: string | null;
     favCharacter: string | null;
+    pet: string | null;
     phone: string | null;
   };
 };
@@ -101,7 +102,15 @@ export async function getState(
   tx: Tx,
   args: { userId: string; boardId: string; role: string },
 ): Promise<OnboardingState> {
-  const empty = { grade: null, school: null, favCharacter: null, phone: null };
+  // `school` (S90) and the fun-fact pair (S91) are deliberately absent: the
+  // columns still exist, but the beats are gone and nothing reads them, so the
+  // state stops carrying them. State tracks the FLOW, not the table.
+  const empty = {
+    grade: null,
+    favCharacter: null,
+    pet: null,
+    phone: null,
+  };
 
   // Exempt, not forbidden.
   if (args.role !== "student") {
@@ -124,8 +133,8 @@ export async function getState(
     currentStep: row.currentStep as OnboardingStep,
     answers: {
       grade: row.grade,
-      school: row.school,
       favCharacter: row.favCharacter,
+      pet: row.pet,
       phone: row.phone,
     },
   };
@@ -168,6 +177,31 @@ export async function saveStep(
         `grade '${value}' is not a grade on this board (${options.join(", ") || "none"})`,
       );
     }
+  }
+
+  // S91 — fav_character is chips, so it is closed-set and required. Two
+  // reasons, and the second is the load-bearing one:
+  //  - every id maps to a reaction we authored; an unknown id would leave
+  //    Olórin with nothing to say and Pikachu shouting a raw string;
+  //  - it is the flow's loudest echo. Rejecting anything off-list is what makes
+  //    "Pikachu can only say something we wrote" true rather than hoped-for.
+  // Unreachable from the UI (there is no text input left here) — this fires
+  // only on a hand-rolled request, which is precisely when it should.
+  if (step === "fav_character") {
+    if (!value) throw new OnboardingValidationError("fav_character is required");
+    if (!(FAV_CHARACTERS as readonly string[]).includes(value)) {
+      throw new OnboardingValidationError(
+        `fav_character must be one of: ${FAV_CHARACTERS.join(", ")}`,
+      );
+    }
+  }
+
+  // S91 — pet is required but deliberately NOT closed-set: the "something else"
+  // chip opens a text field, and that free text IS the answer (it is what
+  // Pikachu promises to arrange). Non-empty is the whole contract; isKnownPet()
+  // downstream decides arrives-now vs 2-3-dayssss.
+  if (step === "pet" && !value) {
+    throw new OnboardingValidationError("pet is required");
   }
 
   if (step === "done") {

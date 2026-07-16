@@ -21,6 +21,7 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { appUser, board, onboarding, subject } from "@b2c/kernel/schema";
+import { FAV_CHARACTERS, ONBOARDING_STEPS, isKnownPet } from "@b2c/kernel/contracts";
 import {
   complete,
   getState,
@@ -123,14 +124,14 @@ async function main() {
     check("talk-only beat advances greet → grade", st.currentStep === "grade", st.currentStep);
     const st2 = await saveStep(tx, { ...S, step: "grade", value: "Class_10" });
     check("grade persisted", st2.answers.grade === "Class_10", String(st2.answers.grade));
-    check("advanced grade → school", st2.currentStep === "school", st2.currentStep);
+    check("advanced grade → fav_character", st2.currentStep === "fav_character", st2.currentStep);
   });
 
   // ── 4. resume mid-flow ──────────────────────────────────────────────────
   console.log("\n4. resume mid-flow");
   await withBoard(boardA!.id, async (tx) => {
     const st = await getState(tx, S);
-    check("a fresh read resumes at the stored beat", st.currentStep === "school", st.currentStep);
+    check("a fresh read resumes at the stored beat", st.currentStep === "fav_character", st.currentStep);
     check("and still knows the earlier answer", st.answers.grade === "Class_10");
     check("still needs onboarding (not complete)", st.needsOnboarding === true);
   });
@@ -152,16 +153,98 @@ async function main() {
       saveStep(tx, { ...S, step: "done" as any, value: null }),
     );
     check("'done' cannot be reached via saveStep", e4 instanceof OnboardingValidationError);
+
+    // S91 — fav_character is chips now, so it is closed-set. This is the claim
+    // that makes "Pikachu can only shout something we wrote" true: the id he
+    // echoes cannot be a string a student typed.
+    const e5 = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "fav_character", value: "No movie" }),
+    );
+    check(
+      "fav_character rejects free text ('No movie' — the S90 bug, at the root)",
+      e5 instanceof OnboardingValidationError,
+      e5 ? e5.message : "did not throw",
+    );
+    const e6 = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "fav_character", value: null }),
+    );
+    check("fav_character cannot be skipped (every chip is an answer)", e6 instanceof OnboardingValidationError);
+
+    // S91 — pet is required but NOT closed-set: 'something else' is a real
+    // answer. Both halves of that need asserting, or a later tightening
+    // silently kills the hatch.
+    const e7 = await expectThrow(() => saveStep(tx, { ...S, step: "pet", value: null }));
+    check("pet is required", e7 instanceof OnboardingValidationError);
   });
 
-  // ── 6. skip works ───────────────────────────────────────────────────────
-  console.log("\n6. skip");
+  // ── 5b. the removed beats are really gone (S90, S91) ────────────────────
+  // A deletion nobody asserts is a deletion that quietly comes back. These
+  // beats must be unreachable as STEPS even though their columns still exist.
+  console.log("\n5b. removed beats");
+  for (const gone of ["school", "fun_fact_about", "fun_fact"]) {
+    check(`'${gone}' is not in ONBOARDING_STEPS`, !(ONBOARDING_STEPS as readonly string[]).includes(gone));
+  }
   await withBoard(boardA!.id, async (tx) => {
-    const st = await saveStep(tx, { ...S, step: "school", value: null });
-    check("optional beat skips with no answer", st.answers.school === null);
-    check("and still advances school → fav_character", st.currentStep === "fav_character", st.currentStep);
-    const blank = await saveStep(tx, { ...S, step: "fav_character", value: "   " });
-    check("whitespace-only is stored as null, not '   '", blank.answers.favCharacter === null);
+    const e = await expectThrow(() => saveStep(tx, { ...S, step: "school" as any, value: "DPS" }));
+    check(
+      "saveStep('school') is rejected — the beat no longer exists",
+      e instanceof OnboardingValidationError,
+      e ? e.message : "did not throw",
+    );
+    const e2 = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "fun_fact" as any, value: "Ravi solves cubes" }),
+    );
+    check(
+      "saveStep('fun_fact') is rejected — S91 removed the beat",
+      e2 instanceof OnboardingValidationError,
+      e2 ? e2.message : "did not throw",
+    );
+    const e3 = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "fun_fact_about" as any, value: "friend" }),
+    );
+    check("saveStep('fun_fact_about') is rejected — S91 removed the beat", e3 instanceof OnboardingValidationError);
+  });
+
+  // ── 5c. the flow's shape (S91) ──────────────────────────────────────────
+  // The ORDER is the contract the FE copy is keyed by and the server resumes
+  // on. Asserting it here is what stops a reorder from silently teleporting a
+  // half-done student.
+  console.log("\n5c. the beat order");
+  check(
+    "ONBOARDING_STEPS is the S91 flow",
+    JSON.stringify(ONBOARDING_STEPS) ===
+      JSON.stringify(["greet", "grade", "fav_character", "pikachu", "pet", "phone", "lore", "done"]),
+    JSON.stringify(ONBOARDING_STEPS),
+  );
+  check("every FAV_CHARACTERS id has copy (no chip can be speechless)", FAV_CHARACTERS.length === 6);
+
+  // ── 6. the S91 walk: chips, the pet, and the skip ───────────────────────
+  console.log("\n6. chips, pet, skip");
+  await withBoard(boardA!.id, async (tx) => {
+    // Whitespace-only is now a REJECT, not a null: fav_character is required.
+    const blankErr = await expectThrow(() => saveStep(tx, { ...S, step: "fav_character", value: "   " }));
+    check("whitespace-only fav_character is rejected, not stored blank", blankErr instanceof OnboardingValidationError);
+
+    const ch = await saveStep(tx, { ...S, step: "fav_character", value: "iron_man" });
+    check("a chip id persists", ch.answers.favCharacter === "iron_man", String(ch.answers.favCharacter));
+    check("advanced fav_character → pikachu", ch.currentStep === "pikachu", ch.currentStep);
+
+    await saveStep(tx, { ...S, step: "pikachu", value: null });
+
+    // The pet: a known id, then the free-text hatch overwriting it.
+    const known = await saveStep(tx, { ...S, step: "pet", value: "owl" });
+    check("a known pet persists", known.answers.pet === "owl", String(known.answers.pet));
+    check("advanced pet → phone", known.currentStep === "phone", known.currentStep);
+    check("isKnownPet('owl') → it arrives now", isKnownPet(known.answers.pet) === true);
+
+    const custom = await saveStep(tx, { ...S, step: "pet", value: "llama" });
+    check("a CUSTOM pet is allowed (the 'something else' hatch)", custom.answers.pet === "llama", String(custom.answers.pet));
+    check("isKnownPet('llama') → false, so it gets the 2-3 dayssss line", isKnownPet(custom.answers.pet) === false);
+
+    const skipped = await saveStep(tx, { ...S, step: "phone", value: null });
+    check("optional phone skips with no answer", skipped.answers.phone === null);
+    check("and still advances phone → lore", skipped.currentStep === "lore", skipped.currentStep);
+    check("the pet survives the skip", skipped.answers.pet === "llama");
   });
 
   // ── 7. idempotent ───────────────────────────────────────────────────────

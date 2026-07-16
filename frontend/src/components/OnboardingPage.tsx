@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ONBOARDING_ANSWER_COLUMNS, type OnboardingStep } from "@b2c/kernel/contracts";
+import {
+  ONBOARDING_ANSWER_COLUMNS,
+  ONBOARDING_STEPS,
+  type OnboardingStep,
+} from "@b2c/kernel/contracts";
 import { trpc } from "../trpc";
 import { useTypewriter } from "../lib/useTypewriter";
 import pikachuWave from "../assets/pikachu-wave.png";
 import {
-  BEATS,
   BEAT_BY_ID,
   LOADER_LINES,
   LOADER_MIN_MS,
-  LOADER_TITLE,
-  LORE_CLOSER,
   firstName,
+  loaderPetEmoji,
+  loaderPikaSay,
+  loaderTitle,
   pikachuLine,
 } from "./onboarding.copy";
-import type { Beat } from "./onboarding.copy";
+import type { Beat, BeatCtx, ChipOption } from "./onboarding.copy";
 import "./onboarding.css";
 
 // Slice ONB-1 Stage 2 — the conversational welcome, first LOGIN (not signup;
@@ -28,13 +32,25 @@ import "./onboarding.css";
 // closing the tab at beat 4 resumes at beat 4. That is also why there is no
 // "submit everything at the end" — a refresh is the common case for a child on
 // a phone, and a client-side buffer would lose the lot.
+//
+// 🔴 NO TRANSCRIPT (S90, founder call). One question is on screen at a time:
+// ask → answer → Olórin's reply, alone → next ask. The scrolling chat log this
+// replaced buried the live question under history that nobody re-reads, and it
+// grew until the thing you were meant to answer sat below the fold. Nothing
+// here is lost by forgetting it — every answer is already committed server-side
+// the moment it's given.
 
 type Phase = "typing" | "input" | "reacting";
 
-type Entry = { who: "olorin" | "student"; text: string };
-
-const TYPE_MS = 26;
-const REACTION_HOLD_MS = 900;
+// S90: retuned to the Revision-landing feel (founder feedback) — 45ms is the
+// landing hero's exact speed; the hold grew because the reaction is now the
+// only thing on screen, not a bubble in a stream. LEAD_IN_MS holds the first
+// beat until the student is actually looking: after the login redirect the
+// greet used to start typing immediately and was fully settled by the time
+// their eyes landed on the tab — theatre without an audience.
+const TYPE_MS = 45;
+const REACTION_HOLD_MS = 1800;
+const LEAD_IN_MS = 500;
 
 export function OnboardingPage({
   studentName,
@@ -44,7 +60,7 @@ export function OnboardingPage({
 }: {
   studentName: string;
   initialStep: OnboardingStep;
-  initialAnswers: { grade: string | null; school: string | null; favCharacter: string | null; phone: string | null };
+  initialAnswers: BeatCtx["answers"];
   onDone: () => void;
 }) {
   const reducedMotion = useRef(
@@ -56,14 +72,17 @@ export function OnboardingPage({
   // complete() never landed (a tab closed on the loader) — go straight to it.
   const [stepId, setStepId] = useState<OnboardingStep>(initialStep);
   const [phase, setPhase] = useState<Phase>("typing");
-  const [transcript, setTranscript] = useState<Entry[]>([]);
   const [draft, setDraft] = useState("");
   const [grades, setGrades] = useState<string[]>([]);
   const [answers, setAnswers] = useState(initialAnswers);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reaction, setReaction] = useState("");
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // S91 — the "something else" hatch on a chip beat. Local, not a step: tapping
+  // it swaps the chips for a text field in place. Nothing commits until they
+  // send, so abandoning here resumes on the chips with nothing lost — which is
+  // why this doesn't need to exist on the server.
+  const [otherOpen, setOtherOpen] = useState(false);
 
   const beat: Beat | undefined = BEAT_BY_ID[stepId];
   const name = useMemo(() => firstName(studentName), [studentName]);
@@ -77,29 +96,64 @@ export function OnboardingPage({
       .catch(() => setGrades([]));
   }, []);
 
-  const promptText = beat ? beat.prompt.replace("{name}", name) : "";
-  const { visible: typedPrompt, done: promptDone } = useTypewriter(
-    promptText,
+  // `begun` gates the FIRST keystroke on (a) the tab being visible and (b) a
+  // short lead-in. Without it the greet types during the login redirect — in a
+  // background tab, or before the student has even looked — and what they see
+  // is a fully-settled screen with no typing at all (S90, founder feedback).
+  const [begun, setBegun] = useState(false);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      t = setTimeout(() => setBegun(true), LEAD_IN_MS);
+    };
+    if (document.visibilityState === "visible") {
+      arm();
+    } else {
+      const onVis = () => {
+        if (document.visibilityState === "visible") {
+          document.removeEventListener("visibilitychange", onVis);
+          arm();
+        }
+      };
+      document.addEventListener("visibilitychange", onVis);
+      return () => {
+        document.removeEventListener("visibilitychange", onVis);
+        if (t) clearTimeout(t);
+      };
+    }
+    return () => {
+      if (t) clearTimeout(t);
+    };
+  }, []);
+
+  const ctx: BeatCtx = { name, answers };
+  const promptText = beat
+    ? (typeof beat.prompt === "function" ? beat.prompt(ctx) : beat.prompt).replace("{name}", name)
+    : "";
+  const subText = beat?.sub
+    ? (typeof beat.sub === "function" ? beat.sub(ctx) : beat.sub).replace("{name}", name)
+    : "";
+
+  // Empty text until `begun`: the hook treats animate=false as "render it all
+  // instantly", so holding the TEXT back (not the animate flag) is what keeps
+  // the stage blank-with-caret during the lead-in. Reduced motion skips the
+  // wait — instant is that path's contract.
+  const { visible: typedPrompt, done: typedDone } = useTypewriter(
+    begun || reducedMotion ? promptText : "",
     !reducedMotion && phase === "typing",
     TYPE_MS,
   );
+  const promptDone = (begun || reducedMotion) && typedDone;
 
   useEffect(() => {
     if (phase === "typing" && promptDone) setPhase("input");
   }, [phase, promptDone]);
 
-  // `promptDone` is load-bearing here, not incidental: the Pikachu block and
-  // every `sub` line only mount once the typewriter finishes. Without it in the
-  // deps they render BELOW the fold and the scroll never chases them — the
-  // Pikachu payoff, the entire reason that beat exists, was invisible.
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [transcript, phase, reaction, promptDone]);
-
   // The loader beat. A minimum dwell (LOADER_MIN_MS) so finishing reads as
   // deliberate rather than as a hang — and so a fast complete() doesn't flash.
+  // S91: it needs the pet, because the close IS the pet arriving.
   if (stepId === "done") {
-    return <OnboardingLoader onDone={onDone} />;
+    return <OnboardingLoader pet={answers.pet} onDone={onDone} />;
   }
 
   if (!beat) {
@@ -122,8 +176,7 @@ export function OnboardingPage({
       //
       // Keyed off ONBOARDING_ANSWER_COLUMNS — the SAME contract the server
       // validates against — so a new beat can't drift the two apart. The tapped
-      // value still drives the reaction + the transcript bubble; it just isn't
-      // persisted.
+      // value still drives the reaction; it just isn't persisted.
       const persists = Boolean(
         (ONBOARDING_ANSWER_COLUMNS as Record<string, string | undefined>)[beat.id],
       );
@@ -132,25 +185,19 @@ export function OnboardingPage({
         value: persists ? value : null,
       });
       setAnswers(next.answers);
-
-      const entries: Entry[] = [{ who: "olorin", text: promptText }];
-      if (value) entries.push({ who: "student", text: value });
+      setDraft("");
+      // The hatch belongs to the beat we're leaving, not the next one.
+      setOtherOpen(false);
 
       const said = beat.reaction(value);
-      setTranscript((t) => [...t, ...entries]);
-      setDraft("");
 
       if (said) {
         setReaction(said);
         setPhase("reacting");
         // Let the reaction land before the next ask — this pause is what makes
-        // it read as a reply rather than a form advancing.
+        // it read as a reply rather than a form advancing. It is the only thing
+        // on screen now, so it holds longer than it did as a chat bubble.
         setTimeout(() => {
-          setTranscript((t) => [
-            ...t,
-            { who: "olorin", text: said },
-            ...(beat.id === "lore" ? [{ who: "olorin" as const, text: LORE_CLOSER }] : []),
-          ]);
           setReaction("");
           setStepId(next.currentStep);
           setPhase("typing");
@@ -168,42 +215,49 @@ export function OnboardingPage({
     }
   }
 
-  const chips =
+  // Grade chips arrive as bare strings from the server; literal chips are
+  // authored as {value,label} because what persists and what's readable are
+  // not the same thing (fav_character stores 'iron_man', shows "Iron Man").
+  const chips: ChipOption[] =
     beat.input.kind === "chips"
       ? beat.input.source === "grades"
-        ? grades
+        ? grades.map((g) => ({ value: g, label: g }))
         : (beat.input.chips ?? [])
       : [];
+  const bigChips = beat.input.kind === "chips" && beat.input.big === true;
+  const cardChips = beat.input.kind === "chips" && beat.input.cards === true;
+  const other = beat.input.kind === "chips" ? beat.input.other : undefined;
+  const chipsClass = cardChips
+    ? "onb-chips is-cards"
+    : bigChips
+      ? "onb-chips is-big"
+      : "onb-chips";
 
   return (
     <div className="onb-root">
       <div className="onb-card">
-        <div className="onb-scroll" ref={scrollRef}>
-          {transcript.map((e, i) => (
-            <div key={i} className={e.who === "olorin" ? "onb-line onb-line-olorin" : "onb-line onb-line-student"}>
-              {e.text}
-            </div>
-          ))}
-
+        <div className="onb-stagewrap">
+          {/* The live beat, alone. `key={stepId}` replays the settle animation
+              per beat: a new beat is a new mount. */}
           {phase !== "reacting" && (
-            <div className="onb-line onb-line-olorin onb-line-live">
-              {phase === "typing" ? typedPrompt : promptText}
-              {phase === "typing" && !promptDone && <span className="onb-caret" />}
+            <div key={stepId} className="onb-stage">
+              <div className="onb-stage-prompt">
+                {phase === "typing" ? typedPrompt : promptText}
+                {phase === "typing" && !promptDone && <span className="onb-caret" />}
+              </div>
+
+              {subText && promptDone && <div className="onb-sub">{subText}</div>}
+
+              {beat.id === "pikachu" && promptDone && (
+                <div className="onb-pika">
+                  <img src={pikachuWave} alt="" className="onb-pika-img" />
+                  <div className="onb-pika-say">{pikachuLine(answers.favCharacter)}</div>
+                </div>
+              )}
             </div>
           )}
 
-          {phase !== "reacting" && beat.sub && promptDone && (
-            <div className="onb-sub">{beat.sub}</div>
-          )}
-
-          {beat.id === "pikachu" && promptDone && phase !== "reacting" && (
-            <div className="onb-pika">
-              <img src={pikachuWave} alt="" className="onb-pika-img" />
-              <div className="onb-pika-say">{pikachuLine(answers.favCharacter)}</div>
-            </div>
-          )}
-
-          {reaction && <div className="onb-line onb-line-olorin onb-line-live">{reaction}</div>}
+          {reaction && <div className="onb-react">{reaction}</div>}
         </div>
 
         {phase === "input" && (
@@ -216,21 +270,108 @@ export function OnboardingPage({
               </button>
             )}
 
-            {beat.input.kind === "chips" && (
-              <div className="onb-chips">
+            {/* S91 — the "something else" hatch, once tapped, replaces the
+                chips with a text field for THIS beat. Same commit path: the
+                typed value is the answer. `back` is not optional politeness —
+                without it a mis-tap traps a student on a text field for a
+                question that was always meant to be a pick. */}
+            {beat.input.kind === "chips" && otherOpen && other && (
+              <form
+                className="onb-form"
+                onSubmit={(ev) => {
+                  ev.preventDefault();
+                  if (draft.trim()) commit(draft.trim());
+                }}
+              >
+                <input
+                  className="onb-field"
+                  value={draft}
+                  autoFocus
+                  placeholder={other.placeholder}
+                  onChange={(ev) => setDraft(ev.target.value)}
+                  disabled={saving}
+                />
+                <button className="onb-btn" type="submit" disabled={saving || !draft.trim()}>
+                  {saving ? "…" : "Send"}
+                </button>
+                <button
+                  type="button"
+                  className="onb-skip"
+                  disabled={saving}
+                  onClick={() => {
+                    setOtherOpen(false);
+                    setDraft("");
+                  }}
+                >
+                  {other.back}
+                </button>
+              </form>
+            )}
+
+            {beat.input.kind === "chips" && !otherOpen && (
+              <div className={chipsClass}>
                 {chips.length === 0 && beat.input.source === "grades" ? (
                   // No grades on the board = nothing truthful to offer. Let them
                   // past rather than trap them behind an empty chip row.
-                  <button className="onb-btn" disabled={saving} onClick={() => setStepId("school")}>
+                  //
+                  // This CANNOT go through commit(): grade is required
+                  // server-side (D-ONB-2), so a null would be rejected and the
+                  // student would be stuck on an unanswerable beat. So it walks
+                  // the client past it without persisting — the grade stays
+                  // NULL, complete() still finishes the flow, and a refresh
+                  // simply lands back here (an empty-catalogue board is broken
+                  // configuration, not a state we can resume out of).
+                  //
+                  // The successor is read from ONBOARDING_STEPS — the SAME
+                  // ordered contract the server advances by. It used to be the
+                  // literal "school", which S90 deleted: a hardcoded next step
+                  // is a drift waiting to happen.
+                  <button
+                    className="onb-btn"
+                    disabled={saving}
+                    onClick={() => {
+                      const after = ONBOARDING_STEPS[ONBOARDING_STEPS.indexOf(beat.id) + 1];
+                      if (after) {
+                        setStepId(after);
+                        setPhase("typing");
+                      }
+                    }}
+                  >
                     Skip
                   </button>
                 ) : (
-                  chips.map((c) => (
-                    <button key={c} className="onb-chip" disabled={saving} onClick={() => commit(c)}>
-                      {c}
-                    </button>
-                  ))
+                  <>
+                    {chips.map((c) => (
+                      <button
+                        key={c.value}
+                        className={bigChips || cardChips ? "onb-choice" : "onb-chip"}
+                        disabled={saving}
+                        onClick={() => commit(c.value)}
+                      >
+                        {c.emoji && (
+                          <span className="onb-choice-emoji" aria-hidden="true">
+                            {c.emoji}
+                          </span>
+                        )}
+                        <span className="onb-choice-label">{c.label}</span>
+                        {c.hint && <span className="onb-choice-hint">{c.hint}</span>}
+                      </button>
+                    ))}
+                  </>
                 )}
+              </div>
+            )}
+
+            {/* The hatch is NOT a fifth pet, so it doesn't wear a pet card —
+                as one it wrapped onto a row of its own and read as a layout
+                accident. A quieter control under the row says what it is: the
+                way out of the list. */}
+            {beat.input.kind === "chips" && !otherOpen && other && chips.length > 0 && (
+              <div className="onb-other-row">
+                <button className="onb-other" disabled={saving} onClick={() => setOtherOpen(true)}>
+                  {other.emoji && <span aria-hidden="true">{other.emoji} </span>}
+                  {other.label}
+                </button>
               </div>
             )}
 
@@ -273,14 +414,14 @@ export function OnboardingPage({
 }
 
 /**
- * The close. Commits complete() while Pikachu covers the latency, with a
- * minimum dwell so a fast commit doesn't flash past.
+ * The close — S91: no longer a spinner with a mascot, but the moment the PET
+ * ARRIVES. Pikachu hands it over while complete() commits underneath, with a
+ * minimum dwell so a fast commit doesn't flash the delivery past.
  *
- * The fun activity here is deliberately under-specified (founder: "will think
- * about this later") — it is isolated to LOADER_* in the copy file so replacing
- * it never touches this component.
+ * Every word (including the "2-3 dayssss" line for a pet we have to "arrange")
+ * lives in the copy file's loader* helpers. This component only decides WHEN.
  */
-function OnboardingLoader({ onDone }: { onDone: () => void }) {
+function OnboardingLoader({ pet, onDone }: { pet: string | null; onDone: () => void }) {
   const [line, setLine] = useState(0);
 
   useEffect(() => {
@@ -306,8 +447,16 @@ function OnboardingLoader({ onDone }: { onDone: () => void }) {
   return (
     <div className="onb-root">
       <div className="onb-card onb-card-loader">
-        <img src={pikachuWave} alt="" className="onb-loader-img" />
-        <div className="onb-loader-title">{LOADER_TITLE}</div>
+        {/* The pet leads — it is the thing being handed over. Pikachu is the
+            courier, so he stands next to it, not in front of it. */}
+        <div className="onb-delivery">
+          <span className="onb-delivery-pet" aria-hidden="true">
+            {loaderPetEmoji(pet)}
+          </span>
+          <img src={pikachuWave} alt="" className="onb-loader-img" />
+        </div>
+        <div className="onb-pika-say onb-delivery-say">{loaderPikaSay(pet)}</div>
+        <div className="onb-loader-title">{loaderTitle(pet)}</div>
         <div className="onb-loader-line">{LOADER_LINES[line]}</div>
         <div className="onb-loader-bar">
           <span />

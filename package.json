@@ -76,6 +76,7 @@
     "probe:landing": "bun scripts/probe_landing.ts",
     "probe:authhardening": "bun scripts/probe_auth_hardening.ts",
     "probe:onboarding": "bun scripts/probe_onboarding.ts",
+    "probe:echoguard": "bun scripts/probe_echo_guard.ts",
     "probe:vision": "bun scripts/probe_vision_scoring.ts",
     "probe:answerfeedback": "bun scripts/probe_answer_feedback.ts",
     "probe:s3role": "STORAGE_DRIVER=s3 S3_USE_INSTANCE_ROLE=true S3_BUCKET=probe-bucket S3_IMDS_BASE_URL=http://127.0.0.1:8055 bun scripts/probe_s3_instance_role.ts"

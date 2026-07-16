@@ -79,12 +79,24 @@ export type ChatMessage = z.infer<typeof ChatMessage>;
 // Beats that only TALK (greet, pikachu, lore) are steps too — current_step has
 // to be able to name them, or closing the tab on the Pikachu beat resumes you
 // at the last thing you TYPED, replaying dialogue you already saw.
+// S90 — `school` was REMOVED from the flow (founder call): nothing consumed it,
+// and an unvalidatable free-text ask that feeds nothing is cost without payoff.
+// The onboarding.school COLUMN survives (it holds real answers from the S89
+// walkthroughs and dropping it buys nothing) — it is simply never asked again.
+//
+// S91 — the fun-fact PAIR was removed the same way (founder call), and `pet`
+// took its slot. The reason is the S90 eyeball's real finding: free text let a
+// student answer "No movie", and the templated reaction praised it ("great
+// pick") while Pikachu shouted it back. A flow that congratulates a brush-off
+// proves nobody is listening. Chips fix that at the root rather than patching
+// it — every answer we can receive is one we authored a reaction for.
+// `fun_fact_about`/`fun_fact` COLUMNS survive, same reasoning as `school`.
 export const ONBOARDING_STEPS = [
   "greet",
   "grade",
-  "school",
   "fav_character",
   "pikachu",
+  "pet",
   "phone",
   "lore",
   "done",
@@ -92,12 +104,49 @@ export const ONBOARDING_STEPS = [
 export const OnboardingStep = z.enum(ONBOARDING_STEPS);
 export type OnboardingStep = z.infer<typeof OnboardingStep>;
 
+// S91 — fav_character is a CLOSED SET (founder: "we should not show input bar
+// instead give option chips"). These are IDS, not words: the labels and every
+// reaction live in the FE copy file, which owns the voice. Storing an id also
+// keeps the reaction lookup total — a stored label could drift from the copy.
+//
+// This is what makes Pikachu's echo — the loudest repeat in the flow — provably
+// safe: he can only ever shout a string we wrote ourselves. The value still
+// arrives from a client, so the server validates it (a hand-rolled POST is the
+// only way to miss the chips) and the FE still routes it through canEcho as
+// defence in depth.
+export const FAV_CHARACTERS = [
+  "harry_potter",
+  "iron_man",
+  "spider_man",
+  "batman",
+  "gandalf",
+  "naruto",
+] as const;
+export const FavCharacter = z.enum(FAV_CHARACTERS);
+export type FavCharacter = z.infer<typeof FavCharacter>;
+
+// S91 — the pet (founder). Four temperaments + an OTHER escape hatch, which is
+// why this is NOT a closed set server-side: `other` commits whatever the
+// student types, so `pet` holds either one of these ids or free text.
+//
+// Deliberately four distinct self-images rather than four animals: the pick is
+// the only read we get on how a student sees themselves, and 'owl vs dragon'
+// says something that 'dog vs cat' does not.
+export const PETS = ["owl", "dragon", "fox", "panda"] as const;
+export const Pet = z.enum(PETS);
+export type Pet = z.infer<typeof Pet>;
+
+/** True when `pet` is one of ours (→ it arrives now) rather than a free-text ask. */
+export function isKnownPet(pet: string | null | undefined): pet is Pet {
+  return Boolean(pet) && (PETS as readonly string[]).includes(pet!);
+}
+
 // The only beats that persist an answer → the onboarding column each writes.
 // Anything not in here is a talk-only beat and must not carry a value.
 export const ONBOARDING_ANSWER_COLUMNS = {
   grade: "grade",
-  school: "school",
   fav_character: "favCharacter",
+  pet: "pet",
   phone: "phone",
 } as const satisfies Partial<Record<OnboardingStep, string>>;
 

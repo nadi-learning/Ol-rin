@@ -1022,8 +1022,29 @@ export const onboarding = pgTable(
     // them. `phone` is child PII and optional by deliberate design — see the
     // slice notes on DPDP + verifiable parental consent.
     grade: text("grade"),
+    // ⚠️ NO LONGER ASKED (S90, founder call) — `school` is not in
+    // ONBOARDING_STEPS any more. The column stays because it holds real
+    // answers and dropping it buys nothing; expect it NULL on every row
+    // written from S90 on. Do not add it back to the flow without a consumer.
     school: text("school"),
+    // S91 — now a CLOSED SET of ids (FAV_CHARACTERS), not free text. Rows
+    // written before S91 hold whatever the student typed ("Interstellar -
+    // Cooper", "No movie"); rows from S91 on hold an id ("iron_man"). Read it
+    // through the copy file's lookup, which tolerates both by falling back.
     favCharacter: text("fav_character"),
+    // ⚠️ NO LONGER ASKED (S91, founder call) — the fun-fact pair is not in
+    // ONBOARDING_STEPS any more; `pet` took its slot. Same treatment as
+    // `school`: the columns stay because they hold real S89/S90 answers and
+    // dropping them buys nothing. Expect both NULL on every row from S91 on.
+    funFactAbout: text("fun_fact_about"),
+    funFact: text("fun_fact"),
+    // S91 — the pet the student chose (founder). Either a PETS id ('owl') or
+    // free text when they picked "something else" — which is exactly why there
+    // is no CHECK here. isKnownPet() in contracts is the discriminator, and it
+    // is what decides whether the pet ARRIVES on the loader or gets Pikachu's
+    // "2-3 dayssss" line. A custom value is the one free-text echo left in the
+    // flow, so the FE routes it through canEcho before repeating it.
+    pet: text("pet"),
     phone: text("phone"),
     // Spelled out rather than createdAt(): that helper emits a column literally
     // named created_at, and started_at/completed_at is the pair that says what
