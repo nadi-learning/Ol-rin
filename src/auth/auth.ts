@@ -43,6 +43,16 @@ export const auth = betterAuth({
       clientSecret: env.GOOGLE_CLIENT_SECRET,
     },
   },
+  // NOTE (2026-07-16): no account.accountLinking config here, deliberately.
+  // Better Auth's default trustedProviders is [] and the Google callback never
+  // passes isTrustedProvider, so Google CANNOT link onto a pre-existing user
+  // row — a legacy dev-bypass account would get "account not linked" forever.
+  // That is fine only because no such account is meant to survive: every
+  // email/password account is being retired, and a first-time Google sign-in
+  // creates its user outright (the sign-up path, which never links). If a
+  // legacy row ever needs rescuing, it needs BOTH trustedProviders:["google"]
+  // and users.email_verified=true — trustedProviders alone is not enough, as
+  // requireLocalEmailVerified defaults true and is checked independently.
   trustedOrigins: [env.FRONTEND_URL],
   session: {
     expiresIn: 60 * 60 * 24 * 30,
