@@ -51,6 +51,39 @@ type Tx = PgTransaction<any, any, any>;
 const WORKER_ENDPOINT = "authoring.worker";
 const WORKER_TIMEOUT_SEC = 600;
 
+// Authoring's Gemini bounds. Authoring still rides the HTTP request, so these
+// are only safe UNDER nginx's proxy timeout — they are not independent numbers.
+//
+// 🔴 HARD PROD DEPENDENCY — READ BEFORE DEPLOYING THIS FILE.
+// `geminiJson` retries once and its catch swallows timeouts too, so the real
+// bound is 2 x AUTHORING_TIMEOUT_MS = 600s. That REQUIRES nginx's
+// `proxy_read_timeout`/`proxy_send_timeout` on /trpc/ + /api/ to be **700s**.
+// At nginx's previous 300s this file 504s: nginx serves its HTML error page,
+// the tRPC client JSON.parse's it, and the tutor sees
+// `Unexpected token '<', "<html> <h"...` — the 2026-07-16 incident, verbatim.
+// The nginx config is HAND-AUTHORED on the box (/etc/nginx/nginx.conf), NOT
+// templated from this repo — so it does not travel with a deploy and must be
+// re-applied by hand if nginx.conf is ever regenerated. See deploy-olorin.md.
+//
+// The thinking cap, not the timeout, is what actually bounds latency.
+// Measured: normal authors spend 6-9k thinking tokens (60-116s); one prod run
+// hit 62,910 (217s) on the SAME task — a 7x runaway. The problem was never the
+// mean, it was unbounded variance. 16k is ~2x headroom over every normal author
+// observed and kills only the runaway. With it in place no normal author should
+// approach 300s; the timeout is the backstop, not the working bound.
+//
+// The cap REVISES the earlier call recorded here ("do NOT bound authoring
+// quality for latency"), on the founder's decision once the variance data
+// existed: a 16k floor bounds the runaway, not the quality — no normal author
+// reaches it. Per M28, cap `thinkingBudget`, NEVER `maxOutputTokens` — on a
+// thinking model the latter bounds thinking + answer together and starves the
+// JSON out of the response.
+//
+// All of this is a compromise with the request/response shape. Moving authoring
+// to BullMQ + poll removes the proxy ceiling and makes both numbers obsolete.
+const AUTHORING_TIMEOUT_MS = 300_000;
+const AUTHORING_THINKING_BUDGET = 16_000;
+
 // The method pack lives at the repo root under .claude/skills/… (its natural
 // home; Claude can load it as a real skill later). v0 reads its TEXT and injects
 // it as system context. process.cwd() is the BE repo root at runtime.
@@ -256,11 +289,12 @@ async function runWorkerCall(
       systemInstruction: opts.pack,
       prompt: opts.prompt,
       responseSchema: geminiQuestionSchema as never,
-      // Uncapped — authoring is deliberately given full thinking headroom (the
-      // hardest AI task in the system; founder call: do NOT bound authoring
-      // quality for latency). The runaway latency is absorbed by the generous
-      // nginx/worker timeouts, not by starving the model. Runs on the global
-      // GEMINI_MODEL (= gemini-3.5-flash).
+      // Bounds + rationale at AUTHORING_TIMEOUT_MS above (incl. the nginx
+      // dependency). Runs on the global GEMINI_MODEL (= gemini-3.5-flash).
+      timeoutMs: AUTHORING_TIMEOUT_MS,
+      thinkingBudget: AUTHORING_THINKING_BUDGET,
+      // Stays null on purpose (M28): thinking is capped above instead. Capping
+      // maxOutputTokens on a thinking model truncates the JSON mid-answer.
       maxOutputTokens: null,
     });
     return { drafts: draftBatchSchema.parse(raw).questions, aiSessionId: null, resumed: false };

@@ -1070,8 +1070,19 @@ export const aiCallLog = pgTable(
   {
     id: id(),
     // Best-effort attribution ONLY — nullable, no RLS, not a boundary.
-    boardId: uuid("board_id").references(() => board.id),
-    userId: uuid("user_id").references(() => appUser.id),
+    //
+    // ON DELETE SET NULL is what makes that true (0025). Shipped as bare
+    // `.references()` in 0024, which defaults to NO ACTION — so a log row
+    // PINNED its board/user and blocked their deletion, making the column the
+    // hard boundary this comment says it isn't. It broke every AI probe's M22
+    // teardown (throwaway board -> AI call -> log row -> board undeletable),
+    // i.e. the pattern that leaves probe litter behind.
+    //
+    // The log row is the durable artifact; attribution is a convenience that
+    // may outlive its subject. Deleting a user drops the name, keeps the
+    // forensics. Never CASCADE: that would let a cleanup erase the evidence.
+    boardId: uuid("board_id").references(() => board.id, { onDelete: "set null" }),
+    userId: uuid("user_id").references(() => appUser.id, { onDelete: "set null" }),
     // e.g. 'authoring.worker' | 'authoring.chat' | 'stage1:conceptual' | 'imagegen'.
     endpoint: text("endpoint").notNull(),
     model: text("model").notNull(),

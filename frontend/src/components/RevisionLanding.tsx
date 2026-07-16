@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "../trpc";
+import { useTypewriter } from "../lib/useTypewriter";
 import { pickLanding } from "./revision-landing.copy";
 import type { LandingChip } from "./revision-landing.copy";
 import "./revision-landing.css";
@@ -13,25 +14,8 @@ import "./revision-landing.css";
 type Nav = Awaited<ReturnType<typeof trpc.revision.getChapterNav.query>>;
 type LandingState = Awaited<ReturnType<typeof trpc.revision.getLandingState.query>>;
 
-/** Typewriter over `text`; instant when `animate` is false. */
-function useTypewriter(text: string, animate: boolean, speedMs: number) {
-  const [shown, setShown] = useState(animate ? 0 : text.length);
-  useEffect(() => {
-    if (!animate) {
-      setShown(text.length);
-      return;
-    }
-    setShown(0);
-    let i = 0;
-    const t = setInterval(() => {
-      i += 1;
-      setShown(i);
-      if (i >= text.length) clearInterval(t);
-    }, speedMs);
-    return () => clearInterval(t);
-  }, [text, animate, speedMs]);
-  return { visible: text.slice(0, shown), done: shown >= text.length };
-}
+// useTypewriter moved to ../lib/useTypewriter (ONB-1 shares it). Same code,
+// same behaviour — this file only changed its import.
 
 export function RevisionLanding({
   studentName,

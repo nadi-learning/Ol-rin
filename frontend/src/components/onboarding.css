@@ -1,0 +1,317 @@
+/* Slice ONB-1 — the conversational welcome. All .onb- scoped.
+   Uses the locked TAITOR theme tokens: periwinkle = Olórin (the AI voice),
+   lilac = the student. Same bubble language as the tutor chat, so the first
+   thing a student ever sees already teaches the rest of the product. */
+
+.onb-root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background-color: var(--page-bg);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+.onb-card {
+  width: 100%;
+  max-width: 620px;
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: 28px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  /* Tall enough that the beats don't jump the card's height as they land, but
+     never taller than the viewport on a phone. */
+  min-height: min(520px, 78vh);
+  max-height: 88vh;
+}
+
+/* ── transcript ── */
+.onb-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.onb-line {
+  max-width: 84%;
+  padding: 11px 15px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.onb-line-olorin {
+  align-self: flex-start;
+  background: var(--periwinkle);
+  color: var(--ink);
+  border-bottom-left-radius: 6px;
+}
+
+.onb-line-student {
+  align-self: flex-end;
+  background: var(--lilac);
+  color: var(--ink);
+  border-bottom-right-radius: 6px;
+}
+
+/* The beat currently being typed/answered — slightly forward of history. */
+.onb-line-live {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.onb-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--ink-soft);
+  animation: onb-blink 1s steps(2, start) infinite;
+}
+@keyframes onb-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.onb-sub {
+  align-self: flex-start;
+  max-width: 84%;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 0 4px;
+}
+
+/* ── the Pikachu beat ── */
+.onb-pika {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px;
+}
+
+/* aspect-ratio is load-bearing, not decoration: the sticker is PORTRAIT
+   (844x1254). With height:auto the img has no height until it decodes, so the
+   transcript's scrollHeight is measured short and the auto-scroll stops above
+   Pikachu — the one thing the beat exists to show. Reserving the box makes the
+   layout correct before the bytes arrive. */
+.onb-pika-img {
+  width: 92px;
+  aspect-ratio: 844 / 1254;
+  height: auto;
+  flex: none;
+  animation: onb-pika-bob 1.6s ease-in-out infinite;
+}
+@keyframes onb-pika-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(2deg);
+  }
+}
+
+.onb-pika-say {
+  background: var(--yellow);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 15px;
+  padding: 9px 14px;
+  border-radius: 16px;
+  border-bottom-left-radius: 6px;
+}
+
+/* ── input dock ── */
+.onb-input {
+  padding-top: 14px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.onb-error {
+  color: #b23b3b;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.onb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.onb-chip {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  padding: 9px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+.onb-chip:hover:not(:disabled) {
+  background: var(--primary);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.onb-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.onb-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.onb-field {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 11px 16px;
+  outline: none;
+}
+.onb-field:focus {
+  border-color: var(--primary);
+  background: var(--surface);
+}
+
+.onb-btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 11px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  transition: background 0.14s ease;
+}
+.onb-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.onb-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Skip is deliberately a real, visible control — an optional ask with a hidden
+   skip is not optional. */
+.onb-skip {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  font-size: 14px;
+  text-decoration: underline;
+  padding: 8px 4px;
+}
+.onb-skip:hover:not(:disabled) {
+  color: var(--ink-soft);
+}
+
+/* ── the loader close ── */
+.onb-card-loader {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+  min-height: min(420px, 70vh);
+}
+
+.onb-loader-img {
+  width: 140px;
+  aspect-ratio: 844 / 1254; /* same reason as .onb-pika-img — reserve the box */
+  height: auto;
+  animation: onb-pika-bob 1.4s ease-in-out infinite;
+}
+
+.onb-loader-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.onb-loader-line {
+  color: var(--ink-muted);
+  font-size: 14px;
+  min-height: 20px;
+}
+
+.onb-loader-bar {
+  width: 190px;
+  height: 6px;
+  background: var(--surface-sunk);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.onb-loader-bar span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+  animation: onb-slide 1.2s ease-in-out infinite;
+}
+@keyframes onb-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-pika-img,
+  .onb-loader-img,
+  .onb-loader-bar span,
+  .onb-caret {
+    animation: none;
+  }
+}
+
+/* ── phone ── */
+@media (max-width: 520px) {
+  .onb-root {
+    padding: 0;
+  }
+  .onb-card {
+    max-width: none;
+    min-height: 100vh;
+    max-height: none;
+    border-radius: 0;
+    padding: 20px 16px 16px;
+  }
+  .onb-line {
+    max-width: 90%;
+  }
+  /* The skip must not get pushed off the row next to a shrinking field. */
+  .onb-form {
+    flex-wrap: wrap;
+  }
+  .onb-field {
+    flex: 1 1 100%;
+    order: -1;
+  }
+}

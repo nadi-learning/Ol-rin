@@ -68,13 +68,28 @@ export function nextStep(step: OnboardingStep): OnboardingStep {
  * The grade chips (D-ONB-2) — the DISTINCT grades this board's catalogue really
  * has. RLS scopes `subject` to the active board, so this is board-correct
  * without a board_id predicate.
+ *
+ * Sorted in JS, NOT by SQL `order by grade`: the column is TEXT, so Postgres
+ * sorts it lexicographically and cbse's real values (9, 10) come back as
+ * "10", "9" — a child would read chips counting backwards. A plain numeric sort
+ * is not the fix either: grade is not always numeric (cambridge uses "IGCSE").
+ * So: numeric grades first, in numeric order; anything else alphabetical after.
  */
 export async function listGradeOptions(tx: Tx): Promise<string[]> {
-  const rows = await tx
-    .selectDistinct({ grade: subject.grade })
-    .from(subject)
-    .orderBy(subject.grade);
-  return rows.map((r) => r.grade).filter((g): g is string => Boolean(g));
+  const rows = await tx.selectDistinct({ grade: subject.grade }).from(subject);
+  return rows
+    .map((r) => r.grade)
+    .filter((g): g is string => Boolean(g))
+    .sort((a, b) => {
+      const na = Number(a);
+      const nb = Number(b);
+      const aNum = a.trim() !== "" && Number.isFinite(na);
+      const bNum = b.trim() !== "" && Number.isFinite(nb);
+      if (aNum && bNum) return na - nb;
+      if (aNum) return -1;
+      if (bNum) return 1;
+      return a.localeCompare(b);
+    });
 }
 
 /**

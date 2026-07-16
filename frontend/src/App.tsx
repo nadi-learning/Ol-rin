@@ -12,6 +12,7 @@ import { ProfilePage } from "./components/ProfilePage";
 import { TutorPage } from "./components/TutorPage";
 import { ParentPage } from "./components/ParentPage";
 import { AdminPage } from "./components/AdminPage";
+import { OnboardingPage } from "./components/OnboardingPage";
 import "./theme/tokens.css";
 import "./components/app-shell.css";
 import "./components/gate.css";
@@ -20,12 +21,18 @@ import "./components/gate.css";
 // Revision surface renders a live Starkhorn-shaped slide. A non-whitelisted
 // email gets the "not invited" gate. Closes the walking skeleton.
 type Me = Awaited<ReturnType<typeof trpc.me.query>>;
+type Onb = Awaited<ReturnType<typeof trpc.onboarding.getState.query>>;
 
 export function App() {
   const { data: session, isPending } = useSession();
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("dashboard");
+  // ONB-1 — the first-login welcome. A SEPARATE query, deliberately not folded
+  // into `me` (D-AVAIL-1's reasoning: additive + fault-isolated).
+  //   undefined = still loading · null = not needed / read failed (FAIL OPEN)
+  // Fetched in parallel with `me`, so it costs a student no extra wait.
+  const [onb, setOnb] = useState<Onb | null | undefined>(undefined);
   // Deep-link target for "Continue lesson" — the sub_topic the dashboard wants
   // Revision to open at. Cleared (null) means Revision opens at its default.
   const [revisionTarget, setRevisionTarget] = useState<string | null>(null);
@@ -38,6 +45,7 @@ export function App() {
   useEffect(() => {
     if (!session) {
       setMe(null);
+      setOnb(undefined);
       setError(null);
       return;
     }
@@ -48,6 +56,14 @@ export function App() {
         setError(null);
       })
       .catch((e) => setError(String(e?.message ?? e)));
+
+    // FAIL-OPEN on the client too: a welcome that can't be read must never keep
+    // a student out of the product (G3 spirit). The server already fails open;
+    // this covers the transport dying, which the server can't.
+    trpc.onboarding.getState
+      .query()
+      .then(setOnb)
+      .catch(() => setOnb(null));
   }, [session]);
 
   if (isPending) return <Gate>Checking…</Gate>;
@@ -95,6 +111,32 @@ export function App() {
   }
 
   const studentName = displayName;
+
+  // ONB-1 — students only, and only ahead of the shell. Tutors/parents/admins
+  // returned above, so they never wait on this read at all (the server also
+  // reports needsOnboarding:false for them — exempt, not forbidden).
+  //
+  // Held here rather than rendered-then-replaced: popping the welcome over an
+  // already-painted dashboard would flash the product before the greeting.
+  if (onb === undefined) return <Gate>Loading…</Gate>;
+
+  if (onb?.needsOnboarding) {
+    return (
+      <OnboardingPage
+        studentName={studentName}
+        initialStep={onb.currentStep}
+        initialAnswers={onb.answers}
+        // Let them straight through — do NOT re-read to confirm. If complete()
+        // failed, getState still says needsOnboarding ⇒ re-reading would bounce
+        // them back into the loader, which retries complete(), forever. Every
+        // answer is already committed (D-ONB-1), so the worst case of trusting
+        // this is seeing the welcome once more on the next login — where it
+        // resumes at `done` and retries the flip. Self-healing; never a trap.
+        onDone={() => setOnb(null)}
+      />
+    );
+  }
+
   return (
     <AppShell
       userName={studentName}

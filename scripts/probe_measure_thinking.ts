@@ -7,7 +7,12 @@
  * given method pack, uncapped, exactly as runWorkerCall does for the gemini_api
  * vendor — the only way to see what thinking actually costs.
  *
- * Usage: bun run scripts/probe_measure_thinking.ts <briefFile> <packFile> <label>
+ * Usage: bun run scripts/probe_measure_thinking.ts <briefFile> <packFile> <label> [thinkingBudget]
+ *
+ * `thinkingBudget` (optional) replays with a CAP instead of uncapped — this is
+ * how AUTHORING_THINKING_BUDGET was validated: the same brief that authored
+ * fine uncapped must still author fine at the cap, or the cap is starving the
+ * model rather than bounding the runaway. Omit it to reproduce prod-as-was.
  */
 import { readFile } from "node:fs/promises";
 import { geminiJson } from "../src/services/ai/gemini";
@@ -16,6 +21,7 @@ import { geminiQuestionSchema } from "../src/services/authoring";
 const briefPath = process.argv[2];
 const packPath = process.argv[3];
 const label = process.argv[4] ?? "measure";
+const thinkingBudget = process.argv[5] ? Number(process.argv[5]) : undefined;
 
 if (!briefPath || !packPath) {
   console.error("usage: bun run scripts/probe_measure_thinking.ts <briefFile> <packFile> <label>");
@@ -30,7 +36,8 @@ const rawPack = await readFile(packPath, "utf8");
 const pack = rawPack.startsWith("---") ? rawPack.replace(/^---\n[\s\S]*?\n---\n/, "") : rawPack;
 
 console.log(
-  `[measure:${label}] pack=${pack.length}c brief=${brief.length}c — UNCAPPED, timeout=600s`,
+  `[measure:${label}] pack=${pack.length}c brief=${brief.length}c — ` +
+    `thinking=${thinkingBudget === undefined ? "UNCAPPED" : `${thinkingBudget} CAP`}, timeout=600s`,
 );
 
 const startedAt = Date.now();
@@ -42,6 +49,7 @@ try {
     responseSchema: geminiQuestionSchema as never,
     maxOutputTokens: null, // reproduce prod exactly
     timeoutMs: 600_000, // generous — we want the REAL latency, not a cut
+    ...(thinkingBudget === undefined ? {} : { thinkingBudget }),
   });
   console.log(
     `[measure:${label}] OK in ${Date.now() - startedAt}ms — questions=${raw.questions?.length ?? "?"}`,
