@@ -22,7 +22,7 @@
  * post-submit reveal · D-L-4 table named practice_session (Better Auth owns
  * `sessions`).
  */
-import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { attempt, attemptImage, practiceSession, question } from "@b2c/kernel/schema";
@@ -186,6 +186,52 @@ function viewOf(s: typeof practiceSession.$inferSelect, q: PublicQuestion | null
  * assigned session for the same sub_topic stay DISTINCT (resume matches on the
  * assignment link), so they never cross-link.
  */
+/**
+ * Slice AVAIL — the ONE availability predicate: "which questions can THIS caller
+ * practise?" Private-aware delivery (AUTH-v2): the canonical bank
+ * (target_student_id NULL) PLUS the caller's own targeted questions; drafts never
+ * served (FIG-AUTH / M11 CHECK side).
+ *
+ * This exists as a shared function on purpose. `startSession` SELECTs with it and
+ * `listAvailability` COUNTs with it, so the browse list's "Coming soon" chip and
+ * what Practice will actually serve CANNOT drift. Two copies of this predicate
+ * would be a lying UI the moment one changed: a chip promising questions that
+ * startSession then refuses (or worse, "Coming soon" over a student's own
+ * privately-authored set). One function, two callers — drift is structural, so
+ * make it impossible rather than test for it.
+ *
+ * Board scoping is NOT here — every caller runs inside the board-scoped tx (RLS).
+ */
+export function availableQuestionWhere(appUserId: string, subTopicId?: string) {
+  return and(
+    subTopicId ? eq(question.subTopicId, subTopicId) : undefined,
+    eq(question.status, "approved"),
+    or(isNull(question.targetStudentId), eq(question.targetStudentId, appUserId)),
+  );
+}
+
+/**
+ * Slice AVAIL — per-sub_topic count of questions this caller can actually
+ * practise. SPARSE: only sub_topics with >=1 available question are returned, so
+ * the payload stays small (the empty ones are the majority — the canonical bank
+ * is still the seed stand-in). The FE treats "absent" as Coming-soon.
+ *
+ * Read-only; runs inside the caller's board-scoped tx.
+ */
+export async function listAvailability(
+  tx: Tx,
+  args: { appUserId: string },
+): Promise<{ subTopicId: string; count: number }[]> {
+  return await tx
+    .select({
+      subTopicId: question.subTopicId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(question)
+    .where(availableQuestionWhere(args.appUserId))
+    .groupBy(question.subTopicId);
+}
+
 export async function startSession(
   tx: Tx,
   args: {
@@ -231,19 +277,12 @@ export async function startSession(
   // (target_student_id NULL) PLUS this caller's own targeted questions. A
   // question authored privately for another student is invisible here. Canonical
   // rows are unaffected → the shared bank stays fault-isolated.
+  // The predicate is shared with listAvailability (Slice AVAIL) so the browse
+  // list's Coming-soon chip can never disagree with what this serves.
   const qs = await tx
     .select({ id: question.id })
     .from(question)
-    .where(
-      and(
-        eq(question.subTopicId, args.subTopicId),
-        eq(question.status, "approved"), // FIG-AUTH (M11 CHECK side): drafts never served
-        or(
-          isNull(question.targetStudentId),
-          eq(question.targetStudentId, args.appUserId),
-        ),
-      ),
-    )
+    .where(availableQuestionWhere(args.appUserId, args.subTopicId))
     .orderBy(asc(question.ordinal), asc(question.createdAt));
   if (qs.length === 0) throw new NoQuestionsError(args.subTopicId);
 

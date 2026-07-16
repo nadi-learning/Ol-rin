@@ -86,6 +86,93 @@
   opacity: 0.6;
   cursor: default;
 }
+/* Slice AVAIL-2 — the Coming-soon banner. Replaces AVAIL v1's per-row dimmed
+   chips (154 of them = a wall of grey). ONE panel, Pikachu carrying the banner.
+   Sits at the END of the browse list: what you CAN practise comes first. */
+.prac-soon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 18px 20px 18px 8px;
+  background: var(--primary-soft);
+  border-radius: var(--r-card);
+}
+.prac-soon-pika {
+  width: 132px;
+  flex: none;
+  align-self: flex-end;
+  position: relative;
+  z-index: 1; /* the raised arm sits OVER the banner, so it reads as carried */
+  margin-bottom: -18px;
+  transform: rotate(-5deg);
+  pointer-events: none;
+  user-select: none;
+}
+.prac-soon-banner {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border-radius: var(--r-md);
+  /* tucked under the raised paw so it reads as carried, with the left padding
+     opened up so no copy sits under Pikachu. Text stays LEVEL on purpose: a
+     tilted panel drags every baseline with it and legibility loses to the gag. */
+  padding: 16px 18px 16px 46px;
+  box-shadow: var(--shadow-card);
+  margin-left: -34px;
+}
+.prac-soon-head {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.prac-soon-body {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-muted);
+}
+.prac-soon-tutor {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary-hover, var(--primary));
+}
+.prac-soon-count {
+  margin: 10px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  opacity: 0.8;
+}
+@media (max-width: 640px) {
+  .prac-soon {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 14px 18px;
+  }
+  .prac-soon-pika {
+    align-self: center;
+    margin: 0 0 -10px;
+    width: 92px;
+    transform: rotate(0deg);
+  }
+  /* Pikachu sits ABOVE the banner when stacked, so the carried-overlap offsets
+     are undone - the -34px pull and the 46px left gutter only make sense while
+     he's beside the card. */
+  .prac-soon-banner {
+    margin-left: 0;
+    padding: 14px 16px;
+  }
+}
+/* AVAIL-2 — the assigned block's caught-up state (it no longer disappears when
+   every assignment is done). Same shell as .prac-assigned, quieter body. */
+.prac-assigned-caught {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--ink-muted);
+}
 .prac-pick-name {
   font-weight: 600;
   color: var(--ink);

@@ -32,6 +32,7 @@ import {
 } from "../services/revision";
 import {
   getSession,
+  listAvailability,
   NoCompletedSessionError,
   NoQuestionsError,
   PracticeSessionNotFoundError,
@@ -317,6 +318,18 @@ export const appRouter = router({
     // the FE opens each via startSession({ subTopicId, assignmentId }).
     listAssignments: protectedProcedure.query(({ ctx }) =>
       listAssignmentsForStudent(ctx.tx, { appUserId: ctx.membership.userId }),
+    ),
+
+    // Slice AVAIL: which sub_topics this caller can actually practise, so the
+    // browse list can mark the rest "Coming soon" instead of dead-ending on the
+    // click (the canonical bank is still the seed stand-in — most sub_topics have
+    // nothing). SPARSE: only sub_topics with >=1 available question. Shares
+    // startSession's predicate (availableQuestionWhere) so the chip cannot lie.
+    // Deliberately NOT folded into revision.getChapterNav — that nav is shared
+    // with Dashboard/Revision/the tutor's composer, and this is caller-scoped
+    // practice semantics (D-AVAIL-1).
+    listAvailability: protectedProcedure.query(({ ctx }) =>
+      listAvailability(ctx.tx, { appUserId: ctx.membership.userId }),
     ),
 
     startSession: protectedProcedure

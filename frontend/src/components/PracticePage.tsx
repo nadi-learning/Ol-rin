@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { trpc, BOARD } from "../trpc";
 import { MathText } from "./MathText";
+import pikachuWave from "../assets/pikachu-wave.png";
 import "./practice.css";
 
 // The Practice surface (Slice L) — self-serve subjective practice capture.
@@ -24,7 +25,7 @@ type AnswerFeedback = Awaited<
 >;
 type Review = Awaited<ReturnType<typeof trpc.practice.reviewSession.query>>;
 
-type Picker = { id: string; name: string; topicName: string };
+type Picker = { id: string; name: string; topicName: string; available: boolean };
 type Phase = "picking" | "answering" | "revealed" | "completed" | "reviewing";
 
 const VERDICT_LABEL: Record<AnswerFeedback["verdict"], string> = {
@@ -33,9 +34,26 @@ const VERDICT_LABEL: Record<AnswerFeedback["verdict"], string> = {
   off_track: "Not quite",
 };
 
+// Slice AVAIL-2 — the Coming-soon copy, kept together so the voice can be tuned
+// without touching logic (the revision-landing.copy.ts lesson: prose iterates
+// faster than code). UI copy rule (S76): hyphen "-", never an em-dash.
+// NO countdown, NO "unlock" (founder call): a timer needs a date we'd defend, and
+// the canonical bank has no fill plan yet (#13 never landed). A promise with a
+// deadline that expires over an empty bank is worse than the wall it replaced.
+const SOON_COPY = {
+  head: "Olórin is still writing these",
+  body: "Practice questions for the rest of your syllabus are on the way.",
+  tutorLine: "Your tutor's assignments are always open above.",
+  count: (n: number) => `${n} topic${n === 1 ? "" : "s"} still to come`,
+};
+
 export function PracticePage() {
   const [nav, setNav] = useState<Nav | null>(null);
   const [assignments, setAssignments] = useState<Assignment[] | null>(null);
+  // Slice AVAIL — sub_topic ids this student can actually practise (sparse: the
+  // BE returns only the non-empty ones). `null` = not loaded yet → render every
+  // topic as normal so a slow read can't flash "Coming soon" across the list.
+  const [availIds, setAvailIds] = useState<Set<string> | null>(null);
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
 
@@ -79,9 +97,16 @@ export function PracticePage() {
     for (const ch of nav ?? [])
       for (const tp of ch.topics)
         for (const st of tp.subTopics)
-          out.push({ id: st.id, name: st.name, topicName: tp.name });
+          out.push({
+            id: st.id,
+            name: st.name,
+            topicName: tp.name,
+            // availIds null (still loading) → assume available; the chip appears
+            // once the real answer lands.
+            available: availIds === null || availIds.has(st.id),
+          });
     return out;
-  }, [nav]);
+  }, [nav, availIds]);
 
   // 1A — drives the loud assigned-vs-browse split: a non-empty open-assignment
   // set makes the browse list subordinate ("Or practice any topic").
@@ -89,6 +114,10 @@ export function PracticePage() {
     () => (assignments ?? []).some((a) => !a.completed),
     [assignments],
   );
+  // AVAIL-2 — an assigned block renders for ANY assignment (open → the work list,
+  // all-done → the caught-up card). Distinct from hasAssigned, which is about OPEN
+  // work only.
+  const hasAssignedBlock = (assignments ?? []).length > 0;
 
   const loadAssignments = () => {
     trpc.practice.listAssignments
@@ -102,6 +131,13 @@ export function PracticePage() {
       .query()
       .then(setNav)
       .catch((e) => setError(String(e?.message ?? e)));
+    // Slice AVAIL — on failure leave availIds null (every topic stays clickable
+    // and falls back to the NO_QUESTIONS empty state): a broken availability read
+    // must not paint the whole syllabus "Coming soon".
+    trpc.practice.listAvailability
+      .query()
+      .then((rows) => setAvailIds(new Set(rows.map((r) => r.subTopicId))))
+      .catch(() => setAvailIds(null));
     loadAssignments();
   }, []);
 
@@ -283,6 +319,7 @@ export function PracticePage() {
             busy={busy}
             error={error}
             hasAssigned={hasAssigned}
+            hasAssignedBlock={hasAssignedBlock}
             onPick={(id) => pick(id)}
           />
         </>
@@ -581,7 +618,22 @@ function AssignedList({
 }) {
   if (!assignments || assignments.length === 0) return null;
   const open = assignments.filter((a) => !a.completed);
-  if (open.length === 0) return null;
+  // AVAIL-2 — the block used to `return null` once every assignment was done, so
+  // finishing your tutor's work DELETED the only section with real content and
+  // left the student alone with the browse list. Now it stays and reports the
+  // caught-up state: the assigned box is the page's anchor, present either way.
+  if (open.length === 0) {
+    return (
+      <section className="prac-assigned prac-assigned--done">
+        <p className="prac-assigned-eyebrow">From your tutor</p>
+        <h2 className="prac-assigned-title">All caught up</h2>
+        <p className="prac-assigned-caught">
+          You've finished everything your tutor assigned. Nothing new right now -
+          they'll add more after your next session.
+        </p>
+      </section>
+    );
+  }
   return (
     <section className="prac-assigned">
       <p className="prac-assigned-eyebrow">From your tutor</p>
@@ -718,6 +770,7 @@ function PickList({
   busy,
   error,
   hasAssigned,
+  hasAssignedBlock,
   onPick,
 }: {
   subTopics: Picker[];
@@ -725,37 +778,65 @@ function PickList({
   busy: boolean;
   error: string | null;
   hasAssigned: boolean;
+  // Whether an assigned block is rendered above (open OR caught-up). Drives the
+  // banner's "always open above ↑" line, which must not point at nothing.
+  hasAssignedBlock: boolean;
   onPick: (id: string) => void;
 }) {
   if (loading) return <p className="prac-muted">Loading topics…</p>;
+  // Slice AVAIL-2 — REVERSES AVAIL's per-row chip. v1 listed all 157 sub_topics
+  // and dimmed the empty ones; with 154/157 empty that rendered a wall of grey
+  // (founder: "this is shit experience") — a chip repeated 154× is an apology at
+  // scale, not information. Empty sub_topics are now NOT LISTED at all: the
+  // student sees only what they can actually practise, and the remainder collapses
+  // into ONE Pikachu banner. Hiding is safe under G3 (that rule bans GATING
+  // self-serve; there is nothing behind these rows to gate).
+  const ready = subTopics.filter((st) => st.available);
+  const soonCount = subTopics.length - ready.length;
   return (
     <section className="prac-picklist">
       <h2 className="prac-browse-title">
         {hasAssigned ? "Or practice any topic" : "Practice any topic"}
       </h2>
+      {/* Kept as the defensive fallback: a topic can empty out between the
+          availability read and the click (question deleted, chip stale). */}
       {error === "NO_QUESTIONS" && (
         <p className="prac-note">
           No practice questions for that topic yet - try another.
         </p>
       )}
       {error && error !== "NO_QUESTIONS" && <p className="prac-error">{error}</p>}
-      {subTopics.length === 0 && (
-        <p className="prac-muted">No topics available.</p>
+      {ready.length > 0 && (
+        <ul className="prac-pick-ul">
+          {ready.map((st) => (
+            <li key={st.id}>
+              <button className="prac-pick" onClick={() => onPick(st.id)} disabled={busy}>
+                <span className="prac-pick-name">{st.name}</span>
+                <span className="prac-pick-topic">{st.topicName}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
-      <ul className="prac-pick-ul">
-        {subTopics.map((st) => (
-          <li key={st.id}>
-            <button
-              className="prac-pick"
-              onClick={() => onPick(st.id)}
-              disabled={busy}
-            >
-              <span className="prac-pick-name">{st.name}</span>
-              <span className="prac-pick-topic">{st.topicName}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {soonCount > 0 && <SoonBanner count={soonCount} showTutorLine={hasAssignedBlock} />}
+    </section>
+  );
+}
+
+// Slice AVAIL-2 — the one playful surface that replaces the 154 dead rows.
+// Pikachu holds the banner (the raised arm carries it). Rare-by-construction:
+// it appears ONCE per page, never per row, which is what keeps it charming
+// rather than an apology (the PikaSplash easter-egg works for the same reason).
+function SoonBanner({ count, showTutorLine }: { count: number; showTutorLine: boolean }) {
+  return (
+    <section className="prac-soon" aria-label="More practice coming soon">
+      <img className="prac-soon-pika" src={pikachuWave} alt="" draggable={false} />
+      <div className="prac-soon-banner">
+        <h3 className="prac-soon-head">{SOON_COPY.head}</h3>
+        <p className="prac-soon-body">{SOON_COPY.body}</p>
+        {showTutorLine && <p className="prac-soon-tutor">{SOON_COPY.tutorLine} ↑</p>}
+        <p className="prac-soon-count">{SOON_COPY.count(count)}</p>
+      </div>
     </section>
   );
 }
