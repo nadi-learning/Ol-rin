@@ -169,6 +169,13 @@
       "when": 1784198039514,
       "tag": "0023_naive_hercules",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784199336893,
+      "tag": "0024_flowery_ravenous",
+      "breakpoints": true
     }
   ]
 }

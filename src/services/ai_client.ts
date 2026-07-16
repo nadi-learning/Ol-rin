@@ -19,6 +19,7 @@
 
 import { createHash } from "node:crypto";
 import { getVendor } from "./ai/registry";
+import { formatPromptIn, logAiCall } from "./ai_log";
 import { EmptyResponseError } from "./ai/errors";
 import type {
   VendorCompletionRequest,
@@ -72,7 +73,7 @@ export async function complete(
     result = await vendor.complete({ ...req, sessionFingerprint });
   } catch (err) {
     // Truly unexpected vendor failure (spawn error, SDK crash, etc.).
-    logCall({
+    await logCall({
       req,
       vendorId,
       ok: false,
@@ -85,7 +86,7 @@ export async function complete(
     throw err;
   }
 
-  logCall({
+  await logCall({
     req,
     vendorId,
     ok: result.finishReason === "stop",
@@ -94,6 +95,10 @@ export async function complete(
     tokensOut: result.outputTokens,
     finishReason: result.finishReason,
     errorMessage: result.errorMessage,
+    errorCause: result.cause,
+    promptOut: result.text || null,
+    aiSessionId: result.sessionId,
+    sessionFingerprint,
   });
 
   if (result.finishReason === "empty") {
@@ -123,7 +128,7 @@ export async function complete(
   return { ...result, sessionFingerprint };
 }
 
-// ---------- forensics (console) ----------
+// ---------- forensics (console + ai_call_log) ----------
 
 interface LogRowArgs {
   req: VendorCompletionRequest;
@@ -134,9 +139,13 @@ interface LogRowArgs {
   tokensOut: number;
   finishReason: VendorCompletionResult["finishReason"];
   errorMessage?: string;
+  errorCause?: VendorCompletionResult["cause"];
+  promptOut?: string | null;
+  aiSessionId?: string | null;
+  sessionFingerprint?: string | null;
 }
 
-function logCall(a: LogRowArgs): void {
+async function logCall(a: LogRowArgs): Promise<void> {
   const tag = a.ok ? "ok" : "FAIL";
   console.log(
     `[ai_client] ${tag} vendor=${a.vendorId} endpoint=${a.req.endpoint} ` +
@@ -144,6 +153,27 @@ function logCall(a: LogRowArgs): void {
       `in=${a.tokensIn} out=${a.tokensOut} finish=${a.finishReason}` +
       (a.errorMessage ? ` err=${a.errorMessage.slice(0, 200)}` : ""),
   );
+  // The durable half. AWAITED (never fire-and-forget — an un-awaited insert loses
+  // the race against process exit and drops the row); never throws (see ai_log.ts).
+  await logAiCall({
+    userId: a.req.userId,
+    endpoint: a.req.endpoint,
+    model: a.req.model || "(default)",
+    vendorId: a.vendorId,
+    slotId: a.req.slotId ?? null,
+    tokensIn: a.tokensIn,
+    tokensOut: a.tokensOut,
+    latencyMs: a.latencyMs,
+    timeoutMs: a.req.timeoutSec ? a.req.timeoutSec * 1000 : null,
+    ok: a.ok,
+    finishReason: a.finishReason,
+    errorCause: a.errorCause ?? null,
+    errorMessage: a.errorMessage ?? null,
+    promptIn: formatPromptIn(a.req.systemPrompt, a.req.userMessage),
+    promptOut: a.promptOut ?? null,
+    aiSessionId: a.aiSessionId ?? null,
+    sessionFingerprint: a.sessionFingerprint ?? null,
+  });
 }
 
 // ---------- helpers ----------

@@ -17,6 +17,7 @@ import {
   boolean,
   check,
   date,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -1038,6 +1039,73 @@ export const onboarding = pgTable(
   ],
 );
 
+// ───────────────────────── AI forensics ─────────────────────────
+
+/**
+ * ai_call_log — one append-only row per AI call, across BOTH vendor paths
+ * (services/ai_client.ts `complete()` AND services/ai/gemini.ts `geminiJson()`).
+ * Ported from Starkhorn's `ai_call_log`, plus two columns Starkhorn lacks:
+ * `thinking_tokens` and `timeout_ms`.
+ *
+ * WHY those two: on 2026-07-16 prod authoring stalled and both attempts died on
+ * "The operation timed out." with NO thinking count and NO elapsed time in the
+ * journal — the spend was invisible, and diagnosis needed a replay of a stored
+ * brief to discover thinking is the runaway axis (normal 6–9k tokens; one prod
+ * call hit 62,910). A forensics table that can't answer "how long, and how much
+ * thinking?" would not have solved that incident.
+ *
+ * GLOBAL — deliberately NOT in TENANT_SCOPED_TABLES (founder call, 2026-07-16):
+ * `geminiJson` is a low-level wrapper with no board claim, so a `WITH CHECK`
+ * policy would REJECT exactly the rows worth having (the authoring-worker path
+ * that broke). `board_id` is best-effort attribution for filtering, nullable by
+ * design, never a security boundary. Same reasoning as `upload_token` above.
+ * ⚠️ Consequence: prompt text (which contains student answers/names) is readable
+ * by the app role across boards. Accepted for forensic completeness.
+ *
+ * The write is BEST-EFFORT and must never break the call it observes — a
+ * forensics insert failing is a logged warning, not a failed AI call.
+ */
+export const aiCallLog = pgTable(
+  "ai_call_log",
+  {
+    id: id(),
+    // Best-effort attribution ONLY — nullable, no RLS, not a boundary.
+    boardId: uuid("board_id").references(() => board.id),
+    userId: uuid("user_id").references(() => appUser.id),
+    // e.g. 'authoring.worker' | 'authoring.chat' | 'stage1:conceptual' | 'imagegen'.
+    endpoint: text("endpoint").notNull(),
+    model: text("model").notNull(),
+    vendorId: text("vendor_id"), // 'gemini_api' | 'claude_cli'
+    slotId: text("slot_id"),
+    tokensIn: integer("tokens_in"),
+    tokensOut: integer("tokens_out"),
+    // The runaway axis — the whole reason this table exists.
+    thinkingTokens: integer("thinking_tokens"),
+    latencyMs: integer("latency_ms"),
+    // The cap in force for this call, so a TIMED-OUT row is self-evident
+    // (latency_ms ≈ timeout_ms) instead of needing the source to interpret.
+    timeoutMs: integer("timeout_ms"),
+    ok: boolean("ok").notNull().default(true),
+    finishReason: text("finish_reason"),
+    errorCause: text("error_cause"),
+    errorMessage: text("error_message"),
+    // Full bodies (founder call, 2026-07-16): an authoring brief is ~113KB and is
+    // precisely the call worth replaying verbatim — truncation would defeat the
+    // purpose. Revisit with a retention sweep if growth bites.
+    promptIn: text("prompt_in"),
+    promptOut: text("prompt_out"),
+    aiSessionId: text("ai_session_id"),
+    sessionFingerprint: text("session_fingerprint"),
+    attempt: integer("attempt"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_ai_call_log_endpoint_ts").on(t.endpoint, t.createdAt),
+    index("idx_ai_call_log_ok_ts").on(t.ok, t.createdAt),
+    index("idx_ai_call_log_board_ts").on(t.boardId, t.createdAt),
+  ],
+);
+
 /**
  * Tables carrying board_id → get RLS ENABLE + FORCE + a board-claim policy.
  * Single source of truth for src/db/migrate.ts (rls application). board,
@@ -1045,6 +1113,7 @@ export const onboarding = pgTable(
  * global; content_version is scoped transitively via content_unit).
  * upload_token is ALSO intentionally absent — it is a GLOBAL credential read
  * without a board claim (the unauth phone has none); see its comment above.
+ * ai_call_log is absent for the same reason — see its comment above.
  */
 export const TENANT_SCOPED_TABLES = [
   "membership",
@@ -1091,4 +1160,5 @@ export const ALL_TABLES = [
   ...TENANT_SCOPED_TABLES,
   "content_version",
   "upload_token", // Slice Q3 — GLOBAL credential (no RLS); needs the app-role grant
+  "ai_call_log", // AI forensics — GLOBAL (no RLS, see its comment); needs the grant
 ] as const;

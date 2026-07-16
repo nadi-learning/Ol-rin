@@ -1,5 +1,6 @@
 import { GoogleGenAI, type Schema } from "@google/genai";
 import { env } from "../../config/env";
+import { formatPromptIn, logAiCall } from "../ai_log";
 
 /**
  * Thin single-vendor orchestrator for Gemini (Slice AI-1, the first AI in the
@@ -37,6 +38,8 @@ export class AiBadJsonError extends Error {
 }
 
 // Generous; first call can spike (model warmup). Measure from the logs, tighten later.
+// Per-call override via `timeoutMs` — authoring needs far more than this default
+// (see AUTHORING_TIMEOUT_MS in authoring_worker.ts).
 const TIMEOUT_MS = 120_000;
 // Default cap on runaway/degenerate generations. IMPORTANT: on gemini-3 THINKING
 // models this bounds thinking + answer TOGETHER (b2c prod gemini.py says so), and
@@ -82,6 +85,23 @@ export interface GeminiJsonArgs {
    * timeout + retry-once remain the runaway guards when uncapped.
    */
   maxOutputTokens?: number | null;
+  /**
+   * Wall-clock cap for ONE attempt, in ms. Defaults to TIMEOUT_MS. Until now no
+   * timeout was wired at all (TIMEOUT_MS was declared and never read), so the
+   * effective bound was the runtime's own opaque ~300s fetch deadline — which is
+   * what surfaced as "The operation timed out." with no latency line to prove it.
+   */
+  timeoutMs?: number;
+  /**
+   * Cap on THINKING tokens. `undefined` ⇒ model default (automatic). A number
+   * bounds the thinking spend directly — the right knob for a runaway (M28:
+   * `maxOutputTokens` is NOT, it bounds thinking + answer together and starves
+   * the JSON).
+   */
+  thinkingBudget?: number;
+  /** Best-effort ai_call_log attribution (no RLS on that table — not a boundary). */
+  boardId?: string | null;
+  userId?: string | null;
 }
 
 /**
@@ -91,6 +111,7 @@ export interface GeminiJsonArgs {
 export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T> {
   const ai = getClient();
   const model = env.GEMINI_MODEL;
+  const timeoutMs = args.timeoutMs ?? TIMEOUT_MS;
 
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -123,7 +144,12 @@ export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T> {
           ...(args.maxOutputTokens === null
             ? {}
             : { maxOutputTokens: args.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS }),
+          ...(args.thinkingBudget === undefined
+            ? {}
+            : { thinkingConfig: { thinkingBudget: args.thinkingBudget } }),
           temperature: 0,
+          abortSignal: AbortSignal.timeout(timeoutMs),
+          httpOptions: { timeout: timeoutMs },
         },
       });
       const latencyMs = Date.now() - startedAt;
@@ -138,6 +164,31 @@ export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T> {
           `out=${usage?.candidatesTokenCount ?? "?"} ` +
           `thoughts=${usage?.thoughtsTokenCount ?? "?"} chars=${text.length}`,
       );
+      // Forensics row (best-effort, never throws). Written BEFORE the empty/bad-JSON
+      // throws below so a degenerate response is still on the record with its
+      // token spend — those are the rows worth reading later.
+      //
+      // AWAITED, not fire-and-forget: an un-awaited insert loses the race against
+      // process exit and silently drops the row (caught by the E2E — a real call
+      // logged nothing). An AI call costs 5–100s; this insert is noise beside it.
+      await logAiCall({
+        boardId: args.boardId,
+        userId: args.userId,
+        endpoint: args.label,
+        model,
+        vendorId: "gemini_api",
+        tokensIn: usage?.promptTokenCount ?? null,
+        tokensOut: usage?.candidatesTokenCount ?? null,
+        thinkingTokens: usage?.thoughtsTokenCount ?? null,
+        latencyMs,
+        timeoutMs,
+        ok: text.length > 0,
+        finishReason: text.length > 0 ? "stop" : "empty",
+        errorMessage: text.length > 0 ? null : "empty response (no text)",
+        promptIn: formatPromptIn(args.systemInstruction, args.prompt),
+        promptOut: text || null,
+        attempt,
+      });
 
       if (!text) throw new AiEmptyResponseError(args.label);
 
@@ -150,11 +201,36 @@ export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T> {
       lastErr = err;
       // A config/auth error won't fix itself on retry — surface immediately.
       if (err instanceof AiNotConfiguredError) throw err;
+      // Log the ELAPSED time on the failure path too. Without it a timeout is
+      // indistinguishable from an instant network error in the journal — which
+      // is exactly why the 2026-07-16 authoring stall took a forensic dig.
+      const latencyMs = Date.now() - startedAt;
+      const timedOut = latencyMs >= timeoutMs - 1_000;
+      const message = err instanceof Error ? err.message : String(err);
       console.error(
-        `[gemini] ${args.label} attempt=${attempt} FAILED: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[gemini] ${args.label} model=${model} attempt=${attempt} ` +
+          `latency=${latencyMs}ms timeout=${timeoutMs}ms${timedOut ? " TIMED-OUT" : ""} ` +
+          `FAILED: ${message}`,
       );
+      // The row that today's incident needed and did not have. A timeout yields
+      // no usage metadata (the response never arrived), so tokens stay null —
+      // but latency + timeout + the prompt are enough to replay it. Awaited for
+      // the same reason as the success path above.
+      await logAiCall({
+        boardId: args.boardId,
+        userId: args.userId,
+        endpoint: args.label,
+        model,
+        vendorId: "gemini_api",
+        latencyMs,
+        timeoutMs,
+        ok: false,
+        finishReason: timedOut ? "timeout" : "error",
+        errorCause: timedOut ? "silent_timeout" : null,
+        errorMessage: message,
+        promptIn: formatPromptIn(args.systemInstruction, args.prompt),
+        attempt,
+      });
       if (attempt === 2) throw lastErr;
     }
   }
