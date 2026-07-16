@@ -109,6 +109,7 @@ import {
 import { getDueQueue } from "../services/scheduler";
 import {
   AssignmentNotFoundError,
+  assignApprovedQuestions,
   createAssignment,
   InvalidAssignmentError,
   listAssignmentsForStudent,
@@ -1574,16 +1575,38 @@ export const appRouter = router({
 
     // Approve drafts → live to the student (the M11 ENABLEMENT side).
     approveDrafts: tutorProcedure
-      .input(z.object({ questionIds: z.array(z.string().uuid()).min(1) }))
+      .input(
+        z.object({
+          questionIds: z.array(z.string().uuid()).min(1),
+          // ASG-AUTO: when on, also push the approved questions to the student as
+          // an assignment (find-and-extend, split per scope). mode = the chat's
+          // authoring mode; without it the assign is skipped.
+          assign: z.boolean().optional(),
+          mode: z.enum(["blocked", "interleaved"]).optional(),
+        }),
+      )
       .mutation(async ({ ctx, input }) => {
         try {
-          return await approveDrafts(ctx.tx, {
+          const res = await approveDrafts(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             questionIds: input.questionIds,
           });
+          const assignments =
+            input.assign && input.mode
+              ? await assignApprovedQuestions(ctx.tx, {
+                  boardId: ctx.board.id,
+                  tutorUserId: ctx.membership.userId,
+                  mode: input.mode,
+                  questionIds: res.approvedIds,
+                })
+              : [];
+          return { ...res, assignments };
         } catch (e) {
           if (e instanceof DraftNotFoundError || e instanceof StudentNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: (e as { code: string }).code });
+          }
+          if (e instanceof InvalidAssignmentError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
           }
           throw e;
         }

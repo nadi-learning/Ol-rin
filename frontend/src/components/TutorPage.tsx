@@ -2314,6 +2314,9 @@ function AuthorChat({
   // once drafts exist; the tutor can collapse it back to full-width chat without
   // discarding the drafts (re-open via the topbar chip) — D-AUTHUI-1.
   const [previewMinimized, setPreviewMinimized] = useState(false);
+  // ASG-AUTO: on approve, also push the questions to the student as an assignment
+  // (find-and-extend, split per chapter/subject). Default ON — the founder's call.
+  const [assignOnApprove, setAssignOnApprove] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   // Bumped after every save so the "Saved questions" review panel re-queries.
@@ -2507,6 +2510,10 @@ function AuthorChat({
       .then((c) => {
         resetAll();
         setChat(c);
+        // Restore any un-approved drafts so opening a mid-review chat from the
+        // history picker doesn't drop the preview — parity with the landing +
+        // localStorage resume paths (the missing call that lost the form).
+        restoreDrafts(c);
         localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
         setAuthTab("chat");
       })
@@ -2749,10 +2756,19 @@ function AuthorChat({
     try {
       // Flush any un-committed edits first, then enable (M11 enablement).
       await Promise.all(cards.map((_, i) => commit(i)));
-      await trpc.tutor.approveDrafts.mutate({ questionIds: ids });
+      const assign = assignOnApprove && !!chat;
+      const res = await trpc.tutor.approveDrafts.mutate({
+        questionIds: ids,
+        assign,
+        mode: chat?.mode,
+      });
+      const who = student.name ?? student.email;
+      const assigned = assign && (res.assignments?.length ?? 0) > 0;
       setSaved(
-        `Approved ${n} question${n === 1 ? "" : "s"} for ${student.name ?? student.email}` +
-          " - now live to them. Keep chatting to author more.",
+        `Approved ${n} question${n === 1 ? "" : "s"} for ${who}` +
+          (assigned
+            ? " - now live and assigned to them. Keep chatting to author more."
+            : " - now live to them. Keep chatting to author more."),
       );
       setCards(null);
       setTarget(null);
@@ -3014,6 +3030,15 @@ function AuthorChat({
               ))}
             </div>
             <div className="tut-auth-savebar">
+              <label className="tut-auth-assign">
+                <input
+                  type="checkbox"
+                  checked={assignOnApprove}
+                  onChange={(e) => setAssignOnApprove(e.target.checked)}
+                  disabled={saving}
+                />
+                Assign to {student.name ?? student.email}
+              </label>
               <button
                 className="btn-solid"
                 onClick={approve}

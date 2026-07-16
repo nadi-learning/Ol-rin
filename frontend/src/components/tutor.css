@@ -1120,8 +1120,24 @@
 }
 .tut-auth-savebar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   padding-top: 4px;
+}
+/* ASG-AUTO: "Assign to <student>" toggle beside the Approve button. */
+.tut-auth-assign {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #667);
+  cursor: pointer;
+  user-select: none;
+}
+.tut-auth-assign input {
+  cursor: pointer;
+  margin: 0;
 }
 
 /* ───────────── Slice AUTH v2 — student-grounded conversational authoring ─────────────

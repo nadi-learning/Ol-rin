@@ -22,13 +22,14 @@
  * This REVERSES D-L-2 (practice was self-serve only): a tutor-assigned path now
  * exists (D-ASG-1). Self-serve is unchanged and still works.
  */
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   assignment,
   chapter,
   practiceSession,
+  question,
   subTopic,
   subject,
   topic,
@@ -174,6 +175,128 @@ export async function createAssignment(
     .returning();
 
   return buildView(tx, created!, ids, byId);
+}
+
+/**
+ * Auto-assign on approve (Slice ASG-AUTO) — when the tutor approves authored
+ * drafts with the "assign" toggle on, push those questions' sub_topics to the
+ * student as an assignment. Two founder-locked rules:
+ *
+ *  - FIND-AND-EXTEND (not duplicate): if an OPEN assignment (one that isn't yet
+ *    fully completed — completion is derived, the stored status is always
+ *    'assigned') for the same student + mode + scope anchor already exists,
+ *    extend its frozen composition with any NEW sub_topics instead of creating a
+ *    second card. A fully-completed assignment is left finished — a fresh one is
+ *    created so old work isn't resurrected. When the approved questions all fall
+ *    under a sub_topic already in the assignment, there's nothing to write: the
+ *    new questions just join that sub_topic's live pool (practice reads current
+ *    approved questions, not a frozen question list).
+ *
+ *  - SPLIT PER SCOPE: a batch spanning multiple chapters (blocked) or subjects
+ *    (interleaved) fans into ONE assignment per chapter / subject — never an
+ *    invalid cross-scope composition (createAssignment would reject it).
+ *
+ * studentId is derived from the questions' target_student_id (authored drafts are
+ * student-private), so a mixed-student batch is not auto-assigned (returns []).
+ * Runs in the caller's board-scoped tx — atomic with the approve. Returns the
+ * affected assignment views (created or extended).
+ */
+export async function assignApprovedQuestions(
+  tx: Tx,
+  args: {
+    boardId: string;
+    tutorUserId: string;
+    mode: AssignmentMode;
+    questionIds: string[];
+  },
+): Promise<AssignmentView[]> {
+  if (args.questionIds.length === 0) return [];
+
+  const qrows = await tx
+    .select({ subTopicId: question.subTopicId, targetStudentId: question.targetStudentId })
+    .from(question)
+    .where(inArray(question.id, args.questionIds));
+
+  // Auto-assign is a single-student push (authored drafts are private). A batch
+  // that somehow targets 0 or >1 students is not auto-assigned.
+  const studentIds = [...new Set(qrows.map((r) => r.targetStudentId).filter((x): x is string => !!x))];
+  if (studentIds.length !== 1) return [];
+  const studentId = studentIds[0]!;
+  await assertTutorsStudent(tx, args.tutorUserId, studentId);
+
+  const subTopicIds = [...new Set(qrows.map((r) => r.subTopicId))];
+  const resolved = await resolveSubTopics(tx, subTopicIds);
+  const byId = new Map(resolved.map((r) => [r.subTopicId, r]));
+
+  // Group sub_topics by the mode's scope anchor (chapter=blocked, subject=interleaved).
+  const groups = new Map<string, string[]>(); // anchorId → ordered sub_topic ids
+  for (const stId of subTopicIds) {
+    const r = byId.get(stId);
+    if (!r) continue; // unresolved (deleted/cross-board) — skip
+    const anchor = args.mode === "blocked" ? r.chapterId : r.subjectId;
+    const list = groups.get(anchor) ?? [];
+    list.push(stId);
+    groups.set(anchor, list);
+  }
+
+  const anchorCol = args.mode === "blocked" ? assignment.chapterId : assignment.subjectId;
+  const views: AssignmentView[] = [];
+  for (const [anchorId, groupSubTopics] of groups) {
+    // Existing assignments for this exact scope, newest first.
+    const candidates = await tx
+      .select()
+      .from(assignment)
+      .where(
+        and(
+          eq(assignment.tutorId, args.tutorUserId),
+          eq(assignment.studentId, studentId),
+          eq(assignment.mode, args.mode),
+          eq(anchorCol, anchorId),
+        ),
+      )
+      .orderBy(desc(assignment.createdAt));
+
+    // Reuse the newest OPEN (not-derived-completed) one; skip finished assignments.
+    let target: typeof assignment.$inferSelect | null = null;
+    for (const row of candidates) {
+      const [view] = await buildViews(tx, [row]);
+      if (view && !view.completed) {
+        target = row;
+        break;
+      }
+    }
+
+    if (target) {
+      const existing = new Set(target.subTopicIds);
+      const additions = groupSubTopics.filter((id) => !existing.has(id));
+      const row =
+        additions.length === 0
+          ? target // nothing new — the questions join the live pool; no write
+          : (
+              await tx
+                .update(assignment)
+                .set({ subTopicIds: [...target.subTopicIds, ...additions] })
+                .where(eq(assignment.id, target.id))
+                .returning()
+            )[0]!;
+      const [v] = await buildViews(tx, [row]);
+      if (v) views.push(v);
+    } else {
+      // No open assignment for this scope → create one (createAssignment validates
+      // the scope rule, which holds by construction — we grouped by anchor).
+      const view = await createAssignment(tx, {
+        boardId: args.boardId,
+        tutorUserId: args.tutorUserId,
+        studentId,
+        mode: args.mode,
+        subTopicIds: groupSubTopics,
+        chapterId: args.mode === "blocked" ? anchorId : null,
+        subjectId: args.mode === "interleaved" ? anchorId : null,
+      });
+      views.push(view);
+    }
+  }
+  return views;
 }
 
 type SessionProgress = { status: "active" | "completed"; currentIndex: number };
