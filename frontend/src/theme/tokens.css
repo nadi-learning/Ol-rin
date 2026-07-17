@@ -6,7 +6,11 @@
    Reference: rewrite/design/{dashboard,tutor-canvas}.png.
    ========================================================================== */
 
-@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+/* ONB-6 (S103) — Caveat + EB Garamond are ONBOARDING-ONLY (see onboarding.css).
+   The founder's ask was "pick some interesting calligraphy" for the story, not
+   a product-wide type change: Fredoka/Inter still own every other surface, and
+   the welcome is the one place that is meant to read as a hand-written book. */
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Caveat:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap");
 
 :root {
   /* surfaces */

@@ -21,7 +21,14 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { appUser, board, onboarding, subject } from "@b2c/kernel/schema";
-import { FAV_CHARACTERS, ONBOARDING_STEPS, isKnownPet } from "@b2c/kernel/contracts";
+import {
+  FAV_CHARACTERS,
+  ONBOARDING_STEPS,
+  PETS,
+  RETIRED_ONBOARDING_STEPS,
+  isKnownPet,
+  resolveOnboardingStep,
+} from "@b2c/kernel/contracts";
 import {
   complete,
   getState,
@@ -236,12 +243,46 @@ async function main() {
   // half-done student.
   console.log("\n5c. the beat order");
   check(
-    "ONBOARDING_STEPS is the S91 flow",
+    "ONBOARDING_STEPS is the S96 flow (pikachu is GONE — D-ONB-16)",
     JSON.stringify(ONBOARDING_STEPS) ===
-      JSON.stringify(["greet", "about_you", "fav_character", "pikachu", "pet", "phone", "lore", "done"]),
+      JSON.stringify(["greet", "about_you", "fav_character", "pet", "phone", "lore", "done"]),
     JSON.stringify(ONBOARDING_STEPS),
   );
-  check("every FAV_CHARACTERS id has copy (no chip can be speechless)", FAV_CHARACTERS.length === 6);
+  check("the roster is the S96 eleven", FAV_CHARACTERS.length === 11, String(FAV_CHARACTERS.length));
+  check("the companion set is the S96 seven", PETS.length === 7, String(PETS.length));
+
+  // ── 5d. a RETIRED step still resolves (S96) ─────────────────────────────
+  // 🔴 The bug this exists for: real rows hold current_step='pikachu' (every
+  // S91–S95 walk, the founder's own included). ONB-5 deleted the beat, and a
+  // step the list no longer names would have resolved to "unknown" — which the
+  // walker's contract treats as "let them through" (G3). Those students would
+  // have been silently skipped PAST THE ENTIRE STORY with no error anywhere.
+  //
+  // A deletion nobody asserts is a deletion that quietly comes back (S90).
+  console.log("\n5d. retired steps resolve forward");
+  check("a stored 'pikachu' row resumes at its SUCCESSOR, not nowhere", resolveOnboardingStep("pikachu") === "pet", resolveOnboardingStep("pikachu"));
+  check("'grade' (S92) → about_you", resolveOnboardingStep("grade") === "about_you");
+  check("'school' (S90) → fav_character", resolveOnboardingStep("school") === "fav_character");
+  check("'fun_fact_about' (S91) → pet", resolveOnboardingStep("fun_fact_about") === "pet");
+  check("a LIVE step resolves to itself", resolveOnboardingStep("lore") === "lore");
+  check("total: every retired step lands on a real, live step", Object.values(RETIRED_ONBOARDING_STEPS).every((s) => (ONBOARDING_STEPS as readonly string[]).includes(s)));
+  // Junk must not trap a student mid-flow; greet is the only safe restart.
+  check("garbage falls back to greet, never undefined", resolveOnboardingStep("nonsense") === "greet");
+
+  // The claim above is pure — it proves the TABLE, not that anyone reads it.
+  // This one writes a real 'pikachu' row (exactly what an S91–S95 student left
+  // behind) straight past the service and asserts getState resolves it, which
+  // is the only version of this claim that would have caught the live bug: the
+  // old code did `row.currentStep as OnboardingStep`, a bare cast on a column
+  // the DB does not constrain, and the cast made the type LOOK safe.
+  await withBoard(boardA!.id, async (tx) => {
+    await tx.update(onboarding).set({ currentStep: "pikachu" }).where(eq(onboarding.userId, S.userId));
+    const st = await getState(tx, S);
+    check("a REAL stored 'pikachu' row resumes at pet, through getState", st.currentStep === "pet", st.currentStep);
+    check("...and is not silently dropped out of onboarding", st.needsOnboarding === true);
+    // Put it back where 5c left it so the walk below starts where it expects.
+    await tx.update(onboarding).set({ currentStep: "fav_character" }).where(eq(onboarding.userId, S.userId));
+  });
 
   // ── 6. the S91 walk: chips, the pet, and the skip ───────────────────────
   console.log("\n6. chips, pet, skip");
@@ -252,9 +293,21 @@ async function main() {
 
     const ch = await saveStep(tx, { ...S, step: "fav_character", value: "iron_man" });
     check("a chip id persists", ch.answers.favCharacter === "iron_man", String(ch.answers.favCharacter));
-    check("advanced fav_character → pikachu", ch.currentStep === "pikachu", ch.currentStep);
+    check("advanced fav_character → pet (the echo beat is gone)", ch.currentStep === "pet", ch.currentStep);
 
-    await saveStep(tx, { ...S, step: "pikachu", value: null });
+    // 🔴 D-ONB-13 — the pronoun list is a DEFAULT, not a gate. This student's
+    // pronoun is 'she' (set at about_you, section 3) and `batman` is on the
+    // `he` list. The UI offers him via "more heroes", so the server MUST take
+    // him. This is the claim that fails the moment someone "helpfully"
+    // validates the hero against the pronoun's list — which would turn the
+    // display default into a cage, and the app would be telling a child who
+    // they are.
+    //
+    // ⚠️ The hero MUST be off this student's own list or the claim is vacuous
+    // (M11) — a same-list pick passes just as green under a gated server.
+    const crossed = await saveStep(tx, { ...S, step: "fav_character", value: "batman" });
+    check("a `he`-list hero is accepted for a `she` student (D-ONB-13)", crossed.answers.favCharacter === "batman", String(crossed.answers.favCharacter));
+    await saveStep(tx, { ...S, step: "fav_character", value: "iron_man" });
 
     // The pet: a known id, then the free-text hatch overwriting it.
     const known = await saveStep(tx, { ...S, step: "pet", value: "owl" });

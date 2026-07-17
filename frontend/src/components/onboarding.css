@@ -4,6 +4,15 @@
    thing a student ever sees already teaches the rest of the product. */
 
 .onb-root {
+  /* ── ONB-6 type (founder: "pick some interesting caligraphy", "font of
+     secondary copy should be something else", "font can be bigger") ──
+     SCOPED to the welcome on purpose: the rest of the product stays
+     Fredoka/Inter. Caveat is Olórin's own hand on the graph paper — the
+     conceit the whole flow rests on; EB Garamond is the storybook the hand is
+     writing in. Body text NEVER takes Caveat: it is charming at 40px and
+     tiring at 19px, and the story pages are full paragraphs. */
+  --font-tale: "Caveat", "Bradley Hand", cursive;
+  --font-story: "EB Garamond", Georgia, serif;
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -14,12 +23,226 @@
     linear-gradient(var(--grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 26px 26px;
+  /* S96 — the scene layer is absolutely positioned against this. */
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── the scene layer (S96, ONB-5) ──
+   The founder's handpicked sketches, greyscaled into one pencil world. This is
+   the fix for the real S91 finding: the copy was rewritten twice while the
+   STAGE stayed an empty white grid, and an empty grid is what "not getting the
+   feel" actually meant.
+
+   🔴 IT MUST NEVER WIN AGAINST THE WORDS. Every rule here — the opacity, the
+   mask, the pointer-events — exists to keep a 52px question readable on top of
+   a drawing. If a change makes the art louder, the art is wrong, not the type.
+   The layer is aria-hidden in the component: atmosphere, not content. */
+.onb-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.onb-scene img {
+  position: absolute;
+  /* aspect-ratio + object-fit, never height:auto — an un-sized image has ZERO
+     height until it decodes, which corrupts anything measured mid-load (M44). */
+  object-fit: contain;
+  filter: grayscale(1) contrast(1.05);
+  opacity: 0;
+  animation: onb-scene-in 1.1s ease-out forwards;
+  /* S101 — the art is a SCAN, not a cut-out: every scene is a JPEG, so it
+     carries an opaque white ground that no mask can remove. Drawn with plain
+     alpha it lightened the graph paper inside its own bounding box, and the
+     rectangle was visible on every un-masked edge — the reveal pair read as two
+     photos pasted onto the page.
+
+     `multiply` makes the ground disappear for free (white × paper = paper) and
+     lets only the pencil darken, so the grid runs THROUGH the drawing and the
+     box edge cannot exist at any opacity. This is what makes it one pencil
+     world rather than a collage — the founder's ask, done in compositing
+     instead of in Photoshop on 21 files. */
+  mix-blend-mode: multiply;
+}
+
+@keyframes onb-scene-in {
+  to {
+    opacity: var(--scene-opacity, 0.22);
+  }
+}
+
+/* One sketch, held to a side so the column of type never sits on its face. */
+.onb-scene-single .onb-scene-img {
+  top: 50%;
+  transform: translateY(-50%);
+  /* S103 — 86vh/780 -> 100vh/1100. The founder's note on every beat was the
+     same: "images are like the minimum make it big there is lot of space in
+     the page". The art now runs the full height of the paper and past both
+     edges; the feather (below) is what keeps the text column clear, so the
+     drawing can be enormous without ever winning against the words. */
+  height: min(100vh, 1100px);
+  aspect-ratio: 3 / 4;
+  /* S102 — 0.2 -> 0.3. The old numbers were calibrated against a PLAIN-ALPHA
+     composite and are meaningless now: multiply only ever darkens (white ground
+     drops out entirely), and S102's all-edge feather removes coverage on top of
+     that, so the same number reads far fainter than it did when it was chosen.
+     Raised until the drawing is present at arm's length and still loses to the
+     type — the rule at the top of this file. */
+  --scene-opacity: 0.3;
+  /* Fade the inner edge out so the drawing dissolves toward the text rather
+     than ending on a hard rectangle.
+
+     S102 — the second layer is the actual fix for the "box". This mask fades
+     ONE axis, so the TOP and BOTTOM edges stayed hard cuts: the scans are not
+     white-ground cut-outs, they are full-bleed drawings whose own tone runs to
+     the frame (measured: grounds from 156 to 255), and multiply lands that tone
+     on the paper as a visible horizontal line. `multiply` (S101) killed the box
+     for the near-white scans and left it untouched for the toned ones — which
+     is why the reveal still read as two photos pasted on the page.
+     Feather every edge and the drawing dissolves whatever its ground. */
+  mask-image:
+    linear-gradient(to var(--fade-dir, left), black 40%, transparent 92%),
+    linear-gradient(to bottom, transparent 0, black 14%, black 86%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+.onb-scene-single.is-right .onb-scene-img {
+  right: 0;
+  --fade-dir: left;
+}
+
+.onb-scene-single.is-left .onb-scene-img {
+  left: 0;
+  --fade-dir: right;
+}
+
+/* ── picker beats (pet, heroes) ──
+   The cards are OPAQUE plates centred in a 620px column, so any art that
+   reaches under them reads as "pasted behind the UI" rather than as the page
+   it is drawn on — the founder's "instead of overlapping... keep one image".
+   The fix is NOT to shrink the art (they asked for the opposite): push it
+   outboard and steepen the inner fade so it is spent before the column
+   starts. On a 1280 stage the column spans 330..950, so the art must be gone
+   by ~950 — hence a fade that finishes well inside its own box. */
+.onb-scene.is-picker .onb-scene-img,
+.onb-scene.is-picker .onb-main-img {
+  mask-image:
+    linear-gradient(to var(--fade-dir, left), black 58%, transparent 88%),
+    linear-gradient(to bottom, transparent 0, black 14%, black 86%, transparent 100%);
+}
+.onb-scene.is-picker.is-right .onb-scene-img,
+.onb-scene.is-picker .onb-main-img.is-right {
+  right: -5%;
+}
+.onb-scene.is-picker .onb-cslot-ml {
+  left: -3%;
+}
+
+/* The hero carousel: each hero fades in over ~1.1s and holds for ROTATE_MS
+   (5s, founder). The component keys the img on its src, so every hero
+   re-mounts and replays this — a bare src swap would hard-cut. */
+.onb-scene-img.is-rotating {
+  animation: onb-scene-in 1.4s ease-out forwards;
+}
+
+/* about_you: four Shire blueprints, one per corner, question in the middle
+   (founder, exactly). They read as pages from Olórin's own notebook. */
+.onb-scene-corners .onb-corner {
+  width: clamp(190px, 27vw, 400px);
+  aspect-ratio: 3 / 4;
+  /* S102 — 0.19 -> 0.36, the biggest raise of the three, and it is compensation
+     rather than taste: the mask fix below pulls the transparent stop from 1.417w
+     in to 0.967w, which is a real loss of covered area. Holding 0.28 after that
+     change left the blueprints ghostly. Raised until the notebook pages read at
+     the same weight they did with the (broken) larger mask. */
+  --scene-opacity: 0.36;
+}
+
+/* S102 — the stops moved 45/85 -> 26/58, and that is arithmetic, not taste.
+   A circle gradient's default radius is FARTHEST-CORNER: on this 3:4 element
+   that is 1.667w, so "transparent 85%" only became transparent at 1.417w —
+   while the element's own right edge is at 1.0w. The mask was still opaque when
+   the drawing ran out of element, so every corner ended on a hard cut. It hid
+   at the old 0.19 and S102's opacity raise made it plain: the SAME defect as
+   the single/pair beats (a mask that never reaches transparent before the
+   frame), just wearing a radial gradient.
+
+   transparent 58% = 0.967w, inside the 1.0w right edge, so all four sides
+   dissolve. The visible art is now a quarter-disc rather than a cut rectangle —
+   which is what "pages from Olórin's notebook" wanted in the first place. */
+.onb-scene-corners .onb-corner-1 {
+  top: 0;
+  left: 0;
+  mask-image: radial-gradient(circle at 0 0, black 26%, transparent 58%);
+}
+.onb-scene-corners .onb-corner-2 {
+  top: 0;
+  right: 0;
+  mask-image: radial-gradient(circle at 100% 0, black 26%, transparent 58%);
+  animation-delay: 0.12s;
+}
+.onb-scene-corners .onb-corner-3 {
+  bottom: 0;
+  left: 0;
+  mask-image: radial-gradient(circle at 0 100%, black 26%, transparent 58%);
+  animation-delay: 0.24s;
+}
+.onb-scene-corners .onb-corner-4 {
+  bottom: 0;
+  right: 0;
+  mask-image: radial-gradient(circle at 100% 100%, black 26%, transparent 58%);
+  animation-delay: 0.36s;
+}
+
+/* The reveal: young LEFT, old RIGHT, rising together as he says it (founder).
+   The flow's only two-image beat, because the whole point is that they are the
+   same person — shown apart, the sentence has nothing to land on. */
+.onb-scene-pair .onb-pair-img {
+  bottom: 0;
+  height: min(92vh, 900px);
+  aspect-ratio: 3 / 4;
+  /* S102 — 0.26 -> 0.38. Highest of the three on purpose: this is the payoff
+     beat and the two drawings ARE the sentence ("the same person"), so they
+     have to be legible as faces, not just as tone. Judged from a rendered
+     ladder (0.26 / 0.34 / 0.42 / 0.52) on the lore beat. */
+  --scene-opacity: 0.38;
+  animation-duration: 1.8s;
+}
+
+/* The TOP edge is the one that shows on the reveal: the pair is bottom-anchored,
+   so its lower edge runs off the page while the upper one cuts straight across
+   the paper. gandalf-old's ground measures 179 — the darkest of the 18 scans,
+   because the smoke IS the drawing — so that cut landed as a hard horizontal
+   line with clean graph paper above it and a grey slab below. The most visible
+   compositing defect in the flow, on its payoff beat. */
+.onb-scene-pair .is-left {
+  left: 0;
+  mask-image:
+    linear-gradient(to right, black 35%, transparent 90%),
+    linear-gradient(to bottom, transparent 0, black 30%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+.onb-scene-pair .is-right {
+  right: 0;
+  mask-image:
+    linear-gradient(to left, black 35%, transparent 90%),
+    linear-gradient(to bottom, transparent 0, black 30%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
 }
 
 /* Not a card (S90, founder: no white background) — the conversation sits
    directly on the page grid, like the Revision landing's hero does. The class
    name stays; it is the layout column, not a surface. */
 .onb-card {
+  /* Above the scene layer — the words always win. */
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 620px;
   padding: 28px 8px 20px;
@@ -65,12 +288,15 @@
 /* 2x (S90 founder call) — this is a headline, the same weight class as the
    Revision landing hero, not chat text. */
 .onb-stage-prompt {
-  font-family: var(--font-display);
-  font-size: clamp(32px, 9vw, 52px);
-  font-weight: 600;
-  line-height: 1.25;
+  /* Olórin's hand. Caveat's x-height is far smaller than Fredoka's, so the
+     same number reads a size down — 52 -> 72 is parity plus the founder's
+     "should be more bigger", not a doubling. */
+  font-family: var(--font-tale);
+  font-size: clamp(42px, 11vw, 72px);
+  font-weight: 700;
+  line-height: 1.12;
   color: var(--ink);
-  min-height: 1.25em;
+  min-height: 1.12em;
   white-space: pre-wrap;
 }
 
@@ -91,11 +317,12 @@
 }
 
 .onb-sub {
-  margin: 14px auto 0;
-  max-width: 48ch;
-  color: var(--ink-muted);
-  font-size: 16px;
-  line-height: 1.55;
+  margin: 16px auto 0;
+  max-width: 46ch;
+  color: var(--ink-soft, var(--ink-muted));
+  font-family: var(--font-story);
+  font-size: clamp(17px, 2.4vw, 21px);
+  line-height: 1.6;
   padding: 0 4px;
   animation: onb-rise 0.4s ease both;
 }
@@ -105,10 +332,10 @@
    second paragraph (there is no transcript left to land it in). */
 .onb-react {
   text-align: center;
-  font-family: var(--font-display);
-  font-size: clamp(24px, 5.5vw, 34px);
-  font-weight: 600;
-  line-height: 1.35;
+  font-family: var(--font-tale);
+  font-size: clamp(34px, 7vw, 50px);
+  font-weight: 700;
+  line-height: 1.15;
   color: var(--ink);
   padding: 20px 6px 8px;
   white-space: pre-wrap;
@@ -124,6 +351,30 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* S96 — the canvas line: what comes with this hero / this companion (founder:
+   "explain what comes with each hero and pet"). It rides the SAME beat as the
+   reaction rather than taking a screen of its own — a student who just picked
+   their hero should not have to tap through a paragraph to keep going.
+
+   Deliberately much quieter than .onb-react: body scale, muted, narrow measure.
+   It is the story's footnote, not its voice, and at hero scale it would bury
+   the reply it belongs to. */
+.onb-blurb {
+  max-width: 46ch;
+  margin: 14px auto 0;
+  text-align: center;
+  font-size: clamp(14px, 2.4vw, 16px);
+  line-height: 1.6;
+  color: var(--ink-muted, #5a5a66);
+  animation: onb-rise 0.5s ease both 0.45s;
+}
+
+.onb-reactwrap {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 /* ── the Pikachu beat ── */
@@ -238,6 +489,21 @@
   max-width: 143px;
   gap: 6px;
   padding: 14px 8px 12px;
+  /* S103 — was `var(--surface)`, an opaque plate. The founder's note on the
+     pet beat ("instead of overlapping the sketch of arya stark and pet") is a
+     LAYERING complaint, not a sizing one: a solid white card on a pencil
+     drawing is a UI element pasted on art, and no amount of moving the art
+     fixes it while the card is opaque. Paper + ink lets the drawing run
+     through, which is the same trick `multiply` plays for the scans. */
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  backdrop-filter: blur(1.5px);
+}
+.onb-chips.is-cards .onb-choice:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+.onb-chips.is-cards .onb-choice.is-companion {
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface) 62%);
 }
 
 /* A fixed BOX, not a fixed height: the four stickers have different aspect
@@ -255,6 +521,31 @@
 }
 .onb-choice:hover:not(:disabled) .onb-choice-img {
   transform: scale(1.06) rotate(-1.5deg);
+}
+
+/* S96 — the companion your HERO brought. Marked, never locked (founder,
+   agreed): the pet is the flow's only gift, and a gift you cannot choose is an
+   assignment. So this is a highlight + a wink, and every other card stays live.
+
+   It is deliberately NOT `.is-picked`: nothing is committed yet. This says
+   "someone is already here for you", which is a different claim from "this is
+   your answer" — and the student still has to tap. */
+.onb-choice.is-companion {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+/* The wink — the line that makes the pairing land ("Ghost has been waiting").
+   Small, brand-coloured, and only ever on the hero's own companion; on every
+   other card it is absent rather than empty, so the row can't look ragged. */
+.onb-choice-wink {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--primary);
+  text-align: center;
+  animation: onb-rise 0.4s ease both 0.2s;
 }
 
 /* The "something else" hatch — deliberately quieter than the pets and on its
@@ -303,9 +594,9 @@
 }
 
 .onb-duo-label {
-  font-family: var(--font-display);
-  font-size: 19px;
-  font-weight: 600;
+  font-family: var(--font-story);
+  font-size: clamp(19px, 2.4vw, 23px);
+  font-weight: 500;
   color: var(--ink-soft, var(--ink));
 }
 
@@ -360,6 +651,38 @@
 .onb-chip.is-picked {
   background: var(--primary);
   color: #fff;
+}
+
+/* ── the reveal's Yes/No (founder: "yes and no capsule can be better") ──
+   The soft periwinkle pills read as generic UI on the flow's best-looking
+   page. These are inked answers written on the paper instead: Olórin's hand,
+   an ink outline, the same language as the comic bubbles. */
+.onb-chips.is-lore {
+  gap: 18px;
+}
+.onb-chips.is-lore .onb-chip {
+  min-width: 132px;
+  background: var(--surface);
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  font-family: var(--font-tale);
+  font-size: 30px;
+  font-weight: 700;
+  padding: 6px 30px 10px;
+  border-radius: 30px 26px 32px 24px / 26px 32px 24px 30px;
+  box-shadow: 0 3px 6px rgba(20, 22, 40, 0.08);
+  transition: transform 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.onb-chips.is-lore .onb-chip:nth-child(2) {
+  transform: rotate(1.4deg);
+}
+.onb-chips.is-lore .onb-chip:first-child {
+  transform: rotate(-1.4deg);
+}
+.onb-chips.is-lore .onb-chip:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--page-bg);
+  transform: translateY(-2px) rotate(0deg);
 }
 
 .onb-choice {
@@ -487,6 +810,8 @@
   text-align: center;
   gap: 14px;
   min-height: min(420px, 70vh);
+  /* the epilogue art is 56vh — the column must not cage it */
+  max-height: none;
 }
 
 .onb-loader-img {
@@ -565,6 +890,20 @@
   }
 }
 
+/* The phone beat hangs the student's own COMPANION on the wall, and a sticker
+   is a cut-out PNG, not a 3:4 scan: at the scene's full height it filled the
+   page and its drop-shadow halo read as a smudge. Bound it and let it sit. */
+.onb-scene.is-sticker .onb-scene-img {
+  height: min(52vh, 460px);
+  aspect-ratio: auto;
+  width: auto;
+  max-width: 34vw;
+  mix-blend-mode: normal;
+  filter: grayscale(1) contrast(1.05);
+  --scene-opacity: 0.5;
+  mask-image: linear-gradient(to var(--fade-dir, left), black 45%, transparent 96%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .onb-pika-img,
   .onb-loader-img,
@@ -607,14 +946,35 @@
     padding: 16px;
   }
   /* Pets stay a GRID on a phone — stacking four cards into a column would push
-     the last ones under the fold, which is the exact bug S90 fixed. Two up. */
+     the last ones under the fold, which is the exact bug S90 fixed.
+
+     S102 — THREE up, was two. PETS is SEVEN, and seven is PRIME: no uniform row
+     count divides it, so a tail is unavoidable at every width. Two-up wrapped
+     2/2/2/1 and left Alfred alone on a FOURTH row; three-up wraps 3/3/1 — one
+     fewer row (S90's under-the-fold goal) with the art still large.
+
+     ⚠️ Alfred STILL strands, and that is the founder's call made with the render
+     in front of them: 4-up (4/3) is the ONLY split with no lone card, but at
+     81px the wide stickers (Direwolf, JARVIS) get width-constrained and the
+     companion hint wraps to three lines — paying the art to fix the tail, which
+     is the opposite of S92's "can be a bigger size". The tail is cheaper.
+
+     The basis is measured, not guessed: the column is 358 wide and .is-cards
+     raises the gap to 10px, so three fit only at <= (358 - 2*10)/3 = 112.67.
+     33.333% - 7px = 112.33. At the exact limit sub-pixel rounding drops the
+     third card to its own row — reintroducing the bug being fixed here. */
   .onb-chips.is-cards .onb-choice {
-    flex: 0 1 calc(50% - 5px);
+    flex: 0 1 calc(33.333% - 7px);
     max-width: none;
     padding: 10px 6px 8px;
   }
   .onb-choice-img {
     height: 78px;
+  }
+  /* The card is ~112 wide now, so the art is bounded by WIDTH not height: a
+     78px box would only letterbox the tall stickers against a narrower column. */
+  .onb-chips.is-cards .onb-choice-img {
+    height: 68px;
   }
   .onb-delivery-pet {
     height: 104px;
@@ -640,5 +1000,362 @@
   .onb-field {
     flex: 1 1 100%;
     order: -1;
+  }
+}
+
+/* ══ ONB-6 (S103) — the journey rework ══════════════════════════════════════
+   Collage scenes (the "canvas of sketches"), Next-gated story pages, comic
+   bubbles, the fellowship trio, and the 45s epilogue. The compositing rules
+   are the S101/S102 settlement applied verbatim — multiply + an all-edge
+   feather on every scan — and are NOT to be re-litigated here. */
+
+/* The collage's big main sketch = the single sketch's rules, restated for the
+   collage stage (same numbers, same masks — one look, two scene kinds). */
+.onb-scene-collage .onb-main-img {
+  top: 50%;
+  transform: translateY(-50%);
+  height: min(100vh, 1100px);
+  aspect-ratio: 3 / 4;
+  --scene-opacity: 0.3;
+  mask-image:
+    linear-gradient(to var(--fade-dir, left), black 40%, transparent 92%),
+    linear-gradient(to bottom, transparent 0, black 14%, black 86%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.onb-scene-collage .onb-main-img.is-right {
+  right: 0;
+  --fade-dir: left;
+}
+.onb-scene-collage .onb-main-img.is-left {
+  left: 0;
+  --fade-dir: right;
+}
+
+/* Slotted sketches. Corners wear the S102 quarter-disc masks; the mid-edges
+   (ml/mr — the "more art" the founder asked for) wear the single-sketch
+   feather at a smaller size, so the page reads dense without the text column
+   ever losing. */
+.onb-cslot {
+  /* S103 — 21vw -> 27vw, same reason as the main: the corners read as stamps
+     on a mostly-empty page at the old size. */
+  width: clamp(190px, 27vw, 400px);
+  aspect-ratio: 3 / 4;
+  --scene-opacity: 0.36;
+}
+.onb-cslot-tl {
+  top: 0;
+  left: 0;
+  mask-image: radial-gradient(circle at 0 0, black 26%, transparent 58%);
+}
+.onb-cslot-tr {
+  top: 0;
+  right: 0;
+  mask-image: radial-gradient(circle at 100% 0, black 26%, transparent 58%);
+}
+.onb-cslot-bl {
+  bottom: 0;
+  left: 0;
+  mask-image: radial-gradient(circle at 0 100%, black 26%, transparent 58%);
+}
+.onb-cslot-br {
+  bottom: 0;
+  right: 0;
+  mask-image: radial-gradient(circle at 100% 100%, black 26%, transparent 58%);
+}
+.onb-cslot-ml,
+.onb-cslot-mr {
+  top: 50%;
+  transform: translateY(-50%);
+  height: min(62vh, 560px);
+  width: auto;
+  --scene-opacity: 0.32;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.onb-cslot-ml {
+  left: 0;
+  mask-image:
+    linear-gradient(to right, black 30%, transparent 94%),
+    linear-gradient(to bottom, transparent 0, black 20%, black 80%, transparent 100%);
+}
+.onb-cslot-mr {
+  right: 0;
+  mask-image:
+    linear-gradient(to left, black 30%, transparent 94%),
+    linear-gradient(to bottom, transparent 0, black 20%, black 80%, transparent 100%);
+}
+
+/* ── the story page ──
+   A beat's Next-gated payoff. The title is the quip (instant — it is short);
+   the body types at TYPE_MS under it; the bubble/sticker/trio arrive when the
+   typing settles; the CTA gates the advance. Nothing here can vanish unread —
+   that is the entire reason the phase exists. */
+.onb-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px 6px;
+  /* ⚠️ `backwards`, NOT `both` — deliberately, and load-bearing. `both` keeps
+     the finished transform applied forever, and a transformed ANCESTOR
+     isolates its subtree's mix-blend-mode: the trio art below stopped
+     multiplying with the page grid and rendered as a washed plate (found by
+     LOOKING at the 390 fellowship shot, S103). `backwards` covers the delay,
+     plays the entrance, then releases the transform so the art can blend. */
+  animation: onb-settle 1.2s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.onb-page-title {
+  font-family: var(--font-tale);
+  font-size: clamp(34px, 7vw, 54px);
+  font-weight: 700;
+  line-height: 1.12;
+  color: var(--ink);
+  max-width: 22ch;
+  animation: onb-rise 0.35s ease both;
+}
+
+/* Reading scale, not headline scale: this is the story's BODY — the hero
+   explanations, the reveal — and it has to be comfortable for a full
+   paragraph at typewriter pace. */
+.onb-page-text {
+  margin-top: 16px;
+  max-width: 48ch;
+  font-family: var(--font-story);
+  font-size: clamp(18px, 2.9vw, 24px);
+  line-height: 1.6;
+  color: var(--ink-soft, var(--ink));
+  white-space: pre-wrap;
+}
+
+.onb-page-cta {
+  margin-top: 20px;
+  animation: onb-rise 0.35s ease both;
+}
+
+/* The pet payoff's foreground sticker — the gift itself, so it pops. */
+.onb-page-sticker {
+  margin-top: 16px;
+}
+.onb-page-sticker img {
+  height: 120px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(20, 22, 40, 0.2));
+  transform-origin: 50% 100%;
+  animation: onb-pika-enter 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* ── the comic bubble ──
+   The hero/pet's ONE printed line (founder: "add dialog of character along the
+   sketches"). Hand-lettered look: inked border, a tail, a slight tilt. It is a
+   line printed on a page — never an input, never a question to the student
+   (D-ONB-14: presence, not conversation). */
+.onb-bubble-row {
+  margin-top: 18px;
+}
+.onb-bubble {
+  position: relative;
+  display: inline-block;
+  max-width: 40ch;
+  background: var(--surface);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  padding: 10px 18px;
+  font-family: var(--font-display);
+  font-size: clamp(14px, 2.4vw, 17px);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+  transform: rotate(-1.2deg);
+  box-shadow: 0 3px 6px rgba(20, 22, 40, 0.08);
+  animation: onb-pika-enter 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both;
+}
+.onb-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 26px;
+  width: 13px;
+  height: 13px;
+  background: var(--surface);
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: rotate(45deg);
+}
+.onb-bubble-by {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+/* ── the fellowship trio ──
+   The reveal's last page: hero + companion + Olórin, NAMED, in the
+   foreground. The scans keep the multiply + feather treatment (a raw JPEG
+   rectangle in the foreground is the exact "photo pasted on the page" defect
+   S101 killed) but run far louder than atmosphere — this page the art IS the
+   content. The sticker needs none of that; it is a real cut-out. */
+.onb-trio {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(14px, 4vw, 40px);
+  margin-top: 20px;
+}
+.onb-trio-fig {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  /* `backwards`, not `both` — same isolation trap as .onb-page above. */
+  animation: onb-rise 0.5s ease backwards;
+}
+.onb-trio-fig:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.onb-trio-fig:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.onb-trio-art {
+  height: clamp(190px, 36vh, 330px);
+  aspect-ratio: 3 / 4;
+  object-fit: contain;
+  filter: grayscale(1) contrast(1.05);
+  mix-blend-mode: multiply;
+  /* Fades in AFTER the figs' entrances have released their transforms
+     (longest: 0.3s delay + 0.5s), so the multiply lands on the real grid from
+     the first visible frame rather than popping from plate to paper. */
+  --scene-opacity: 0.68;
+  opacity: 0;
+  animation: onb-scene-in 0.9s ease-out 0.6s forwards;
+  mask-image:
+    linear-gradient(to right, transparent 0, black 16%, black 84%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 14%, black 88%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.onb-trio-sticker {
+  height: clamp(120px, 23vh, 210px);
+  width: auto;
+  max-width: 220px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(20, 22, 40, 0.2));
+}
+.onb-trio-fig figcaption {
+  font-family: var(--font-tale);
+  font-size: clamp(20px, 2.6vw, 26px);
+  font-weight: 700;
+  color: var(--ink-soft, var(--ink));
+}
+
+/* ── the epilogue (was: the loader) ──
+   Five pages, ~45s (founder's number), typed at story pace, honest bar. */
+.onb-epi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  /* `backwards`, not `both` — same isolation trap as .onb-page above. */
+  animation: onb-rise 0.5s ease backwards;
+}
+.onb-epi-art {
+  height: min(56vh, 520px);
+  aspect-ratio: 3 / 4;
+  object-fit: contain;
+  filter: grayscale(1) contrast(1.05);
+  mix-blend-mode: multiply;
+  /* Fades in after .onb-epi's 0.5s entrance releases its transform. */
+  --scene-opacity: 0.55;
+  opacity: 0;
+  animation: onb-scene-in 0.9s ease-out 0.55s forwards;
+  mask-image:
+    linear-gradient(to right, transparent 0, black 16%, black 84%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 14%, black 88%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.onb-epi-say {
+  font-family: var(--font-tale);
+  font-size: clamp(26px, 4.4vw, 40px);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+  max-width: 44ch;
+  min-height: 3em;
+  white-space: pre-wrap;
+}
+
+/* The epilogue bar FILLS — 0 to 100% over EPILOGUE_TOTAL_MS (duration set
+   inline from the same constant, so the bar cannot drift from the clock). The
+   base bar's indeterminate shuttle animation is fully overridden. */
+.onb-loader-bar.is-epi {
+  width: 260px;
+}
+.onb-loader-bar.is-epi span {
+  width: 0;
+  transform: none;
+  animation-name: onb-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  animation-iteration-count: 1;
+}
+@keyframes onb-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-page,
+  .onb-page-title,
+  .onb-page-cta,
+  .onb-page-sticker img,
+  .onb-bubble,
+  .onb-trio-fig,
+  .onb-epi {
+    animation: none;
+  }
+  /* ⚠️ .onb-cslot / .onb-main-img are NOT in this list on purpose — like every
+     other scene image, their entrance animation is what carries them to their
+     resting opacity; killing it would leave them at 0 (invisible), not still. */
+}
+
+@media (max-width: 520px) {
+  /* Denser page, smaller paper: corners shrink, the mid-edge doodles bow out —
+     six sketches behind a 390px column buries the words, and the words win. */
+  .onb-cslot {
+    width: clamp(90px, 26vw, 140px);
+  }
+  .onb-cslot-ml,
+  .onb-cslot-mr {
+    display: none;
+  }
+  .onb-page-text {
+    font-size: 15px;
+  }
+  .onb-trio {
+    gap: 10px;
+  }
+  .onb-trio-art {
+    height: 140px;
+  }
+  .onb-trio-sticker {
+    height: 96px;
+  }
+  .onb-epi-art {
+    height: 30vh;
+  }
+  .onb-loader-bar.is-epi {
+    width: 200px;
   }
 }
