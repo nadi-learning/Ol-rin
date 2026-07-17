@@ -41,6 +41,7 @@
     "probe:tutor": "bun scripts/probe_tutor_surface.ts",
     "probe:tutorpace": "bun scripts/probe_tutor_pace.ts",
     "probe:stage2": "bun scripts/probe_stage2.ts",
+    "probe:assessmentsession": "bun scripts/probe_assessment_session.ts",
     "probe:parent": "bun scripts/probe_parent_report.ts",
     "probe:scheduler": "bun scripts/probe_scheduler.ts",
     "probe:assignment": "bun scripts/probe_assignment.ts",

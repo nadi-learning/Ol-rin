@@ -72,7 +72,7 @@ const axisReadSchema = z.object({
   level: z.number().int().min(1).max(5).nullable(),
   reasoning: z.string().min(1),
   calibrationFlag: z.enum(["over", "under"]).nullable().default(null),
-  crossConceptNote: z.string().nullable().default(null),
+  nonSubtopicNote: z.string().nullable().default(null),
 });
 type AxisRead = z.infer<typeof axisReadSchema>;
 
@@ -101,11 +101,11 @@ const geminiResponseSchema = {
       description:
         "'over' = high confidence + low rung; 'under' = low confidence + high rung; null otherwise. Secondary flag, never sets the level.",
     },
-    crossConceptNote: {
+    nonSubtopicNote: {
       type: Type.STRING,
       nullable: true,
       description:
-        "procedural only: a slip in a DIFFERENT adjacent skill that should NOT lower this LO's rung — name the other concept + what broke; null otherwise",
+        "anything this answer reveals that does NOT belong to this sub-topic: an adjacent-skill slip (name the other concept + what broke), a hint of a gap in another chapter, or a horizontal-skill signal (language precision, quantitative thinking, diagram reading, …). Detection only — do not judge or categorise it here. null when the answer stays inside the sub-topic",
     },
   },
   required: ["applicable", "reasoning"],
@@ -134,7 +134,9 @@ IF THE FINAL ANSWER IS WRONG, locate the break (Newman): reading / comprehension
 
 CALIBRATION: if the student's confidence clashes with their reasoning quality, set calibrationFlag ('over' = confident but low rung, 'under' = unsure but high rung). It NEVER moves the level.
 
-Return applicable=false when the answer/question exposed no conceptual reasoning.`;
+NON-SUBTOPIC SIGNAL (purely ADDITIVE — it never changes your read): you are the only reader who ever sees this raw answer, so anything you don't capture is lost. If the answer reveals something that does NOT belong to this sub-topic — a misconception from another chapter, a prerequisite gap, or a horizontal-skill signal (imprecise language, weak quantitative sense, misread diagram/notation) — record it in nonSubtopicNote: name what you saw and where it seems to belong. DETECTION ONLY; a later stage evaluates it. Decide applicable and level EXACTLY as you would if this field did not exist, then fill it in — noticing non-subtopic material NEVER lowers the rung and NEVER makes the axis inapplicable. In particular: an answer that reasons about a NEIGHBOURING concept rather than this sub-topic's stated LOs is still conceptual reasoning — score it and note the mismatch; do NOT abstain. null when the answer stays inside the sub-topic.
+
+Return applicable=false ONLY when the answer/question exposed no conceptual reasoning AT ALL (no "why" offered) — never merely because the reasoning sits outside this sub-topic's LOs.`;
 
 const PROCEDURAL_SYSTEM = `You score ONE student answer on the PROCEDURAL axis only: how fluently the student EXECUTED the procedure the sub-topic's learning objectives target — INDEPENDENT of whether the final answer is right (a clean wrong answer can be a slip; a correct one can be laboured). Read EXECUTION, never speed alone.
 
@@ -153,7 +155,9 @@ Rungs 4–5 are aspirational — do not inflate without the speed/compression (4
 
 BOUND (critical): a question demanding no real execution (a pure "explain why") yields NO procedural observation → return applicable=false. You can only score a rung the execution gives evidence for.
 
-SLIP PLACEMENT: a slip in THIS procedure (arithmetic/sign/units/notation) CAPS the rung (keeps them out of 4–5). A slip in a DIFFERENT adjacent skill (they ran the target procedure well but stumbled on a prerequisite from another concept) does NOT lower this rung — score the target procedure on what they showed and emit crossConceptNote naming the other concept + what broke. Choosing the WRONG method entirely is CONCEPTUAL, not procedural — don't penalise execution for it here.
+SLIP PLACEMENT: a slip in THIS procedure (arithmetic/sign/units/notation) CAPS the rung (keeps them out of 4–5). A slip in a DIFFERENT adjacent skill (they ran the target procedure well but stumbled on a prerequisite from another concept) does NOT lower this rung — score the target procedure on what they showed and record it in nonSubtopicNote (see below). Choosing the WRONG method entirely is CONCEPTUAL, not procedural — don't penalise execution for it here.
+
+NON-SUBTOPIC SIGNAL (purely ADDITIVE — it never changes your read): you are the only reader who ever sees this raw answer, so anything you don't capture is lost. Record in nonSubtopicNote anything the execution reveals that does NOT belong to this sub-topic: the adjacent-skill slip above (name the other concept + what broke), a prerequisite gap from another chapter, or a horizontal-skill signal (sloppy notation, weak arithmetic sense, misread diagram). DETECTION ONLY; a later stage evaluates it. Decide applicable and level EXACTLY as you would if this field did not exist, then fill it in — noticing non-subtopic material NEVER lowers the rung and NEVER makes the axis inapplicable. null when the answer stays inside the sub-topic.
 
 CALIBRATION: confidence clashing with execution quality → calibrationFlag ('over'/'under'); never moves the level.
 
@@ -277,11 +281,14 @@ export async function scoreAttempt(
         signals: {
           confidence: a.confidence ?? null,
           timeMs: a.timeMs ?? null,
-          crossConceptNote: read.crossConceptNote,
           model: process.env.GEMINI_MODEL ?? "gemini-3-flash-preview",
           // Forensics: this read was of a photo answer (Q3-2), not typed text.
           ...(images.length ? { photoCount: images.length } : {}),
         },
+        // S2R-1: the non-subtopic signal is a real column now (both axes), no
+        // longer buried in signals. Legacy rows keep signals.crossConceptNote;
+        // readers fall back.
+        nonSubtopicNote: read.nonSubtopicNote,
         calibrationFlag: read.calibrationFlag,
         pedagogicalComment: q.pedagogicalNote,
         source: STAGE1_SOURCE,
@@ -435,7 +442,10 @@ COLD START (no current mastery state): certify from these observations alone; wr
 
 OUTPUT:
 - conceptualLevel, proceduralLevel (1–5, or null = not yet observed) — the certified pair, the whole standing (no fused score).
-- description: ONE dense blob spanning both axes — WHERE the student is + WHAT improvement is needed. User-visible. Fold any calibration flags into this prose.
+- description: ONE dense blob spanning both axes. It MUST state BOTH halves, explicitly, EVERY time: (a) what the student CAN do — the ground they actually hold; and (b) what they STRUGGLE with — what improvement is needed next. A description that praises without naming a gap, or lists gaps without crediting what is solid, is incomplete. User-visible. Fold any calibration flags into this prose.
+  This is a REPORTING contract, and it is purely about HOW YOU WRITE this one field. It changes NOTHING you certify: decide conceptualLevel, proceduralLevel, applicability, the dates and the flags EXACTLY as you would if this paragraph did not exist. Naming a struggle is not evidence for a lower level, and naming a strength is not evidence for a higher one — the rung comes from the qualifying-observation rule above, and from nothing else.
+  If an axis is null (NOT YET OBSERVED), say so plainly — "we have not yet seen them execute this" — and do NOT invent a struggle to fill the half. An unobserved axis is a coverage gap, never a weakness.
+  If an axis is genuinely TOPPED OUT (certified 5 — nothing left to climb on it), do NOT manufacture a weakness to satisfy the both-halves rule: say plainly that the axis is fully mastered. The struggle half binds only where real ground is left to gain. Inventing a gap the evidence does not show is a REPORTING error, exactly as bad as omitting a real one.
 - log: your internal working notes — qualifying-obs counts per axis, LO coverage, #questions at each rating, whether the spacing criteria were met. Not shown to the student.
 - climbNextDue (YYYY-MM-DD or null): the date to re-ask so a ready student can climb — the LAST qualifying observation's date + the gap the NEXT level needs. Null when the climbable axis is already topped out (both at 5, or nothing left to climb). This is the ONE date you emit: it needs your judgment (which level is being climbed, which observations qualified). The anti-fade RETENTION date is NOT yours — it is pure arithmetic off the procedural level and the scheduler derives it. Do not compute or mention it.
 - reasoning: why each axis landed where it did (the move + its justification).
@@ -472,7 +482,8 @@ const stage2GeminiSchema = {
     },
     description: {
       type: Type.STRING,
-      description: "dense blob, both axes — where the student is + what improvement is needed; USER-VISIBLE",
+      description:
+        "dense blob, both axes; USER-VISIBLE. MUST state both what the student CAN do and what they STRUGGLE with, explicitly, every time — EXCEPT where an axis is null (not yet observed) or topped out at 5, where naming the absence beats inventing a gap",
     },
     log: {
       type: Type.STRING,
@@ -512,21 +523,29 @@ export type Stage2DraftResult = {
 // Keep only YYYY-MM-DD (the `date` column wants a date string). Forgiving on the
 // model's format — SOFT on the exact value, just don't let a bad string break the
 // commit (returns null on anything that isn't an ISO-ish date prefix).
-function normalizeDate(s: string | null): string | null {
+export function normalizeDate(s: string | null): string | null {
   if (!s) return null;
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(s.trim());
   return m ? m[1]! : null;
 }
 
 /**
- * Build the Stage-2 proposal for one (student × sub_topic). ONE Gemini call.
- * Reads-only and re-runnable — the tutor can re-draft freely before finalizing.
+ * Gather everything the Stage-2 call needs for one (student × sub_topic) — the
+ * DB half of draftStage2, split out for S2R-2.
+ *
+ * WHY THE SPLIT: a sitting drafts all N of its sub-topics in PARALLEL, but a
+ * single Postgres transaction cannot serve concurrent queries — firing
+ * `Promise.all(ids.map(id => draftStage2(tx, …)))` would race reads on one
+ * connection. So the caller gathers each input sequentially on the tx (cheap,
+ * pure reads), then fans out ONLY `runStage2Call` (which touches no DB) and
+ * awaits them together. Wall-clock is the slowest single call, not the sum.
+ *
  * Ownership-guarded (the caller tutors this student) like every tutor read.
  */
-export async function draftStage2(
+export async function gatherStage2Input(
   tx: Tx,
   args: { tutorUserId: string; studentId: string; subTopicId: string },
-): Promise<Stage2DraftResult> {
+): Promise<{ input: Stage2CallInput; subTopicName: string; observationCount: number; current: CurrentMastery | null }> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
 
   const [st] = await tx
@@ -574,7 +593,7 @@ export async function draftStage2(
       }
     : null;
 
-  const draft = await runStage2Call({
+  const input: Stage2CallInput = {
     subTopicName: st.name,
     conceptualLos: los.filter((l) => l.axis === "conceptual" || l.axis === "both").map((l) => l.description),
     proceduralLos: los.filter((l) => l.axis === "procedural" || l.axis === "both").map((l) => l.description),
@@ -589,28 +608,45 @@ export async function draftStage2(
       overrideReason: o.overrideReason,
       reasoning: o.reasoning,
       calibrationFlag: o.calibrationFlag,
-      crossConceptNote:
-        (o.signals as { crossConceptNote?: string | null } | null)?.crossConceptNote ?? null,
+      // S2R-1: real column first; legacy rows carry it in signals.
+      nonSubtopicNote:
+        o.nonSubtopicNote ??
+        (o.signals as { crossConceptNote?: string | null } | null)?.crossConceptNote ??
+        null,
       pedagogicalComment: o.pedagogicalComment,
       at: o.createdAt,
     })),
     completionAt: new Date(),
     subTopicId: args.subTopicId,
-  });
+  };
 
+  return { input, subTopicName: st.name, observationCount: obs.length, current };
+}
+
+/**
+ * Build the Stage-2 proposal for one (student × sub_topic). ONE Gemini call.
+ * Reads-only and re-runnable — the tutor can re-draft freely before finalizing.
+ *
+ * Kept as the single-sub-topic composition of gather + call. S2R-2 removed its
+ * tRPC endpoint (D-S2R-5, hard cut) but the function itself is still the unit
+ * every sitting is built from — assessment_session drafts N of these.
+ */
+export async function draftStage2(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string; subTopicId: string },
+): Promise<Stage2DraftResult> {
+  const { input, subTopicName, observationCount, current } = await gatherStage2Input(tx, args);
+  const draft = await runStage2Call(input);
   return {
     subTopicId: args.subTopicId,
-    subTopicName: st.name,
-    observationCount: obs.length,
+    subTopicName,
+    observationCount,
     current,
-    draft: {
-      ...draft,
-      climbNextDue: normalizeDate(draft.climbNextDue),
-    },
+    draft: { ...draft, climbNextDue: normalizeDate(draft.climbNextDue) },
   };
 }
 
-interface Stage2CallInput {
+export interface Stage2CallInput {
   subTopicName: string;
   conceptualLos: string[];
   proceduralLos: string[];
@@ -622,7 +658,7 @@ interface Stage2CallInput {
     overrideReason: string | null;
     reasoning: string;
     calibrationFlag: string | null;
-    crossConceptNote: string | null;
+    nonSubtopicNote: string | null;
     pedagogicalComment: string | null;
     at: Date;
   }>;
@@ -630,7 +666,7 @@ interface Stage2CallInput {
   subTopicId: string;
 }
 
-async function runStage2Call(i: Stage2CallInput): Promise<Stage2Draft> {
+export async function runStage2Call(i: Stage2CallInput): Promise<Stage2Draft> {
   const loList = (ls: string[]) =>
     ls.length ? ls.map((d, n) => `  ${n + 1}. ${d}`).join("\n") : "  (none recorded)";
 
@@ -648,7 +684,7 @@ last finalized: ${i.current.updatedAt.toISOString()}`
       (o, n) =>
         `  [${n + 1}] axis=${o.axis} obs-level=${o.level} at=${o.at.toISOString()}` +
         (o.calibrationFlag ? ` calibration=${o.calibrationFlag}` : "") +
-        (o.crossConceptNote ? ` cross-concept="${o.crossConceptNote}"` : "") +
+        (o.nonSubtopicNote ? ` non-subtopic="${o.nonSubtopicNote}"` : "") +
         (o.machineLevel != null
           ? `\n      ⚠ TUTOR-CORRECTED: the Stage-1 scorer read this as ${o.machineLevel}; the tutor set it to ${o.level}` +
             `${o.overrideReason ? ` — "${o.overrideReason}"` : ""}. Count ${o.level}; the tutor has already adjudicated this answer.`
@@ -892,7 +928,11 @@ export async function finalizeStage2(
   // (Stage-1 never read the other concept's LOs); it counts toward nothing.
   // UNIQUE(source_observation_id) → re-finalizing cannot duplicate a flag.
   const flagged = await tx
-    .select({ id: observation.id, signals: observation.signals })
+    .select({
+      id: observation.id,
+      signals: observation.signals,
+      nonSubtopicNote: observation.nonSubtopicNote,
+    })
     .from(observation)
     .where(
       and(
@@ -902,7 +942,11 @@ export async function finalizeStage2(
       ),
     );
   for (const o of flagged) {
-    const note = (o.signals as { crossConceptNote?: string | null } | null)?.crossConceptNote;
+    // S2R-1: real column first (both axes now emit); legacy rows fall back to
+    // the old procedural-only signals.crossConceptNote.
+    const note =
+      o.nonSubtopicNote ??
+      (o.signals as { crossConceptNote?: string | null } | null)?.crossConceptNote;
     if (!note) continue;
     await tx
       .insert(crossConceptFlag)

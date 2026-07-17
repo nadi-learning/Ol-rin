@@ -158,6 +158,17 @@ async function main() {
       pedagogicalComment: "routine execution", source: "stage1_scorer",
       createdAt: new Date(baseMs + 11 * 24 * 3600 * 1000),
     });
+    // S2R-1: same rule, new home — the note lives in the non_subtopic_note
+    // COLUMN now (both axes emit it). Finalize must feed the flag from the
+    // column AND still honour the legacy signals row above.
+    await tx.insert(observation).values({
+      boardId: P.id, studentId: stu.id, subTopicId: stCold!.id, axis: "conceptual",
+      observationLevel: 3, reasoning: "Explained Δv/Δt adequately; wobbled reading the graph.",
+      signals: {},
+      nonSubtopicNote: "hint of a gap in linear-graph reading — called the gradient the intercept",
+      pedagogicalComment: "routine explain-why", source: "stage1_scorer",
+      createdAt: new Date(baseMs + 12 * 24 * 3600 * 1000),
+    });
 
     // stOneAxis: CONCEPTUAL observations only — every item served was an
     // explain-why, so the procedural axis was never exposed. Nothing here is
@@ -209,7 +220,14 @@ async function main() {
   check("draft: procedural is 1–5 or null", validLevel(d.proceduralLevel));
   check("draft: both axes observed here → neither is null", d.conceptualLevel !== null && d.proceduralLevel !== null);
   check("draft: non-empty description/log/reasoning", d.description.length > 0 && d.log.length > 0 && d.reasoning.length > 0);
-  check("draft: observationCount = 4, current=null (cold start)", dres.observationCount === 4 && dres.current === null);
+  // S2R-2 (spec §6): the sharpened `description` contract — it must state BOTH
+  // what the student can do AND what they struggle with, every time. That is a
+  // prose quality, so it stays SOFT (pinning an LLM's wording is how gates go
+  // brittle) — but it MUST be printed. "non-empty" cannot see the contract at
+  // all, and an unprinted contract is an unproven one (M52): the half that goes
+  // missing would be invisible to every check above.
+  soft("description (§6: must carry BOTH halves — can-do AND struggles-with)", d.description);
+  check("draft: observationCount = 5, current=null (cold start)", dres.observationCount === 5 && dres.current === null);
   check("draft: climb date is null or YYYY-MM-DD", d.climbNextDue === null || /^\d{4}-\d{2}-\d{2}$/.test(d.climbNextDue));
   check("draft: no retention date emitted (ASSESS-FIX-3 — the scheduler derives it)", !("retentionNextDue" in (d as object)));
   soft("draft proposed levels (conceptual,procedural)", [d.conceptualLevel, d.proceduralLevel]);
@@ -304,9 +322,12 @@ async function main() {
   // Before this fix it lived in observation.signals, was shown once in the draft,
   // and was never seen again — attached to the WRONG sub-topic.
   const ccf = await rows(P.id, (tx) => getCrossConceptFlags(tx, { tutorUserId: tut.id, studentId: stu.id }));
-  check("cross-concept: 1 OPEN flag persisted on finalize", ccf.length === 1);
-  check("cross-concept: carries the note + where it was seen", (ccf[0]?.note ?? "").includes("rationalising the denominator") && ccf[0]?.fromSubTopicName === "Acceleration");
-  check("cross-concept: it is NOT a scored observation (no level on the flag)", !("observationLevel" in (ccf[0]! as object)) && !("level" in (ccf[0]! as object)));
+  check("non-subtopic: 2 OPEN flags persisted on finalize (one per home)", ccf.length === 2);
+  const legacyFlag = ccf.find((f) => f.note.includes("rationalising the denominator"));
+  const columnFlag = ccf.find((f) => f.note.includes("linear-graph reading"));
+  check("non-subtopic: legacy signals.crossConceptNote still feeds the flag", !!legacyFlag && legacyFlag.fromSubTopicName === "Acceleration");
+  check("S2R-1: the non_subtopic_note COLUMN feeds the flag (conceptual axis too)", !!columnFlag && columnFlag.fromSubTopicName === "Acceleration");
+  check("non-subtopic: it is NOT a scored observation (no level on the flag)", !("observationLevel" in (ccf[0]! as object)) && !("level" in (ccf[0]! as object)));
 
 
   // 6. OVERRIDE finalize (final 4/3, edited description ≠ draft)
@@ -394,12 +415,12 @@ async function main() {
     }),
   );
   const ccf2 = await rows(P.id, (tx) => tx.select().from(crossConceptFlag).where(eq(crossConceptFlag.studentId, stu.id)));
-  check("cross-concept: re-finalize does NOT duplicate (unique on source observation)", ccf2.length === 1);
+  check("non-subtopic: re-finalize does NOT duplicate (unique on source observation)", ccf2.length === 2);
 
   const closed = await rows(P.id, (tx) => setCrossConceptFlagAddressed(tx, { tutorUserId: tut.id, flagId: ccf[0]!.id, addressed: true }));
-  check("cross-concept: tutor can mark it handled", closed.addressedAt !== null);
+  check("non-subtopic: tutor can mark it handled", closed.addressedAt !== null);
   const openAfter = await rows(P.id, (tx) => getCrossConceptFlags(tx, { tutorUserId: tut.id, studentId: stu.id }));
-  check("cross-concept: handled flag drops out of the OPEN list", openAfter.length === 0);
+  check("non-subtopic: handled flag drops out of the OPEN list; the other stays open", openAfter.length === 1 && openAfter[0]!.id !== ccf[0]!.id);
 
   // 8. RLS — draft a P student under board Q → ownership link invisible → NOT_FOUND
   let rls = false;

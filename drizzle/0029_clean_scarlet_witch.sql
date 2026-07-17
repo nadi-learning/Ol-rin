@@ -1,0 +1,1 @@
+ALTER TABLE "observation" ADD COLUMN "non_subtopic_note" text;

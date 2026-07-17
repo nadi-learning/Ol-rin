@@ -179,17 +179,53 @@ async function main() {
   soft("calibration flag (hoped 'over' for confident+weak)", calibObs?.calibrationFlag);
   soft("calibration case level", calibObs?.observationLevel);
 
-  // 8. SOFT cross-concept — speed correct, km/h conversion (adjacent) wrong
-  // Whether the model writes a procedural obs (capping the rung + emitting a
-  // cross-concept note) vs ABSTAINS (judging the adjacent slip as the only
-  // notable feature) is the model's discretion — all SOFT (log, never fail).
+  // 8. SOFT non-subtopic (S2R-1; was cross-concept) — speed correct, km/h
+  // conversion (adjacent) wrong. Whether the model writes a procedural obs
+  // (capping the rung + emitting a non-subtopic note) vs ABSTAINS (judging the
+  // adjacent slip as the only notable feature) is the model's discretion — all
+  // SOFT (log, never fail). FIRM only on plumbing: when a note exists it lives
+  // in the non_subtopic_note COLUMN, and signals no longer carries it.
   const aCross = await mkAttempt(fx.qCross, "speed = 150 / 5 = 30 m/s. To get km/h I multiply by 60: 30 × 60 = 1800 km/h.", 3, 60000, null);
   await scoreAttempt(P.id, aCross);
   const oCross = await obsFor(P.id, aCross);
   const crossObs: any = oCross.find((o: any) => o.axis === "procedural");
-  soft("cross-concept: procedural obs produced?", !!crossObs);
-  soft("cross-concept note", crossObs?.signals?.crossConceptNote);
-  soft("cross-concept procedural level (should not be tanked to 1 for the adjacent slip)", crossObs?.observationLevel);
+  soft("non-subtopic: procedural obs produced?", !!crossObs);
+  soft("non-subtopic note (column)", crossObs?.nonSubtopicNote);
+  soft("non-subtopic procedural level (should not be tanked to 1 for the adjacent slip)", crossObs?.observationLevel);
+  // 8b. S2R-1 WIRING — the vendor→column seam, proven with a REAL call.
+  // Sound conduction reasoning (so the conceptual axis is definitely exposed and
+  // scored) carrying an unmistakable gap from ANOTHER chapter (temperature
+  // scales: "20 K at room temperature"). Per §2 that must NOT dent the
+  // conduction rung; it must leave as a nonSubtopicNote.
+  //
+  // Why this claim is FIRM on the column but SOFT on the content: if Gemini ever
+  // renamed/dropped the field, zod would default it to null, the column would be
+  // silently always-null, and every other check here would still pass green
+  // (M40). Asserting a real call populates it at least once is the only thing
+  // that can fail in that case. WHAT the model writes stays its discretion.
+  const aNonSub = await mkAttempt(
+    fx.qConcept,
+    "Metal feels colder because it conducts thermal energy away from my hand much faster — the free electrons carry energy quickly, so energy leaves my skin fast. Wood is an insulator, so energy flows out slowly and it feels warmer. Both are actually at the same temperature, which is about 20 degrees Kelvin in this room.",
+    4,
+    50000,
+    null,
+  );
+  await scoreAttempt(P.id, aNonSub);
+  const oNonSub = await obsFor(P.id, aNonSub);
+  const nonSubObs: any = oNonSub.find((o: any) => o.axis === "conceptual");
+  check("S2R-1 wiring: off-subtopic aside still scored on the conceptual axis (no abstain)", !!nonSubObs);
+  check(
+    "S2R-1 wiring: a REAL Gemini call populated the non_subtopic_note COLUMN (vendor→zod→DB seam)",
+    typeof nonSubObs?.nonSubtopicNote === "string" && nonSubObs.nonSubtopicNote.length > 0,
+  );
+  soft("non-subtopic note the model wrote", nonSubObs?.nonSubtopicNote);
+  soft("conduction rung (must NOT be dented by the off-chapter aside)", nonSubObs?.observationLevel);
+
+  const allNew = [...oConcept, ...oProc, ...oCalib, ...oCross, ...oNonSub] as any[];
+  check(
+    "S2R-1: no new observation writes the note into signals (column is the only home)",
+    allNew.every((o: any) => o.signals?.crossConceptNote === undefined),
+  );
 
   // 9. IDEMPOTENT re-run
   const beforeCount = (await obsFor(P.id, aConcept)).length;

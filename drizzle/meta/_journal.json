@@ -204,6 +204,20 @@
       "when": 1784221978688,
       "tag": "0028_brave_quicksilver",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784260049577,
+      "tag": "0029_clean_scarlet_witch",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784270613652,
+      "tag": "0030_youthful_ogun",
+      "breakpoints": true
     }
   ]
 }

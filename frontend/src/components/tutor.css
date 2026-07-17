@@ -393,6 +393,30 @@
 
 /* ── Slice S2: the draft-then-form review screen (.tut-s2-, landmine-safe) ── */
 .tut-pending-body { padding: 0 14px 14px; }
+
+/* ── Slice S2R-2: the sitting — N sub-topics reviewed together, one commit.
+   Each sub-topic needs to read as its OWN unit inside the sitting, or a tutor
+   scanning 5 of them can't tell where one ends and the next begins. */
+.tut-sitting-item {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line, #e4e6ee);
+}
+.tut-sitting-item:last-of-type { border-bottom: none; }
+.tut-sitting-st {
+  margin: 0 0 10px;
+  font-family: var(--font-display, Fredoka, var(--font-body), sans-serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e2033;
+}
+/* The one commit for the whole sitting — separated from the last sub-topic so
+   it reads as "this applies to everything above", not to the final card. */
+.tut-sitting-actions {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 2px solid var(--line, #e4e6ee);
+  flex-wrap: wrap;
+}
 .tut-s2-cta { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .tut-assess-btn {
   border: none;
@@ -450,6 +474,9 @@
   border-radius: 9px;
   padding: 12px;
 }
+/* The hoisted why-block (reasoning + flags) reads before the level selects —
+   an accent marks it as the justification for the numbers below, not a footnote. */
+.tut-s2-why { border-left: 3px solid var(--primary, #2f63ff); }
 .tut-s2-ro-row { display: flex; gap: 10px; font-size: 12.5px; }
 .tut-s2-ro-key {
   flex: 0 0 96px;

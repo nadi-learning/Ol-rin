@@ -17,9 +17,13 @@ type ProgressChapterView = Awaited<
   ReturnType<typeof trpc.tutor.getProgressTree.query>
 >[number];
 type AxisRollupView = ProgressChapterView["conceptual"];
-type PendingItem = Awaited<
-  ReturnType<typeof trpc.tutor.listPendingStage2.query>
+// Slice S2R-2 — the tutor's unit is the SITTING, not a per-sub_topic worklist.
+type PendingAssessment = Awaited<
+  ReturnType<typeof trpc.tutor.listPendingAssessments.query>
 >[number];
+type AssessmentSessionView = Awaited<
+  ReturnType<typeof trpc.tutor.openAssessmentSession.mutate>
+>;
 type ObservationView = Awaited<
   ReturnType<typeof trpc.tutor.getObservations.query>
 >[number];
@@ -31,9 +35,7 @@ type ObservationCorrection = Awaited<
 type AssignQuestionView = Awaited<
   ReturnType<typeof trpc.tutor.getSubTopicQuestions.query>
 >[number];
-type Stage2DraftResult = Awaited<
-  ReturnType<typeof trpc.tutor.getStage2Draft.mutate>
->;
+type Stage2DraftResult = AssessmentSessionView["drafts"][string];
 type Stage2Draft = Stage2DraftResult["draft"];
 type CrossConceptFlagView = Awaited<
   ReturnType<typeof trpc.tutor.getCrossConceptFlags.query>
@@ -135,7 +137,7 @@ function StudentDetail({
   student: Student;
   onBack: () => void;
 }) {
-  const [pending, setPending] = useState<PendingItem[] | null>(null);
+  const [pending, setPending] = useState<PendingAssessment[] | null>(null);
   const [due, setDue] = useState<DueGroup[] | null>(null);
   const [assignments, setAssignments] = useState<AssignmentView[] | null>(null);
   const [nav, setNav] = useState<Nav | null>(null);
@@ -145,7 +147,7 @@ function StudentDetail({
   const reload = useCallback(() => {
     setError(null);
     Promise.all([
-      trpc.tutor.listPendingStage2.query({ studentId: student.studentId }),
+      trpc.tutor.listPendingAssessments.query({ studentId: student.studentId }),
       trpc.tutor.getDueQueue.query({ studentId: student.studentId }),
       trpc.tutor.listAssignments.query({ studentId: student.studentId }),
     ])
@@ -1239,13 +1241,16 @@ function CrossConceptFlags({ studentId }: { studentId: string }) {
   );
 }
 
+// Slice S2R-2 — the Assess tab lists SITTINGS, not sub_topics. One entry per
+// completed assignment, plus the catch-all for evidence that has no assignment
+// (self-serve practice, teach-back) so the hard cut can't strand it (D-S2R-7).
 function PendingList({
   student,
   pending,
   onFinalized,
 }: {
   student: Student;
-  pending: PendingItem[] | null;
+  pending: PendingAssessment[] | null;
   onFinalized: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -1262,37 +1267,172 @@ function PendingList({
   return (
     <div className="tut-pending-list">
       <CrossConceptFlags studentId={student.studentId} />
-      {pending.map((p) => (
-        <div key={p.subTopicId} className="tut-pending">
-          <button
-            className="tut-pending-head"
-            onClick={() => setOpen(open === p.subTopicId ? null : p.subTopicId)}
-          >
-            <span className="tut-pending-name">
-              <span className="tut-crumb">
-                {p.chapterName} · {p.topicName}
+      {pending.map((p) => {
+        const key = p.assignmentId ?? "catch_all";
+        return (
+          <div key={key} className="tut-pending">
+            <button
+              className="tut-pending-head"
+              onClick={() => setOpen(open === key ? null : key)}
+            >
+              <span className="tut-pending-name">
+                <span className="tut-crumb">
+                  {p.kind === "catch_all"
+                    ? "Practice with no assignment"
+                    : p.label}
+                </span>
+                <span className="tut-pending-st">
+                  {p.subTopicNames.join(" · ")}
+                </span>
               </span>
-              <span className="tut-pending-st">{p.subTopicName}</span>
-            </span>
-            <span className="tut-badge">{p.pendingCount} new</span>
-          </button>
-          {open === p.subTopicId && (
-            <div className="tut-pending-body">
-              <Observations
-                studentId={student.studentId}
-                subTopicId={p.subTopicId}
-              />
-              <Stage2Panel
-                studentId={student.studentId}
-                subTopicId={p.subTopicId}
-                subTopicName={p.subTopicName}
-                hasMastery={p.hasMastery}
+              <span className="tut-badge">{p.pendingCount} new</span>
+            </button>
+            {open === key && (
+              <AssessmentSitting
+                student={student}
+                entry={p}
                 onFinalized={onFinalized}
               />
-            </div>
-          )}
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// One sitting: open it (N drafts in parallel, the tutor waits once for all of
+// them), review each sub_topic, then ONE atomic finalize (D-S2R-1). Accept-all
+// is the primary action — the tutor edits only what they disagree with
+// (D-S2R-2), and anything untouched commits exactly as drafted.
+function AssessmentSitting({
+  student,
+  entry,
+  onFinalized,
+}: {
+  student: Student;
+  entry: PendingAssessment;
+  onFinalized: () => void;
+}) {
+  const [phase, setPhase] = useState<"idle" | "drafting" | "review" | "saving" | "done">("idle");
+  const [session, setSession] = useState<AssessmentSessionView | null>(null);
+  // subTopicId → the tutor's edited values. Absent = accept as drafted.
+  const [edits, setEdits] = useState<Record<string, {
+    conceptualLevel: number | null;
+    proceduralLevel: number | null;
+    description: string;
+  }>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  function openSitting() {
+    setError(null);
+    setPhase("drafting");
+    trpc.tutor.openAssessmentSession
+      .mutate({ studentId: student.studentId, assignmentId: entry.assignmentId })
+      .then((s) => {
+        setSession(s);
+        setPhase("review");
+      })
+      .catch((e) => {
+        setError(String(e?.message ?? e));
+        setPhase("idle");
+      });
+  }
+
+  function finalize() {
+    if (!session) return;
+    setError(null);
+    setPhase("saving");
+    // Send ONLY what the tutor actually changed. An empty list is the accept-all
+    // fast path — the server commits every draft as proposed.
+    const items = Object.entries(edits).map(([subTopicId, final]) => ({
+      subTopicId,
+      final,
+    }));
+    trpc.tutor.finalizeAssessmentSession
+      .mutate({ sessionId: session.id, items: items.length ? items : undefined })
+      .then(() => {
+        setPhase("done");
+        onFinalized();
+      })
+      .catch((e) => {
+        setError(String(e?.message ?? e));
+        setPhase("review");
+      });
+  }
+
+  if (phase === "done")
+    return (
+      <div className="tut-pending-body">
+        <p className="tut-s2-done">
+          ✓ Certified {entry.subTopicNames.length} sub-topic
+          {entry.subTopicNames.length === 1 ? "" : "s"} in one go.
+        </p>
+      </div>
+    );
+
+  if (phase === "idle")
+    return (
+      <div className="tut-pending-body">
+        <div className="tut-s2-cta">
+          {error && <p className="tut-error">{error}</p>}
+          <button className="tut-assess-btn" onClick={openSitting}>
+            Assess {entry.subTopicNames.length} sub-topic
+            {entry.subTopicNames.length === 1 ? "" : "s"} →
+          </button>
+          <span className="tut-hint">
+            {entry.kind === "catch_all"
+              ? "Practice the student did outside an assignment"
+              : "Reads the whole assignment together"}
+          </span>
         </div>
-      ))}
+      </div>
+    );
+
+  if (phase === "drafting")
+    return (
+      <div className="tut-pending-body">
+        <p className="tut-muted tut-s2-drafting">
+          Reading the evidence for {entry.subTopicNames.length} sub-topics… (all
+          at once, ~10s)
+        </p>
+      </div>
+    );
+
+  const saving = phase === "saving";
+  const edited = Object.keys(edits).length;
+  return (
+    <div className="tut-pending-body">
+      {error && <p className="tut-error">{error}</p>}
+      {session!.subTopicIds.map((stId) => {
+        const d = session!.drafts[stId];
+        if (!d) return null;
+        return (
+          <div key={stId} className="tut-sitting-item">
+            <h4 className="tut-sitting-st">{d.subTopicName}</h4>
+            <Observations studentId={student.studentId} subTopicId={stId} />
+            <Stage2Panel
+              result={d}
+              disabled={saving}
+              onEdit={(final) =>
+                setEdits((prev) => ({ ...prev, [stId]: final }))
+              }
+            />
+          </div>
+        );
+      })}
+      <div className="tut-s2-actions tut-sitting-actions">
+        <button className="tut-assess-btn" onClick={finalize} disabled={saving}>
+          {saving
+            ? "Saving…"
+            : edited
+              ? `Finalize all - ${edited} edited`
+              : "Accept all & finalize"}
+        </button>
+        <span className="tut-hint">
+          Commits every sub-topic together, or none.
+        </span>
+      </div>
     </div>
   );
 }
@@ -1331,130 +1471,61 @@ function LevelSelect({
   );
 }
 
-// Slice S2 — the draft-then-form review screen. "Assess" runs the one AI call
-// (getStage2Draft, ~10s, the tutor waits), then the tutor edits the proposed
-// pair + description (§6's editable set; log/dates/reasoning/flags are AI-
-// authored, read-only) and Finalizes → the FIRST mastery move.
+// Slice S2R-2 — one sub_topic's review card inside a sitting. The AI call and
+// the commit both moved UP to AssessmentSitting (all N drafted together, then
+// ONE atomic finalize), so this is now a controlled component: it shows the
+// proposal and reports edits. The tutor edits the pair + description (§6's
+// editable set); log/dates/reasoning/flags stay AI-authored + read-only.
+//
+// Untouched = accept as drafted. It only reports an edit when the tutor actually
+// changes something, which is what makes accept-all mean "the model's numbers",
+// not "whatever the form happened to be holding".
 function Stage2Panel({
-  studentId,
-  subTopicId,
-  subTopicName,
-  hasMastery,
-  onFinalized,
+  result,
+  disabled,
+  onEdit,
 }: {
-  studentId: string;
-  subTopicId: string;
-  subTopicName: string;
-  hasMastery: boolean;
-  onFinalized: () => void;
+  result: Stage2DraftResult;
+  disabled: boolean;
+  onEdit: (final: {
+    conceptualLevel: number | null;
+    proceduralLevel: number | null;
+    description: string;
+  }) => void;
 }) {
-  const [phase, setPhase] = useState<"idle" | "drafting" | "review" | "saving" | "done">("idle");
-  const [result, setResult] = useState<Stage2DraftResult | null>(null);
+  const d = result.draft;
+  const cur = result.current;
   // null = "not yet observed" — a real, selectable value, not a missing one.
-  const [conceptual, setConceptual] = useState<number | null>(null);
-  const [procedural, setProcedural] = useState<number | null>(null);
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [conceptual, setConceptual] = useState<number | null>(d.conceptualLevel);
+  const [procedural, setProcedural] = useState<number | null>(d.proceduralLevel);
+  const [description, setDescription] = useState(d.description);
+  const saving = disabled;
 
-  function startDraft() {
-    setError(null);
-    setPhase("drafting");
-    trpc.tutor.getStage2Draft
-      .mutate({ studentId, subTopicId })
-      .then((r) => {
-        setResult(r);
-        setConceptual(r.draft.conceptualLevel);
-        setProcedural(r.draft.proceduralLevel);
-        setDescription(r.draft.description);
-        setPhase("review");
-      })
-      .catch((e) => {
-        setError(String(e?.message ?? e));
-        setPhase("idle");
-      });
+  function edit(next: Partial<{
+    conceptualLevel: number | null;
+    proceduralLevel: number | null;
+    description: string;
+  }>) {
+    const merged = {
+      conceptualLevel: next.conceptualLevel !== undefined ? next.conceptualLevel : conceptual,
+      proceduralLevel: next.proceduralLevel !== undefined ? next.proceduralLevel : procedural,
+      description: next.description !== undefined ? next.description : description,
+    };
+    setConceptual(merged.conceptualLevel);
+    setProcedural(merged.proceduralLevel);
+    setDescription(merged.description);
+    onEdit(merged);
   }
 
-  function finalize() {
-    if (!result) return;
-    setError(null);
-    setPhase("saving");
-    trpc.tutor.finalizeStage2
-      .mutate({
-        studentId,
-        subTopicId,
-        final: { conceptualLevel: conceptual, proceduralLevel: procedural, description },
-        draft: result.draft,
-      })
-      .then(() => {
-        setPhase("done");
-        onFinalized();
-      })
-      .catch((e) => {
-        setError(String(e?.message ?? e));
-        setPhase("review");
-      });
-  }
-
-  if (phase === "done")
-    return (
-      <p className="tut-s2-done">
-        ✓ Certified {subTopicName} - conceptual {conceptual}, procedural {procedural}.
-      </p>
-    );
-
-  if (phase === "idle")
-    return (
-      <div className="tut-s2-cta">
-        {error && <p className="tut-error">{error}</p>}
-        <button className="tut-assess-btn" onClick={startDraft}>
-          Assess (Stage-2) →
-        </button>
-        <span className="tut-hint">
-          {hasMastery ? "Re-certify from the new evidence" : "First certification (cold start)"}
-        </span>
-      </div>
-    );
-
-  if (phase === "drafting")
-    return <p className="tut-muted tut-s2-drafting">Reading the evidence… (one AI pass, ~10s)</p>;
-
-  const d = result!.draft;
-  const cur = result!.current;
-  const saving = phase === "saving";
   return (
     <div className="tut-s2">
-      {error && <p className="tut-error">{error}</p>}
-      <div className="tut-s2-grid">
-        <label className="tut-s2-field">
-          <span className="tut-s2-label">
-            Conceptual
-            {cur && <span className="tut-s2-was"> was {levelText(cur.conceptualLevel)}</span>}
-            <span className="tut-s2-proposed"> · AI proposes {levelText(d.conceptualLevel)}</span>
-          </span>
-          <LevelSelect value={conceptual} onChange={setConceptual} disabled={saving} />
-        </label>
-        <label className="tut-s2-field">
-          <span className="tut-s2-label">
-            Procedural
-            {cur && <span className="tut-s2-was"> was {levelText(cur.proceduralLevel)}</span>}
-            <span className="tut-s2-proposed"> · AI proposes {levelText(d.proceduralLevel)}</span>
-          </span>
-          <LevelSelect value={procedural} onChange={setProcedural} disabled={saving} />
-        </label>
-      </div>
-
-      <label className="tut-s2-field">
-        <span className="tut-s2-label">Description (shown to the student)</span>
-        <textarea
-          className="tut-s2-textarea"
-          value={description}
-          disabled={saving}
-          rows={4}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </label>
-
-      <div className="tut-s2-readonly">
+      {/* The AI's reasoning + flags sit ABOVE the level selects on purpose. The
+          rung is frequently CAPPED below what the raw observations read (a
+          spacing gap holds 7×L4 at Level 3), so a tutor who meets the selects
+          first sees a contradiction and "corrects" it — silently defeating the
+          spacing rule. The justification must arrive before the control that
+          can override it. */}
+      <div className="tut-s2-readonly tut-s2-why">
         <div className="tut-s2-ro-row">
           <span className="tut-s2-ro-key">AI reasoning</span>
           <span className="tut-s2-ro-val">{d.reasoning}</span>
@@ -1471,6 +1542,47 @@ function Stage2Panel({
             </span>
           </div>
         )}
+      </div>
+
+      <div className="tut-s2-grid">
+        <label className="tut-s2-field">
+          <span className="tut-s2-label">
+            Conceptual
+            {cur && <span className="tut-s2-was"> was {levelText(cur.conceptualLevel)}</span>}
+            <span className="tut-s2-proposed"> · AI proposes {levelText(d.conceptualLevel)}</span>
+          </span>
+          <LevelSelect
+            value={conceptual}
+            onChange={(v) => edit({ conceptualLevel: v })}
+            disabled={saving}
+          />
+        </label>
+        <label className="tut-s2-field">
+          <span className="tut-s2-label">
+            Procedural
+            {cur && <span className="tut-s2-was"> was {levelText(cur.proceduralLevel)}</span>}
+            <span className="tut-s2-proposed"> · AI proposes {levelText(d.proceduralLevel)}</span>
+          </span>
+          <LevelSelect
+            value={procedural}
+            onChange={(v) => edit({ proceduralLevel: v })}
+            disabled={saving}
+          />
+        </label>
+      </div>
+
+      <label className="tut-s2-field">
+        <span className="tut-s2-label">Description (shown to the student)</span>
+        <textarea
+          className="tut-s2-textarea"
+          value={description}
+          disabled={saving}
+          rows={4}
+          onChange={(e) => edit({ description: e.target.value })}
+        />
+      </label>
+
+      <div className="tut-s2-readonly">
         <div className="tut-s2-ro-row">
           <span className="tut-s2-ro-key">Climb re-check</span>
           <span className="tut-s2-ro-val">
@@ -1482,23 +1594,13 @@ function Stage2Panel({
             </span>
           </span>
         </div>
+        {/* Spec §6: the working log is tutor-visible, not internal-only — the
+            tutor is the consumer of this reasoning, and hiding it defeats the
+            point of asking the model for it. */}
         <details className="tut-s2-log">
-          <summary>Internal log ({result!.observationCount} observations)</summary>
+          <summary>Working log ({result.observationCount} observations)</summary>
           <p className="tut-s2-ro-val">{d.log}</p>
         </details>
-      </div>
-
-      <div className="tut-s2-actions">
-        <button className="tut-assess-btn" onClick={finalize} disabled={saving}>
-          {saving ? "Saving…" : "Finalize - commit mastery"}
-        </button>
-        <button
-          className="tut-s2-cancel"
-          onClick={() => setPhase("idle")}
-          disabled={saving}
-        >
-          Cancel
-        </button>
       </div>
     </div>
   );

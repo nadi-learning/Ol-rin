@@ -25,6 +25,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -364,6 +365,16 @@ export const observation = pgTable(
     reasoning: text("reasoning").notNull(),
     signals: jsonb("signals").notNull().default({}),
     calibrationFlag: text("calibration_flag"), // null | 'over' | 'under'
+    // S2R-1 (Stage-2 redesign §3): anything this answer revealed that does NOT
+    // belong to this sub-topic — adjacent-skill slips, hints of gaps in other
+    // chapters, horizontal-skill signals. Asked for on BOTH axes (the old
+    // procedural-only crossConceptNote folded into this). Stage-1 is the only
+    // place with the raw answer: DETECTION happens here; evaluation/
+    // categorisation happens at Stage-2b, which pools these across the
+    // assignment. Nullable — most answers stay inside their sub-topic.
+    // (Legacy rows carry the old note in signals.crossConceptNote; readers
+    // fall back to it.)
+    nonSubtopicNote: text("non_subtopic_note"),
     pedagogicalComment: text("pedagogical_comment"),
     source: text("source").notNull(), // 'stage1_scorer' | 'teachback'
     transcriptId: uuid("transcript_id").references(() => transcript.id),
@@ -714,6 +725,69 @@ export const assignment = pgTable("assignment", {
   status: text("status").notNull().default("assigned"), // 'assigned' | 'completed'
   createdAt: createdAt(),
 });
+
+// Slice S2R-2 — the Stage-2 assessment SESSION: the unit the tutor certifies in.
+// Replaces the per-sub_topic draft-then-form path (D-S2R-5, hard cut).
+//
+// ONE row per assessment sitting. Two kinds, distinguished by assignment_id:
+//  - assignment_id SET  — the assignment's frozen composition, assessed together.
+//                         This is the case the redesign spec §1 describes.
+//  - assignment_id NULL — the CATCH-ALL (D-S2R-7): pending sub_topics that no
+//                         assignment covers (self-serve practice, teach-back).
+//                         Without it the hard cut would silently strand that
+//                         evidence — it is ~36% of real observations today, and
+//                         nothing would error; mastery would just stop moving.
+//
+// sub_topic_ids[] is FROZEN at open (same pin-not-copy discipline as assignment):
+// the sitting assesses what was pending when it opened, so evidence arriving
+// mid-sitting can't shift the composition under the tutor.
+//
+// `drafts` holds the Stage-2a proposals (subTopicId → Stage2DraftResult), written
+// once when the session opens and all N draft calls run in PARALLEL. This is a
+// deliberate reversal of D-S2-1's "no draft table": with N calls per sitting the
+// tutor cannot re-wait N×~10s on every render, and Stage-2b (S2R-4) needs a
+// stable set of drafts to converse ABOUT. Persisting them server-side also means
+// finalize no longer trusts an FE round-trip for the AI-authored half.
+//
+// `messages` is Stage-2b's chat history (S2R-4) — [] until then. Mirrors
+// authoring_chat's proven history-in-a-row pattern rather than a new table.
+export const assessmentSession = pgTable(
+  "assessment_session",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    tutorId: uuid("tutor_id")
+      .notNull()
+      .references(() => appUser.id),
+    // null = the catch-all sitting for unassigned evidence (D-S2R-7).
+    assignmentId: uuid("assignment_id").references(() => assignment.id),
+    subTopicIds: uuid("sub_topic_ids").array().notNull(), // frozen at open
+    drafts: jsonb("drafts").notNull().default({}), // subTopicId → Stage2DraftResult
+    messages: jsonb("messages").notNull().default([]), // Stage-2b chat (S2R-4)
+    status: text("status").notNull().default("open"), // 'open' | 'finalized'
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // At most ONE open sitting per assignment. Partial (status='open') so a
+    // finalized sitting doesn't block a later re-assessment of the same
+    // assignment when fresh evidence lands.
+    uniqueIndex("assessment_session_open_assignment_idx")
+      .on(t.assignmentId)
+      .where(sql`${t.status} = 'open' and ${t.assignmentId} is not null`),
+    // ...and at most one open CATCH-ALL per student (assignment_id is null, so
+    // the index above can't constrain it — NULLs are never equal in Postgres).
+    uniqueIndex("assessment_session_open_catchall_idx")
+      .on(t.studentId)
+      .where(sql`${t.status} = 'open' and ${t.assignmentId} is null`),
+    index("assessment_session_student_idx").on(t.studentId, t.status),
+  ],
+);
 
 // Parent sign-off report (Slice Report-Signoff) — the deferred half of Polaris
 // #4 (D-P-1). A tutor assembles a child's progress into a FROZEN snapshot, then
@@ -1182,6 +1256,9 @@ export const TENANT_SCOPED_TABLES = [
   "voice_session",
   "attempt_image", // Slice Q3 — subjective answer photos (tenant-scoped + RLS)
   "onboarding", // Slice ONB-1 — the conversational welcome (tenant-scoped + RLS)
+  // Slice S2R-2 — the Stage-2 sitting. Holds a student's drafts + (soon) the
+  // tutor's chat: student data, so RLS is not optional (M34).
+  "assessment_session",
 ] as const;
 
 // All table names (for blanket GRANTs to the app role). Includes the GLOBAL

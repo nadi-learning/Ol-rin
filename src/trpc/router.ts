@@ -77,7 +77,6 @@ import {
   getStudentMastery,
   getStudentPacePlan,
   getSubTopicQuestions,
-  listPendingStage2,
   FlagNotFoundError,
   getCrossConceptFlags,
   listStudents,
@@ -111,12 +110,19 @@ import {
   updatePlan,
 } from "../services/pace";
 import {
-  draftStage2,
-  finalizeStage2,
   NoObservationsError,
-  stage2DraftSchema,
   SubTopicNotFoundError,
 } from "../services/assessment";
+// Slice S2R-2 — the sitting replaces the per-sub_topic draft/finalize endpoints.
+import {
+  AssessmentSessionNotFoundError,
+  finalizeAssessmentSession,
+  getAssessmentSession,
+  listPendingAssessments,
+  NothingToAssessError,
+  openAssessmentSession,
+  SessionAlreadyFinalizedError,
+} from "../services/assessment_session";
 import { getDueQueue } from "../services/scheduler";
 import {
   AssignmentNotFoundError,
@@ -954,11 +960,16 @@ export const appRouter = router({
         }
       }),
 
-    listPendingStage2: tutorProcedure
+    // Slice S2R-2 (D-S2R-5, HARD CUT): `listPendingStage2` is GONE. The tutor's
+    // unit is the assessment SITTING, not a flat per-sub_topic worklist —
+    // listPendingAssessments below replaces it. The service function survives
+    // (the probes assert the "since last finalize" rule through it, and the
+    // catch-all partition is built on it), but it has no endpoint.
+    listPendingAssessments: tutorProcedure
       .input(z.object({ studentId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
         try {
-          return await listPendingStage2(ctx.tx, {
+          return await listPendingAssessments(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             studentId: input.studentId,
           });
@@ -1175,70 +1186,102 @@ export const appRouter = router({
         }
       }),
 
-    // Slice S2: getStage2Draft({ studentId, subTopicId }) → the AI proposal.
-    // A MUTATION (it's a one AI call, not idempotent/cacheable) — reads ALL the
-    // sub-topic's Stage-1 observations + current mastery, applies §3 in the LLM,
-    // proposes the new pair + description + log + the two re-check dates. Reads
-    // only — re-runnable. tutorProcedure + ownership guard. Runs INLINE (the
-    // tutor waits), unlike Stage-1's background worker (D-S2-6).
-    getStage2Draft: tutorProcedure
+    // ── Slice S2R-2: the Stage-2 SITTING (D-S2R-5 replaced the two endpoints
+    // that used to live here — getStage2Draft + finalizeStage2 are GONE).
+    //
+    // openAssessmentSession: freeze the composition + draft all N sub_topics in
+    // PARALLEL + persist. A MUTATION (N real AI calls) that runs INLINE — the
+    // tutor waits, as they did for the single draft (D-S2-6). IDEMPOTENT: an
+    // already-open sitting is returned as-is rather than re-billing N calls, so
+    // a double-click is free and the tutor can't be handed two different sets of
+    // numbers for one sitting.
+    openAssessmentSession: tutorProcedure
       .input(
         z.object({
           studentId: z.string().uuid(),
-          subTopicId: z.string().uuid(),
+          // null = the CATCH-ALL sitting: evidence with no assignment
+          // (self-serve, teach-back). D-S2R-7 — without this the hard cut would
+          // silently strand it.
+          assignmentId: z.string().uuid().nullable(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
         try {
-          return await draftStage2(ctx.tx, {
+          return await openAssessmentSession(ctx.tx, {
+            boardId: ctx.board.id,
             tutorUserId: ctx.membership.userId,
             studentId: input.studentId,
-            subTopicId: input.subTopicId,
+            assignmentId: input.assignmentId,
           });
         } catch (e) {
           if (e instanceof StudentNotFoundError || e instanceof SubTopicNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
-          if (e instanceof NoObservationsError) {
+          if (e instanceof NoObservationsError || e instanceof NothingToAssessError) {
             throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
           }
           throw e;
         }
       }),
 
-    // Slice S2: finalizeStage2 — the FIRST mastery move. Commits the tutor-
-    // adjusted proposal (final pair + description; the draft round-trips for the
-    // AI-authored log/dates and override diffing). One tx: snapshot→history,
-    // overwrite mastery_state, append transcript+events, write scheduling_state,
-    // emit `taught` (G2) at ≥L2. tutorProcedure + ownership guard.
-    finalizeStage2: tutorProcedure
+    getAssessmentSession: tutorProcedure
+      .input(z.object({ sessionId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getAssessmentSession(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            sessionId: input.sessionId,
+          });
+        } catch (e) {
+          if (e instanceof AssessmentSessionNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // ONE ATOMIC FINALIZE (D-S2R-1): every sub_topic in the sitting commits, or
+    // none does. `items` carries ONLY the tutor's edits (§6's editable set);
+    // anything omitted is accepted as drafted — an absent/empty `items` IS the
+    // accept-all fast path (D-S2R-2), one click, no chat required.
+    //
+    // Note what is NOT in the input: the draft. It is read from the sitting row.
+    // The old endpoint round-tripped the AI's own log/reasoning through the
+    // client and trusted it back; a client can now choose levels, never the
+    // reasoning attributed to the model.
+    finalizeAssessmentSession: tutorProcedure
       .input(
         z.object({
-          studentId: z.string().uuid(),
-          subTopicId: z.string().uuid(),
-          final: z.object({
-            // null = not yet observed on that axis (never a 1) — the tutor can
-            // leave an axis unobserved when no item exposed it.
-            conceptualLevel: z.number().int().min(1).max(5).nullable(),
-            proceduralLevel: z.number().int().min(1).max(5).nullable(),
-            description: z.string().min(1),
-          }),
-          draft: stage2DraftSchema,
+          sessionId: z.string().uuid(),
+          items: z
+            .array(
+              z.object({
+                subTopicId: z.string().uuid(),
+                final: z.object({
+                  // null = not yet observed on that axis (never a 1).
+                  conceptualLevel: z.number().int().min(1).max(5).nullable(),
+                  proceduralLevel: z.number().int().min(1).max(5).nullable(),
+                  description: z.string().min(1),
+                }),
+              }),
+            )
+            .optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
         try {
-          return await finalizeStage2(ctx.tx, {
+          return await finalizeAssessmentSession(ctx.tx, {
             boardId: ctx.board.id,
             tutorUserId: ctx.membership.userId,
-            studentId: input.studentId,
-            subTopicId: input.subTopicId,
-            final: input.final,
-            draft: input.draft,
+            sessionId: input.sessionId,
+            items: input.items,
           });
         } catch (e) {
-          if (e instanceof StudentNotFoundError || e instanceof SubTopicNotFoundError) {
+          if (e instanceof AssessmentSessionNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof SessionAlreadyFinalizedError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
           }
           throw e;
         }

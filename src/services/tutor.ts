@@ -82,7 +82,12 @@ export type MasteryCard = {
   chapterName: string;
   conceptualLevel: number | null; // null = not yet observed on that axis
   proceduralLevel: number | null;
-  description: string; // user-visible blob (NOT the internal log field)
+  description: string; // user-visible blob
+  // Slice S2R-2 (spec §6): the working log is now TUTOR-visible. It stays out of
+  // every PARENT/student projection — the parent report is built by
+  // computeChildReport, which selects `description` only, so widening this read
+  // does not widen that one (the M11 projection boundary still holds).
+  log: string;
   updatedAt: Date;
 };
 
@@ -187,6 +192,7 @@ export async function getStudentMastery(
       conceptualLevel: masteryState.conceptualLevel,
       proceduralLevel: masteryState.proceduralLevel,
       description: masteryState.description,
+      log: masteryState.log, // S2R-2 (§6): tutor-visible now
       updatedAt: masteryState.updatedAt,
     })
     .from(masteryState)
@@ -357,18 +363,29 @@ export async function getProgressTree(
   return chapters;
 }
 
+export type PendingAgg = {
+  pendingCount: number;
+  lastObservationAt: Date;
+  hasMastery: boolean;
+};
+
 /**
- * The worklist: per sub_topic, this student's Stage-1 observations not yet
- * certified (newer than the last finalize). Folded in JS (rows already small;
+ * Per sub_topic, this student's Stage-1 observations not yet certified (newer
+ * than that sub_topic's last finalize). Folded in JS (rows already small;
  * mirrors getChapterNav's read-then-group style) so the "since last finalize"
  * rule is explicit and testable.
+ *
+ * THE ONE DEFINITION OF "PENDING" (S2R-2). Deliberately origin-blind: it pools
+ * every Stage-1 observation regardless of where the answer came from —
+ * tutor-assigned, self-serve, or teach-back (which has no attempt at all). That
+ * blindness is the invariant the catch-all sitting (D-S2R-7) exists to preserve:
+ * assessment_session partitions THIS set, it never re-derives it, so no origin
+ * can fall through the partition unnoticed.
  */
-export async function listPendingStage2(
+export async function pendingSubTopicMap(
   tx: Tx,
-  args: { tutorUserId: string; studentId: string },
-): Promise<PendingItem[]> {
-  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
-
+  studentId: string,
+): Promise<Map<string, PendingAgg>> {
   const obs = await tx
     .select({
       subTopicId: observation.subTopicId,
@@ -377,11 +394,11 @@ export async function listPendingStage2(
     .from(observation)
     .where(
       and(
-        eq(observation.studentId, args.studentId),
+        eq(observation.studentId, studentId),
         eq(observation.source, STAGE1_SOURCE),
       ),
     );
-  if (obs.length === 0) return [];
+  if (obs.length === 0) return new Map();
 
   const finalized = await tx
     .select({
@@ -389,14 +406,13 @@ export async function listPendingStage2(
       updatedAt: masteryState.updatedAt,
     })
     .from(masteryState)
-    .where(eq(masteryState.studentId, args.studentId));
+    .where(eq(masteryState.studentId, studentId));
   const lastFinalize = new Map<string, Date>(
     finalized.map((m) => [m.subTopicId, m.updatedAt]),
   );
 
   // fold: per sub_topic, count obs strictly newer than the last finalize.
-  type Agg = { pendingCount: number; lastObservationAt: Date; hasMastery: boolean };
-  const agg = new Map<string, Agg>();
+  const agg = new Map<string, PendingAgg>();
   for (const o of obs) {
     const cutoff = lastFinalize.get(o.subTopicId) ?? EPOCH;
     if (o.createdAt <= cutoff) continue; // already certified
@@ -412,6 +428,19 @@ export async function listPendingStage2(
       if (o.createdAt > cur.lastObservationAt) cur.lastObservationAt = o.createdAt;
     }
   }
+  return agg;
+}
+
+/**
+ * Resolve a set of pending sub_topics into named, ordinal-ordered rows.
+ * S2R-2: the per-sub-topic tutor ENDPOINT is gone (D-S2R-5) — assessment_session
+ * is the tutor's unit now — but this shaping is still how a sitting lists what
+ * it covers, so it survives as a helper.
+ */
+export async function describePendingSubTopics(
+  tx: Tx,
+  agg: Map<string, PendingAgg>,
+): Promise<PendingItem[]> {
   if (agg.size === 0) return [];
 
   // names for the pending sub_topics, ordinal-ordered.
@@ -441,6 +470,20 @@ export async function listPendingStage2(
       hasMastery: a.hasMastery,
     };
   });
+}
+
+/**
+ * The old per-sub_topic worklist. Its tRPC endpoint died in S2R-2 (D-S2R-5);
+ * kept as the composition of the two helpers above because the probes assert the
+ * "since last finalize" rule through it, and that rule is now load-bearing for
+ * the catch-all partition.
+ */
+export async function listPendingStage2(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string },
+): Promise<PendingItem[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  return describePendingSubTopics(tx, await pendingSubTopicMap(tx, args.studentId));
 }
 
 // ── Slice T6: the tutor Pace-Plan view (read-only) ─────────────────────────
