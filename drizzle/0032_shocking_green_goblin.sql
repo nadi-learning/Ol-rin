@@ -1,0 +1,1 @@
+ALTER TABLE "assessment_session" ADD COLUMN "synthesis" jsonb;

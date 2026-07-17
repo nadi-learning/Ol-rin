@@ -628,8 +628,11 @@ export async function getSubTopicQuestions(
 export type CrossConceptFlagView = {
   id: string;
   note: string;
-  fromSubTopicId: string;
-  fromSubTopicName: string; // where the student was working when the OTHER skill broke
+  /** Which detector raised it (S2R-3): 'stage1_cross_concept' | 'stage2_synthesis'. */
+  origin: string;
+  /** NULL for a synthesis item — it spans the sitting, not one sub_topic. */
+  fromSubTopicId: string | null;
+  fromSubTopicName: string | null; // where the student was working when the OTHER skill broke
   addressedAt: Date | null;
   createdAt: Date;
 };
@@ -642,6 +645,14 @@ export type CrossConceptFlagView = {
  * sub-topic being assessed — so it leaves as its own signal, or it is lost. These
  * are NOT scored observations (they carry no rung and count toward no level); they
  * are a worklist for the human: a weak prerequisite showing up in someone else's work.
+ *
+ * ⚠️ LEFT JOIN, NOT INNER (S2R-3). This read used an inner join on
+ * `from_sub_topic_id`, which was sound while every flag came from one Stage-1
+ * observation inside one sub_topic. Synthesis flags carry NULL there — they are
+ * claims about a PATTERN across a whole sitting — so an inner join would drop
+ * every one of them, silently, with no error: spec §5's entire "actions" half
+ * would write rows that never reach the tutor. Widening the writer without
+ * widening the reader is the failure this join is the whole of.
  */
 export async function getCrossConceptFlags(
   tx: Tx,
@@ -654,13 +665,14 @@ export async function getCrossConceptFlags(
     .select({
       id: crossConceptFlag.id,
       note: crossConceptFlag.note,
+      origin: crossConceptFlag.origin,
       fromSubTopicId: crossConceptFlag.fromSubTopicId,
       fromSubTopicName: subTopic.name,
       addressedAt: crossConceptFlag.addressedAt,
       createdAt: crossConceptFlag.createdAt,
     })
     .from(crossConceptFlag)
-    .innerJoin(subTopic, eq(subTopic.id, crossConceptFlag.fromSubTopicId))
+    .leftJoin(subTopic, eq(subTopic.id, crossConceptFlag.fromSubTopicId))
     .where(and(...where))
     .orderBy(asc(crossConceptFlag.createdAt));
 }

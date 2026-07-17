@@ -1220,8 +1220,15 @@ function CrossConceptFlags({ studentId }: { studentId: string }) {
       {flags.map((f) => (
         <div key={f.id} className="tut-ccf-row">
           <span className="tut-ccf-note">{f.note}</span>
+          {/* A synthesis item (S2R-3) is a pattern read across a whole sitting, so
+              it has no originating sub_topic — "seen in <blank>" would be worse
+              than saying where it actually came from. Keyed off the provenance
+              column, not off the null, so the two origins can never blur. */}
           <span className="tut-ccf-from">
-            seen in {f.fromSubTopicName} · {new Date(f.createdAt).toLocaleDateString()}
+            {f.origin === "stage2_synthesis"
+              ? "seen across the whole assessment"
+              : `seen in ${f.fromSubTopicName ?? "an earlier session"}`}{" "}
+            · {new Date(f.createdAt).toLocaleDateString()}
           </span>
           <button
             type="button"

@@ -218,6 +218,20 @@
       "when": 1784270613652,
       "tag": "0030_youthful_ogun",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784279319301,
+      "tag": "0031_cynical_white_queen",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784279695874,
+      "tag": "0032_shocking_green_goblin",
+      "breakpoints": true
     }
   ]
 }

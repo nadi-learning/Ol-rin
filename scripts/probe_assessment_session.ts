@@ -1,7 +1,15 @@
 /**
- * probe_assessment_session — Slice S2R-2 exit gate (the Stage-2 sitting).
+ * probe_assessment_session — Slice S2R-2 + S2R-3 exit gate (the Stage-2 sitting
+ * and the synthesis that runs when it finalizes).
  *
  * Real DB + real RLS + real Gemini, throwaway boards P/Q (M22) with full cleanup.
+ *
+ * S2R-3 adds a third claim of the same kind — SYNTHESIS ON THE FAST PATH
+ * (D-S2R-3). The chat is optional; the synthesis is not. The probe finalizes with
+ * no chat and no items — the common path — and asserts a real call filled the
+ * chapter/subject insights and the horizontals. If synthesis ever slipped to the
+ * chat-only path, every store above the sub-topic would sit empty while mastery
+ * kept moving, and nothing would error.
  *
  * The two claims this gate exists for — both would fail SILENTLY without it:
  *
@@ -49,6 +57,8 @@ import {
   chapter,
   crossConceptFlag,
   eventLog,
+  horizontalSkill,
+  horizontalSkillState,
   learningObjective,
   masteryHistory,
   masteryState,
@@ -56,6 +66,8 @@ import {
   practiceSession,
   question,
   schedulingState,
+  studentChapterInsight,
+  studentSubjectInsight,
   subTopic,
   subject,
   topic,
@@ -72,6 +84,8 @@ import {
   openAssessmentSession,
   SessionAlreadyFinalizedError,
 } from "../src/services/assessment_session";
+import { gatherSynthesisInput, writeSynthesis } from "../src/services/synthesis";
+import { getCrossConceptFlags, setCrossConceptFlagAddressed } from "../src/services/tutor";
 import { __aiConfigured } from "../src/services/ai/gemini";
 
 type Tx = PgTransaction<any, any, any>;
@@ -209,24 +223,54 @@ async function main() {
       })
       .returning();
 
-    const mkObs = (stId: string, axis: string, level: number, reasoning: string, ageDays: number, ped: string, attemptId?: string) =>
+    // ── S2R-3: the HORIZONTAL TAXONOMY for this chapter ──
+    // Predefined content (D-S2R-4). Seeded here because these are throwaway boards
+    // — `seed:horizontals` ingests the real registry, which knows nothing of board
+    // P. Without these rows synthesis is handed an EMPTY taxonomy and correctly
+    // returns no horizontals, which would make every horizontal claim below pass
+    // for the wrong reason.
+    await tx.insert(horizontalSkill).values({
+      boardId: P.id, subjectId: subj!.id, chapterId: chap!.id, slug: "language_precision",
+      description:
+        "Hold the chapter's near-synonym distinctions apart in your own wording — speed vs velocity, distance vs displacement — and use the quantity the question actually established.",
+    });
+    await tx.insert(horizontalSkill).values({
+      boardId: P.id, subjectId: subj!.id, chapterId: chap!.id, slug: "quantitative_thinking",
+      description:
+        "Sense whether a magnitude is physically plausible and whether its units match the axes or data it came from.",
+    });
+
+    const mkObs = (stId: string, axis: string, level: number, reasoning: string, ageDays: number, ped: string, attemptId?: string, note?: string) =>
       tx.insert(observation).values({
         boardId: P.id, studentId: stu.id, subTopicId: stId, questionId: null,
         attemptId: attemptId ?? null, axis, observationLevel: level, reasoning,
         signals: {}, calibrationFlag: null, pedagogicalComment: ped, source: "stage1_scorer",
+        nonSubtopicNote: note ?? null,
         createdAt: new Date(baseMs + ageDays * 24 * 3600 * 1000),
       });
 
-    // assignment evidence
-    await mkObs(stA!.id, "conceptual", 4, "Linked Δv/Δt to the principle, reasoned from it on a variant.", 0, "transfer/variant probe");
+    // assignment evidence.
+    //
+    // ⚠️ The two `language_precision` notes below are load-bearing, and engineered
+    // to be UNREFUSABLE (M52): a nullable field parsed out of a vendor response is
+    // unproven until a real call has filled it once, and synthesis writes nothing
+    // when the pool is empty — so a fixture with no notes would go green with every
+    // new store still empty. They sit on DIFFERENT sub_topics on purpose: one note
+    // is an anecdote the prompt is told to treat as such, the SAME slip twice is a
+    // pattern, and a pattern across sub_topics is the one claim Stage 2a's silo
+    // structurally cannot make. That is the whole thesis of this slice.
+    await mkObs(stA!.id, "conceptual", 4, "Linked Δv/Δt to the principle, reasoned from it on a variant.", 0, "transfer/variant probe", undefined,
+      "Wrote 'speed' throughout where the question had explicitly established 'velocity', and dropped the direction each time. The physics reasoning is sound — the quantity they NAME is not the quantity they USE. This is terminology precision, and it belongs to no single sub-topic.");
     await mkObs(stA!.id, "conceptual", 3, "Several correct points but listed, not connected.", 8, "routine explain-why");
     await mkObs(stA!.id, "procedural", 3, "Right and clean, every step walked.", 11, "routine execution");
-    await mkObs(stB!.id, "conceptual", 3, "Describes velocity with direction, adequately.", 2, "routine explain-why");
+    await mkObs(stB!.id, "conceptual", 3, "Describes velocity with direction, adequately.", 2, "routine explain-why", undefined,
+      "Used 'speed' and 'velocity' interchangeably within a single sentence, again. The distinction this chapter rests on is not being held in their wording — the same slip as elsewhere in this assignment, not a one-off.");
     await mkObs(stB!.id, "procedural", 3, "Computed velocity correctly with units.", 9, "routine execution");
 
     // SELF-SERVE evidence on stLoose — carried by a real attempt whose
     // practice_session has NO assignment. This is the row the hard cut would strand.
-    await mkObs(stLoose!.id, "conceptual", 3, "Correctly reads the gradient as speed; explains constancy from straightness.", 3, "routine explain-why", att!.id);
+    await mkObs(stLoose!.id, "conceptual", 3, "Correctly reads the gradient as speed; explains constancy from straightness.", 3, "routine explain-why", att!.id,
+      "Stated the car travels '60 kilometres per second' from a graph whose axis is in km/h — off by a factor of 3600, and the implausibility went unnoticed. That is a quantitative-sense gap, not a graph-reading one.");
     await mkObs(stLoose!.id, "procedural", 3, "Derived the speed from the graph cleanly.", 10, "routine execution", att!.id);
 
     // TEACH-BACK evidence (no attempt at all) on the incomplete assignment's sub_topic.
@@ -235,7 +279,7 @@ async function main() {
     return {
       stA: stA!.id, stB: stB!.id, stLoose: stLoose!.id, stOpen: stOpen!.id,
       asg: asg!.id, asgOpen: asgOpen!.id, attemptId: att!.id, questionId: q!.id,
-      ssSessionId: ssSession!.id,
+      ssSessionId: ssSession!.id, subjId: subj!.id, chapId: chap!.id,
     };
   });
 
@@ -304,9 +348,11 @@ async function main() {
   );
   check("open: re-opening did not create a second sitting row", sessCount.length === 1);
 
-  // ── 8. ATOMICITY (D-S2R-1) — the claim of the slice ──
-  // Sabotage: drop stB's draft from the row. finalize commits stA's mastery move,
-  // then throws on stB. If the sitting were not ONE tx, stA would stick.
+  // ── 8a. a sitting missing a draft REFUSES to finalize ──
+  // S2R-3 moved this throw EARLIER: finalize now resolves all N drafts up front so
+  // synthesis can be handed the finals before anything is written, which means a
+  // missing draft is caught before a single vendor call is billed. Still the same
+  // guarantee — never silently skip a sub_topic the tutor believes they certified.
   const goodDrafts = opened.drafts;
   await rows(P.id, (tx) =>
     tx.update(assessmentSession)
@@ -322,12 +368,53 @@ async function main() {
     threw = true;
   }
   check("atomicity: a sitting missing a draft REFUSES to finalize (never silently skips)", threw);
+
+  // ── 8b. ATOMICITY (D-S2R-1) — the claim of the slice ──
+  // ⚠️ THIS SABOTAGE IS NOT THE OBVIOUS ONE, AND THE OBVIOUS ONE IS NOW VACUOUS.
+  // 8a's missing draft throws during the up-front resolve, i.e. BEFORE any write —
+  // so "zero mastery rows afterwards" would pass with nothing ever having been
+  // committed, and this gate would prove nothing while looking green (M48: an
+  // assertion that cannot fail). To actually test the rollback, the throw must land
+  // MID-WRITE-LOOP: stB's draft carries an out-of-range level, so stA's mastery
+  // move COMMITS and stB then violates mastery_state_levels_range. If the sitting
+  // were not one tx, stA would stick.
+  await rows(P.id, (tx) =>
+    tx.update(assessmentSession)
+      .set({
+        drafts: {
+          [fx.stA]: goodDrafts[fx.stA],
+          [fx.stB]: {
+            ...goodDrafts[fx.stB]!,
+            draft: { ...goodDrafts[fx.stB]!.draft, conceptualLevel: 99 },
+          },
+        },
+      })
+      .where(eq(assessmentSession.id, opened.id)),
+  );
+  let threwMidLoop = false;
+  try {
+    await rows(P.id, (tx) =>
+      finalizeAssessmentSession(tx, { boardId: P.id, tutorUserId: tut.id, sessionId: opened.id }),
+    );
+  } catch {
+    threwMidLoop = true;
+  }
+  check("atomicity: an unwritable level throws mid-loop (the CHECK constraint holds)", threwMidLoop);
   const afterSabotage = await rows(P.id, (tx) =>
     tx.select().from(masteryState).where(eq(masteryState.studentId, stu.id)),
   );
   check(
     "ATOMICITY (D-S2R-1): the throw rolled back the sub_topic that had ALREADY committed — zero mastery rows",
     afterSabotage.length === 0,
+  );
+  // Synthesis writes last, so a mid-loop throw must take it down too — otherwise a
+  // failed sitting would leave insight text about certifications that never landed.
+  const insightsAfterSabotage = await rows(P.id, (tx) =>
+    tx.select().from(studentChapterInsight).where(eq(studentChapterInsight.studentId, stu.id)),
+  );
+  check(
+    "ATOMICITY: the rollback took the SYNTHESIS writes with it — zero chapter insights",
+    insightsAfterSabotage.length === 0,
   );
   const stillOpen = await rows(P.id, (tx) =>
     tx.select().from(assessmentSession).where(eq(assessmentSession.id, opened.id)),
@@ -369,6 +456,159 @@ async function main() {
     (after.drafts[fx.stA]?.draft.reasoning ?? "").trim().length > 0,
   );
 
+  // ── 10b. S2R-3: SYNTHESIS ran on the ACCEPT-ALL fast path (D-S2R-3) ──
+  // The whole point of D-S2R-3: the tutor above skipped the chat entirely and
+  // clicked accept-all. If synthesis only ran on the chat path, every store below
+  // would be empty right now and NOTHING would error — mastery would move and the
+  // above-sub-topic view would just silently never update.
+  //
+  // FIRM that a REAL call filled each store; SOFT on what it actually said. That
+  // split is the M40/M52 lesson: asserting the writer writes proves nothing about
+  // whether the real path calls it, and a store that is always-empty passes every
+  // check that only looks at plumbing.
+  soft("synthesis writes (accept-all path)", fin.synthesis);
+  check("SYNTHESIS ran at finalize with NO chat + NO items — the accept-all fast path (D-S2R-3)", fin.synthesis !== undefined);
+  check("synthesis: nothing was dropped as unresolvable", fin.synthesis.dropped.length === 0);
+
+  const chIns = await rows(P.id, (tx) =>
+    tx.select().from(studentChapterInsight).where(eq(studentChapterInsight.studentId, stu.id)),
+  );
+  check("synthesis: a REAL call wrote the student_chapter_insight (not the probe)", chIns.length === 1 && chIns[0]!.insight.trim().length > 0);
+  soft("chapter insight", chIns[0]?.insight);
+
+  const sjIns = await rows(P.id, (tx) =>
+    tx.select().from(studentSubjectInsight).where(eq(studentSubjectInsight.studentId, stu.id)),
+  );
+  check("synthesis: a REAL call wrote the student_subject_insight", sjIns.length === 1 && sjIns[0]!.insight.trim().length > 0);
+  soft("subject insight", sjIns[0]?.insight);
+
+  // THE claim of the slice's thesis: a pattern NO sub-topic call could see.
+  // language_precision was slipped on stA AND stB — two different sub-topics, each
+  // certified in its own silo, neither able to notice the other.
+  const hz = await rows(P.id, (tx) =>
+    tx.select().from(horizontalSkillState).where(eq(horizontalSkillState.studentId, stu.id)),
+  );
+  soft("horizontal_skill_state rows", hz.map((h) => ({ slug: h.slug, level: h.level, prose: h.prose })));
+  const lp = hz.find((h) => h.slug === "language_precision");
+  check(
+    "SYNTHESIS: levelled `language_precision` from a pattern spanning TWO sub-topics — the cross-silo claim 2a structurally cannot make",
+    !!lp,
+  );
+  check("synthesis: the horizontal carries a real level (1–5), not a null placeholder", lp?.level != null);
+  check("synthesis: the horizontal carries its EVIDENCE prose (a level without evidence is unauditable)", (lp?.prose ?? "").trim().length > 0);
+  check("synthesis: it is scoped to the SUBJECT, not the chapter (D-S2R-8)", lp?.subjectId === fx.subjId);
+  check(
+    "synthesis: every slug written came from the seeded taxonomy — none invented (D-S2R-4)",
+    hz.every((h) => ["language_precision", "quantitative_thinking"].includes(h.slug)),
+  );
+
+  // The reader half. The writer widened; an inner join on from_sub_topic_id would
+  // drop every synthesis item SILENTLY (a green writer + an invisible worklist).
+  const wl = await rows(P.id, (tx) =>
+    getCrossConceptFlags(tx, { tutorUserId: tut.id, studentId: stu.id }),
+  );
+  soft("worklist as the TUTOR sees it", wl.map((f) => ({ origin: f.origin, from: f.fromSubTopicName, note: f.note })));
+  const synthItems = wl.filter((f) => f.origin === "stage2_synthesis");
+  check(
+    "worklist: synthesis ACTIONS are VISIBLE to the tutor (the read left-joins — an inner join drops every null-sub_topic item)",
+    synthItems.length === fin.synthesis.worklistItems,
+  );
+  check("worklist: a synthesis item names its origin rather than leaving a blank sub_topic", synthItems.every((f) => f.fromSubTopicId === null));
+  // Spec §5 keeps this table because a CLEARABLE queue is the one thing about it
+  // that worked. A synthesis item a tutor cannot clear would clog that queue
+  // forever — and it takes a different code path (setCrossConceptFlagAddressed
+  // re-reads through the same join that used to drop these rows).
+  if (synthItems[0]) {
+    const cleared = await rows(P.id, (tx) =>
+      setCrossConceptFlagAddressed(tx, { tutorUserId: tut.id, flagId: synthItems[0]!.id, addressed: true }),
+    );
+    check("worklist: a synthesis item can be MARKED HANDLED like any other (the queue stays clearable)", cleared.addressedAt !== null);
+    const openAfter = await rows(P.id, (tx) =>
+      getCrossConceptFlags(tx, { tutorUserId: tut.id, studentId: stu.id }),
+    );
+    check("worklist: once handled it leaves the OPEN queue", !openAfter.some((f) => f.id === synthItems[0]!.id));
+    // put it back so the counts below aren't perturbed
+    await rows(P.id, (tx) =>
+      setCrossConceptFlagAddressed(tx, { tutorUserId: tut.id, flagId: synthItems[0]!.id, addressed: false }),
+    );
+  }
+
+  // Spec §6 — 2b's reasoning survives finalize, like 2a's.
+  check(
+    "post-finalize: SYNTHESIS reasoning is persisted + readable by the tutor (spec §6)",
+    (after.synthesis?.reasoning ?? "").trim().length > 0,
+  );
+  soft("synthesis reasoning", after.synthesis?.reasoning);
+
+  // ── 10c. the TAXONOMY GATE (D-S2R-4) — deterministic, no vendor call ──
+  // The prompt forbids inventing a slug, but a prompt is not an enforcement
+  // mechanism. This drives writeSynthesis directly with a hallucinated slug and a
+  // bogus chapter key — the ONE place a unit-style claim is right, because the
+  // behaviour under test is pure code and must never depend on the model behaving.
+  const gate = await rows(P.id, async (tx) => {
+    const scope = await gatherSynthesisInput(tx, {
+      studentId: stu.id, subTopicIds: [fx.stA, fx.stB],
+      certified: [{ subTopicId: fx.stA, conceptualLevel: 3, proceduralLevel: 3, description: "d" }],
+    });
+    return writeSynthesis(tx, {
+      boardId: P.id, studentId: stu.id, sessionId: opened.id, scope: scope.scope,
+      result: {
+        chapterInsights: [{ chapterKey: "C99", insight: "from a chapter that isn't in scope" }],
+        subjectInsights: [],
+        horizontals: [{ subjectKey: "S1", slug: "vibe_check", level: 5, prose: "invented skill" }],
+        worklistItems: [],
+        reasoning: "gate probe",
+      },
+    });
+  });
+  soft("taxonomy gate drops", gate.dropped);
+  check("gate: an INVENTED horizontal slug is DROPPED, not written (D-S2R-4 — the taxonomy is predefined)", gate.horizontals === 0);
+  check("gate: an out-of-scope chapterKey is DROPPED, not guessed at", gate.chapterInsights === 0);
+  check("gate: both drops were REPORTED, not swallowed", gate.dropped.length === 2);
+  const hzAfterGate = await rows(P.id, (tx) =>
+    tx.select().from(horizontalSkillState).where(eq(horizontalSkillState.studentId, stu.id)),
+  );
+  check("gate: the invented slug reached no table", hzAfterGate.every((h) => h.slug !== "vibe_check"));
+
+  // ── 10d. THE NULL BOUND (D-S2R-9) — deterministic, no vendor call ──
+  // ⚠️ THIS CLAIM MUST BE DRIVEN DIRECTLY, and the reason is the whole lesson.
+  // The prompt now tells the model to OMIT a horizontal it has no read on, so a
+  // null level should never arrive from a real call — which means the "a later
+  // sitting didn't erase the earlier level" claim below now passes because the
+  // model OMITTED, not because the guard works. That is a claim passing for the
+  // right result and the wrong reason (M52/M54). The guard is what stands between
+  // ONE disobedient response and a wiped standing, so it needs a claim that
+  // depends on nothing but the code.
+  const lvlBefore = (await rows(P.id, (tx) =>
+    tx.select().from(horizontalSkillState).where(
+      and(eq(horizontalSkillState.studentId, stu.id), eq(horizontalSkillState.slug, "language_precision")),
+    ),
+  ))[0]?.level;
+  await rows(P.id, async (tx) => {
+    const s = await gatherSynthesisInput(tx, {
+      studentId: stu.id, subTopicIds: [fx.stA, fx.stB],
+      certified: [{ subTopicId: fx.stA, conceptualLevel: 3, proceduralLevel: 3, description: "d" }],
+    });
+    return writeSynthesis(tx, {
+      boardId: P.id, studentId: stu.id, sessionId: opened.id, scope: s.scope,
+      result: {
+        chapterInsights: [], subjectInsights: [],
+        // exactly the disobedient response the prompt now forbids
+        horizontals: [{ subjectKey: "S1", slug: "language_precision", level: null, prose: "no read this sitting" }],
+        worklistItems: [], reasoning: "null-bound probe",
+      },
+    });
+  });
+  const lvlAfter = (await rows(P.id, (tx) =>
+    tx.select().from(horizontalSkillState).where(
+      and(eq(horizontalSkillState.studentId, stu.id), eq(horizontalSkillState.slug, "language_precision")),
+    ),
+  ))[0]?.level;
+  check(
+    "D-S2R-9: a null level CANNOT overwrite an existing one — the standing survives a disobedient response (null → number, never back)",
+    lvlAfter != null && lvlAfter === lvlBefore,
+  );
+
   // ── 11. re-finalize is refused ──
   let refin = false;
   try {
@@ -403,6 +643,54 @@ async function main() {
     c: looseMs[0]?.conceptualLevel, p: looseMs[0]?.proceduralLevel,
   });
 
+  // ── 12b. S2R-3: synthesis is INCREMENTAL across sittings (spec §4) ──
+  // The catch-all just finalized over stLoose, which lives in the SAME chapter as
+  // the assignment sitting. So this is the second synthesis to touch that chapter's
+  // insight: it must EDIT the row, not add a second one and not start from blank.
+  // "One assignment never completes a chapter view" is the whole contract.
+  const chIns2 = await rows(P.id, (tx) =>
+    tx.select().from(studentChapterInsight).where(eq(studentChapterInsight.studentId, stu.id)),
+  );
+  check(
+    "INCREMENTAL: a second sitting UPDATED the chapter insight in place — still one row per (student, chapter)",
+    chIns2.length === 1,
+  );
+  check("incremental: the updated insight is non-empty", (chIns2[0]?.insight ?? "").trim().length > 0);
+  soft("chapter insight AFTER the second sitting", chIns2[0]?.insight);
+  const hz2 = await rows(P.id, (tx) =>
+    tx.select().from(horizontalSkillState).where(eq(horizontalSkillState.studentId, stu.id)),
+  );
+  soft("horizontals after the catch-all", hz2.map((h) => ({ slug: h.slug, level: h.level })));
+  // ⚠️ ASSERT THE LEVEL, NOT THE ROW. The first version of this claim checked only
+  // that a language_precision row still existed — and it went GREEN while the
+  // catch-all silently reset that student's level from 2 to null (M52: the
+  // assertion that would fail is the one you didn't write).
+  //
+  // What this proves NOW is the model OBEYING the omit rule end-to-end on a real
+  // call — it saw a sitting with no language evidence and said nothing about
+  // language. That is worth gating, but it is NOT the guard: 10d drives the guard
+  // directly, because a claim that depends on the model complying cannot prove the
+  // code that exists for when it doesn't.
+  const lp2 = hz2.find((h) => h.slug === "language_precision");
+  check(
+    "OMIT RULE (real call): a sitting with NO language evidence left the earlier level untouched",
+    lp2?.level === lp?.level && lp2?.level != null,
+  );
+  // ...and prove it was SILENCE and not a null the guard absorbed — otherwise the
+  // claim above is true for a reason its own name gets wrong. The sitting persists
+  // exactly what the model emitted, so this is checkable rather than assumable.
+  const caView = await rows(P.id, (tx) => getAssessmentSession(tx, { tutorUserId: tut.id, sessionId: ca.id }));
+  const caEmitted = caView.synthesis?.horizontals ?? [];
+  soft("what the model EMITTED on the catch-all", caEmitted.map((h) => ({ slug: h.slug, level: h.level })));
+  check(
+    "OMIT RULE: the model OMITTED language_precision entirely — it did not emit a null for the guard to catch",
+    !caEmitted.some((h) => h.slug === "language_precision"),
+  );
+  check(
+    "incremental: the new sitting's OWN evidence still landed (quantitative_thinking levelled from the graph slip)",
+    hz2.some((h) => h.slug === "quantitative_thinking" && h.level != null),
+  );
+
   // once certified, the sub_topic drops out of the pending partition
   const listed2 = await rows(P.id, (tx) => listPendingAssessments(tx, { tutorUserId: tut.id, studentId: stu.id }));
   const ca2 = listed2.find((l) => l.kind === "catch_all");
@@ -431,8 +719,15 @@ async function main() {
 
   // ── cleanup (FK-safe) ──
   await withBoard(P.id, async (tx: Tx) => {
-    await tx.delete(assessmentSession).where(eq(assessmentSession.boardId, P.id));
+    // ⚠️ ORDER: cross_concept_flag now FKs assessment_session (S2R-3's synthesis
+    // items carry source_session_id), so the flags MUST go before the sittings.
+    // The reverse order raises a foreign-key violation, not a silent skip.
     await tx.delete(crossConceptFlag).where(eq(crossConceptFlag.boardId, P.id));
+    await tx.delete(assessmentSession).where(eq(assessmentSession.boardId, P.id));
+    await tx.delete(horizontalSkillState).where(eq(horizontalSkillState.boardId, P.id));
+    await tx.delete(horizontalSkill).where(eq(horizontalSkill.boardId, P.id));
+    await tx.delete(studentChapterInsight).where(eq(studentChapterInsight.boardId, P.id));
+    await tx.delete(studentSubjectInsight).where(eq(studentSubjectInsight.boardId, P.id));
     await tx.delete(masteryHistory).where(eq(masteryHistory.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(schedulingState).where(eq(schedulingState.boardId, P.id));

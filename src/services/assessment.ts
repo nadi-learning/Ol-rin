@@ -425,6 +425,8 @@ CONCEPTUAL axis: L1=1 obs · L2=1 obs · L3=2 obs · L4=2 obs, ≥1 on a transfe
 PROCEDURAL axis: L1=1 obs · L2=1 obs · L3=3 obs AND a ≥1-day gap · L4=4 obs (sustained speed+accuracy) AND a ≥2-week gap · L5=5 obs, ≥1 a flexibility/non-standard-method item, AND a ≥3-week gap.
 Spacing is measured between the qualifying observations THEMSELVES (sub-topic level): the gap just has to exist between SOME two of them. Whether an item was a transfer/variant/flexibility probe you read from its AUTHOR'S INTENTION (the pedagogical comment), not a tag.
 
+SPACING BINDS ONLY AT THE LEVEL THAT LISTS IT — never import a higher level's gap into a lower level's decision. A level whose line above names NO gap has NO spacing requirement: conceptual L1/L2/L3 and procedural L1/L2 are COUNTS ALONE. Worked example (get this right): two conceptual observations at level 3, one day apart, certify **L3** — L3 asks for 2 obs at ≥3 and nothing else. The ≥1-week gap belongs to L4, so an unmet gap CAPS the student at 3; it NEVER demotes them below 3. An unmet higher-level condition is a CEILING, not a penalty.
+
 HOW THE CERTIFIED LEVEL MOVES:
 - UP only when the next level's BOTH conditions are met — NEVER on a single standout answer.
 - DOWN immediately on a CLEAR failure at the current level: an observation below the current level for a SUBSTANTIVE reason (wrong reasoning = conceptual; broken/abandoned method = procedural rung 1). A careless slip is NOT a drop (Stage-1 already kept it out of the upward count).

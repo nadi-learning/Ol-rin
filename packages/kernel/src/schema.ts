@@ -421,6 +421,19 @@ export const observation = pgTable(
 // a resolved target sub_topic_id — that would need the AI to guess an id from free
 // text. Adding a nullable `to_sub_topic_id` later is a trivial migration if the flat
 // list proves too coarse.
+// GENERALISED by Slice S2R-3 (spec §5): the worklist MECHANISM is kept exactly as
+// it was — a clearable queue is the one thing about this table that worked — and
+// only what FEEDS it is broadened. Stage-2b's synthesis now emits actionable items
+// (re-teach X, prerequisite gap Y, recurring horizontal weakness Z) into the same
+// queue, under the split rule: STATE goes to the chapter/subject insight text;
+// ACTIONS come here.
+//
+// That required loosening two NOT NULLs, and it is worth being precise about why:
+// a synthesis item is a claim about a PATTERN across a whole sitting, so it has no
+// single originating observation and often no single originating sub_topic. Both
+// columns stay for stage-1 items (where they are the provenance that makes a flag
+// checkable) and go null for synthesis items, with `origin` naming which is which
+// rather than leaving the reader to infer it from a null.
 export const crossConceptFlag = pgTable(
   "cross_concept_flag",
   {
@@ -431,20 +444,39 @@ export const crossConceptFlag = pgTable(
     studentId: uuid("student_id")
       .notNull()
       .references(() => appUser.id),
-    // Where the student was working when the other skill broke.
-    fromSubTopicId: uuid("from_sub_topic_id")
-      .notNull()
-      .references(() => subTopic.id),
+    // Which detector raised this. NOT derivable from the null columns alone —
+    // name it, so a reader never has to reverse-engineer provenance from absence.
+    origin: text("origin").notNull().default("stage1_cross_concept"), // | 'stage2_synthesis'
+    // Where the student was working when the other skill broke. NULL for a
+    // synthesis item that spans the sitting rather than sitting in one sub_topic.
+    fromSubTopicId: uuid("from_sub_topic_id").references(() => subTopic.id),
     note: text("note").notNull(), // "procedural issue in <other skill> — <what broke>"
-    // The read that raised it. UNIQUE → re-finalizing a sub-topic can't duplicate flags.
-    sourceObservationId: uuid("source_observation_id")
-      .notNull()
-      .references(() => observation.id),
+    // The read that raised it. UNIQUE → re-finalizing a sub-topic can't duplicate
+    // flags. NULL for synthesis items (a pattern has no one source read); Postgres
+    // never treats NULLs as equal, so the unique below cannot constrain them — the
+    // same property D-S2R-7 leans on for the catch-all sitting.
+    sourceObservationId: uuid("source_observation_id").references(() => observation.id),
+    // What a synthesis item is deduped by instead: a sitting finalizes exactly once
+    // (SessionAlreadyFinalizedError + the status flip are in the same tx), so its
+    // items are inserted exactly once. Kept for provenance + the tutor's "which
+    // assessment raised this?" read.
+    sourceSessionId: uuid("source_session_id").references(() => assessmentSession.id),
     addressedAt: timestamp("addressed_at", { withTimezone: true }), // null = open
     addressedBy: uuid("addressed_by").references(() => appUser.id),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.sourceObservationId)],
+  (t) => [
+    unique().on(t.sourceObservationId),
+    index("cross_concept_flag_session_idx").on(t.sourceSessionId),
+    // A stage-1 flag without its source read would be an unfalsifiable claim; a
+    // synthesis flag is not expected to have one. Encode that rather than trusting
+    // the writers to be consistent.
+    check(
+      "cross_concept_flag_origin_provenance",
+      sql`(${t.origin} = 'stage1_cross_concept' and ${t.sourceObservationId} is not null and ${t.fromSubTopicId} is not null)
+       or (${t.origin} = 'stage2_synthesis' and ${t.sourceSessionId} is not null)`,
+    ),
+  ],
 );
 
 // ───────────────────────── 3. Mastery (four-field model) ─────────────────────────
@@ -504,6 +536,140 @@ export const masteryHistory = pgTable("mastery_history", {
   sourceEventId: uuid("source_event_id").references(() => eventLog.id),
   snapshotAt: timestamp("snapshot_at", { withTimezone: true }).notNull(),
 });
+
+// ────────── 3b. Above-sub-topic insight stores (Slice S2R-3) ──────────
+//
+// Everything in §3 is keyed by sub_topic. These three stores are the first
+// things in the model that live ABOVE it — written by Stage-2b's synthesis
+// segment at finalize (D-S2R-3), which is the only place with a cross-sub-topic
+// view. Spec §4: "these gaps are real (seen in manual ground-tests) but have no
+// home in the sub-topic × two-axis store."
+//
+// All three are INCREMENTAL, never complete: one assignment refines a chapter or
+// subject view, it does not finish it. Synthesis edits the existing text where it
+// can and rewrites where it cannot, so these are state tables (overwritten), not
+// append-only logs.
+
+// The horizontal-skill TAXONOMY. Predefined content, ingested from the topic
+// registry's `chapters[].horizontal[{slug, description}]` (D-S2R-4) — not a
+// taxonomy anyone invents or maintains by hand.
+//
+// ⚠️ CHAPTER-GRAIN ON PURPOSE, and it does NOT match the state's grain below.
+// A slug is reused across chapters of one subject with a DIFFERENT description
+// each time — measured, not assumed: Cambridge Physics IGCSE defines
+// `language_precision` as "both-halves definitions / 'show that' working" in
+// Motion and "read and write the chapter's notation exactly" in Electricity;
+// CBSE Maths Class 10 defines it in three chapters, three ways.
+// D-S2R-8 reads that reuse as deliberate: ONE subject-wide skill, described
+// through a local chapter lens. So the definitions stay chapter-grain (each says
+// what the skill looks like HERE) while the student's level pools at subject
+// grain (horizontal_skill_state). Synthesis is handed the descriptions for the
+// chapters in the sitting's scope — never a single "winning" description, which
+// would silently discard the others.
+export const horizontalSkill = pgTable(
+  "horizontal_skill",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    // Denormalized from chapter.subject_id so the subject-grain state can resolve
+    // a slug's in-scope definitions without a join through chapter.
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subject.id),
+    chapterId: uuid("chapter_id")
+      .notNull()
+      .references(() => chapter.id),
+    slug: text("slug").notNull(), // 'language_precision' | 'causal_reasoning' | …
+    description: text("description").notNull(), // what the skill looks like in THIS chapter
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // One definition per (chapter, slug) — re-running the ingest updates in place.
+    unique().on(t.chapterId, t.slug),
+    index("horizontal_skill_subject_idx").on(t.subjectId, t.slug),
+  ],
+);
+
+// A student's standing on one horizontal skill, SUBJECT-WIDE (spec §4; D-S2R-8).
+// The pooling is the point: "recurring horizontal weakness" (spec §5) is a claim
+// no chapter-local store could make.
+export const horizontalSkillState = pgTable(
+  "horizontal_skill_state",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subject.id),
+    // Not an FK to horizontal_skill: that table is keyed per chapter, this row is
+    // per subject, and a slug's definitions are many. The slug string IS the join
+    // key (horizontal_skill.subject_id + slug → every in-scope definition).
+    slug: text("slug").notNull(),
+    // NULL = NOT YET OBSERVED, never "level 1" — the same bound mastery_state
+    // holds (assessment.md §2). A horizontal the student has had no chance to
+    // show is a coverage gap, not a weakness.
+    level: smallint("level"),
+    prose: text("prose").notNull(), // the evidence behind the level, tutor-visible
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique().on(t.studentId, t.subjectId, t.slug),
+    check("horizontal_skill_state_level_range", sql`${t.level} between 1 and 5`),
+  ],
+);
+
+// Free-form chapter-level view of a student. One row per (student × chapter).
+export const studentChapterInsight = pgTable(
+  "student_chapter_insight",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    chapterId: uuid("chapter_id")
+      .notNull()
+      .references(() => chapter.id),
+    insight: text("insight").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [unique().on(t.studentId, t.chapterId)],
+);
+
+// Free-form subject-level view. One row per (student × subject).
+export const studentSubjectInsight = pgTable(
+  "student_subject_insight",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subject.id),
+    insight: text("insight").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [unique().on(t.studentId, t.subjectId)],
+);
 
 // ───────────────────────── 5. Scheduling store ─────────────────────────
 
@@ -769,6 +935,11 @@ export const assessmentSession = pgTable(
     subTopicIds: uuid("sub_topic_ids").array().notNull(), // frozen at open
     drafts: jsonb("drafts").notNull().default({}), // subTopicId → Stage2DraftResult
     messages: jsonb("messages").notNull().default([]), // Stage-2b chat (S2R-4)
+    // S2R-3 — what Stage-2b's synthesis segment produced at finalize, INCLUDING
+    // its reasoning and anything dropped as unresolvable. `drafts` holds 2a's
+    // reasoning; this is 2b's. Spec §6: the tutor reads why, after the fact —
+    // "hidden reasoning defeats the point". Null until the sitting is finalized.
+    synthesis: jsonb("synthesis"),
     status: text("status").notNull().default("open"), // 'open' | 'finalized'
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     createdAt: createdAt(),
@@ -1259,6 +1430,13 @@ export const TENANT_SCOPED_TABLES = [
   // Slice S2R-2 — the Stage-2 sitting. Holds a student's drafts + (soon) the
   // tutor's chat: student data, so RLS is not optional (M34).
   "assessment_session",
+  // Slice S2R-3 — the above-sub-topic stores. The three state tables hold student
+  // data; horizontal_skill is board-scoped CONTENT (a board's taxonomy), and it
+  // carries a board_id, so it is scoped for the same reason `chapter` is.
+  "horizontal_skill",
+  "horizontal_skill_state",
+  "student_chapter_insight",
+  "student_subject_insight",
 ] as const;
 
 // All table names (for blanket GRANTs to the app role). Includes the GLOBAL

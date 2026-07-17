@@ -12,7 +12,8 @@
  *   2. open    — freeze the composition, fire all N Stage-2a drafts in PARALLEL,
  *                persist them on the row. Idempotent: re-opening returns the
  *                existing sitting rather than re-billing N Gemini calls.
- *   3. finalize— ONE transaction commits all N sub-topics, or none (D-S2R-1).
+ *   3. finalize— ONE transaction commits all N sub-topics, or none (D-S2R-1),
+ *                and runs Stage-2b's SYNTHESIS in the same tx (D-S2R-3, S2R-3).
  *                Accept-all is the fast path and works from day one (D-S2R-2).
  *
  * WHAT STAGE 2a KEEPS: each draft call still sees ONLY its own sub-topic's
@@ -21,11 +22,11 @@
  * context arrives only with Stage-2b's chat (S2R-4), which is deliberately kept
  * out of the call that moves the rungs.
  *
- * WHAT THIS SLICE DOES NOT DO: no chat (S2R-4), no synthesis, no chapter/subject
- * insight stores or horizontals (S2R-3). D-S2R-3 locks "synthesis ALWAYS runs at
- * finalize" — that binds the finalize once synthesis EXISTS; there is nothing to
- * run and nowhere to write it yet, so finalize here commits the 2a certifications
- * only. The fast path cannot strand stores that do not exist.
+ * WHAT IS STILL MISSING: the Stage-2b CHAT (S2R-4) — `messages` is on the row and
+ * nothing reads it yet. Synthesis (S2R-3) now runs at finalize, so D-S2R-3 binds
+ * for real: the accept-all fast path writes the chapter/subject insights and the
+ * horizontals too, because a tutor skipping the conversation must not silently
+ * strand every store above the sub-topic.
  */
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
@@ -46,6 +47,13 @@ import {
   normalizeDate,
   runStage2Call,
 } from "./assessment";
+import {
+  type SynthesisResult,
+  type SynthesisWriteResult,
+  gatherSynthesisInput,
+  runSynthesisCall,
+  writeSynthesis,
+} from "./synthesis";
 import { assertTutorsStudent, pendingSubTopicMap } from "./tutor";
 
 type Tx = PgTransaction<any, any, any>;
@@ -99,6 +107,8 @@ export type AssessmentSessionView = {
   status: "open" | "finalized";
   subTopicIds: string[];
   drafts: SessionDrafts;
+  /** S2R-3 — 2b's synthesis + its reasoning. Null until finalized (spec §6). */
+  synthesis: (SynthesisResult & { dropped: string[] }) | null;
   finalizedAt: Date | null;
   createdAt: Date;
 };
@@ -278,6 +288,7 @@ function toView(row: typeof assessmentSession.$inferSelect): AssessmentSessionVi
     status: row.status as "open" | "finalized",
     subTopicIds: row.subTopicIds,
     drafts: row.drafts as SessionDrafts,
+    synthesis: (row.synthesis as AssessmentSessionView["synthesis"]) ?? null,
     finalizedAt: row.finalizedAt,
     createdAt: row.createdAt,
   };
@@ -422,6 +433,8 @@ export type SessionFinalizeResult = {
     taught: boolean;
     overridden: boolean;
   }>;
+  /** S2R-3 — what synthesis wrote above the sub-topic. */
+  synthesis: SynthesisWriteResult;
 };
 
 /**
@@ -460,9 +473,12 @@ export async function finalizeAssessmentSession(
   }
 
   const edits = new Map((args.items ?? []).map((i) => [i.subTopicId, i.final]));
-  const committed: SessionFinalizeResult["committed"] = [];
 
-  for (const subTopicId of session.subTopicIds) {
+  // 1. Resolve what is being certified — the drafts as edited by the tutor.
+  //    Nothing is written yet: the finals are fully determined by (drafts, edits),
+  //    so synthesis can be handed them BEFORE any row moves. That ordering is what
+  //    lets the AI call sit ahead of every write instead of between them.
+  const resolved = session.subTopicIds.map((subTopicId) => {
     const proposal = session.drafts[subTopicId];
     // A sitting is only written with a draft per sub_topic, so this is a
     // can't-happen — but it must never degrade into silently skipping a
@@ -473,22 +489,47 @@ export async function finalizeAssessmentSession(
       );
     }
     const draft: Stage2Draft = proposal.draft;
-    const final = edits.get(subTopicId) ?? {
-      conceptualLevel: draft.conceptualLevel,
-      proceduralLevel: draft.proceduralLevel,
-      description: draft.description,
+    return {
+      subTopicId,
+      draft,
+      final: edits.get(subTopicId) ?? {
+        conceptualLevel: draft.conceptualLevel,
+        proceduralLevel: draft.proceduralLevel,
+        description: draft.description,
+      },
     };
+  });
 
+  // 2. Gather synthesis input — pure reads on this tx (D-S2R-3: synthesis ALWAYS
+  //    runs at finalize, so this is on the accept-all fast path too, by design).
+  const synthInput = await gatherSynthesisInput(tx, {
+    studentId: session.studentId,
+    subTopicIds: session.subTopicIds,
+    certified: resolved.map((r) => ({ subTopicId: r.subTopicId, ...r.final })),
+  });
+
+  // 3. The ONE synthesis call — no DB inside it, and no writes done yet.
+  //    ⚠️ It is INSIDE the atomic finalize on purpose. If it throws, the whole
+  //    sitting rolls back and the tutor re-clicks: the sitting stays open with its
+  //    drafts intact, so a vendor flake costs a click, never a re-bill of the N 2a
+  //    calls and never a half-committed sitting. That is a materially smaller
+  //    tradeoff than `open`'s (where a failure discards N real calls), which is
+  //    why this does NOT need allSettled — there is exactly one call to settle.
+  const synthResult = await runSynthesisCall(synthInput);
+
+  // 4. Commit the certifications. One throw here rolls back everything above.
+  const committed: SessionFinalizeResult["committed"] = [];
+  for (const r of resolved) {
     const res = await finalizeStage2(tx, {
       boardId: args.boardId,
       tutorUserId: args.tutorUserId,
       studentId: session.studentId,
-      subTopicId,
-      final,
-      draft,
+      subTopicId: r.subTopicId,
+      final: r.final,
+      draft: r.draft,
     });
     committed.push({
-      subTopicId,
+      subTopicId: r.subTopicId,
       conceptualLevel: res.conceptualLevel,
       proceduralLevel: res.proceduralLevel,
       taught: res.taught,
@@ -496,10 +537,25 @@ export async function finalizeAssessmentSession(
     });
   }
 
+  // 5. ...and the above-sub-topic stores, in the same tx.
+  const synthesis = await writeSynthesis(tx, {
+    boardId: args.boardId,
+    studentId: session.studentId,
+    sessionId: args.sessionId,
+    scope: synthInput.scope,
+    result: synthResult,
+  });
+
   await tx
     .update(assessmentSession)
-    .set({ status: "finalized", finalizedAt: new Date() })
+    .set({
+      status: "finalized",
+      finalizedAt: new Date(),
+      // Persist synthesis's reasoning on the sitting — spec §6: the tutor can read
+      // why, after the fact. `drafts` holds 2a's reasoning; this is 2b's.
+      synthesis: { ...synthResult, dropped: synthesis.dropped },
+    })
     .where(eq(assessmentSession.id, args.sessionId));
 
-  return { sessionId: args.sessionId, committed };
+  return { sessionId: args.sessionId, committed, synthesis };
 }
