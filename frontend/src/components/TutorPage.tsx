@@ -40,6 +40,12 @@ type Stage2Draft = Stage2DraftResult["draft"];
 type CrossConceptFlagView = Awaited<
   ReturnType<typeof trpc.tutor.getCrossConceptFlags.query>
 >[number];
+// Slice S2R-4 — the 2b advisory chat + the above-sub-topic stores (S2R-3),
+// finally rendered.
+type StudentInsightsView = Awaited<
+  ReturnType<typeof trpc.tutor.getStudentInsights.query>
+>;
+type SessionChatMessage = AssessmentSessionView["messages"][number];
 type DueGroup = Awaited<
   ReturnType<typeof trpc.tutor.getDueQueue.query>
 >[number];
@@ -140,6 +146,7 @@ function StudentDetail({
   const [pending, setPending] = useState<PendingAssessment[] | null>(null);
   const [due, setDue] = useState<DueGroup[] | null>(null);
   const [assignments, setAssignments] = useState<AssignmentView[] | null>(null);
+  const [insights, setInsights] = useState<StudentInsightsView | null>(null);
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TutorTab>("assess");
@@ -150,11 +157,15 @@ function StudentDetail({
       trpc.tutor.listPendingAssessments.query({ studentId: student.studentId }),
       trpc.tutor.getDueQueue.query({ studentId: student.studentId }),
       trpc.tutor.listAssignments.query({ studentId: student.studentId }),
+      // S2R-4: synthesis's stores ride the same reload so a finalize (which
+      // writes them) refreshes what this screen shows of them.
+      trpc.tutor.getStudentInsights.query({ studentId: student.studentId }),
     ])
-      .then(([p, d, a]) => {
+      .then(([p, d, a, ins]) => {
         setPending(p);
         setDue(d);
         setAssignments(a);
+        setInsights(ins);
       })
       .catch((e) => setError(String(e?.message ?? e)));
   }, [student.studentId]);
@@ -204,10 +215,13 @@ function StudentDetail({
       </nav>
 
       {tab === "assess" && (
-        <section className="tut-section">
-          <h3 className="tut-section-title">Waiting to assess</h3>
-          <PendingList student={student} pending={pending} onFinalized={reload} />
-        </section>
+        <>
+          <StudentInsights insights={insights} />
+          <section className="tut-section">
+            <h3 className="tut-section-title">Waiting to assess</h3>
+            <PendingList student={student} pending={pending} onFinalized={reload} />
+          </section>
+        </>
       )}
 
       {tab === "assign" && (
@@ -1194,6 +1208,78 @@ function DueRow({ it }: { it: DueItem }) {
   );
 }
 
+/** `language_precision` → `language precision` — the slug is the identity, the
+ *  underscores are storage. */
+function prettySlug(slug: string): string {
+  return slug.replace(/_/g, " ");
+}
+
+// Slice S2R-4 — what synthesis knows about this student ABOVE the sub-topic
+// (S2R-3's stores, finally rendered): subject/chapter insight text + the
+// horizontal-skill levels with their evidence prose. Written only by finalized
+// sittings, so absent rows are the normal state for a student who has never
+// been through one — render nothing rather than an empty shell.
+function StudentInsights({ insights }: { insights: StudentInsightsView | null }) {
+  if (!insights) return null;
+  if (
+    insights.subjects.length === 0 &&
+    insights.chapters.length === 0 &&
+    insights.horizontals.length === 0
+  ) {
+    return null;
+  }
+  return (
+    <section className="tut-section">
+      <h3 className="tut-section-title">Student insights</h3>
+      <div className="tut-insights">
+        {insights.subjects.map((s) => (
+          <div key={s.subjectId} className="tut-insight-card">
+            <div className="tut-insight-head">
+              {s.subjectName}
+              <span className="tut-insight-kind">whole subject</span>
+            </div>
+            <p className="tut-insight-text">{s.insight}</p>
+          </div>
+        ))}
+        {insights.chapters.map((c) => (
+          <div key={c.chapterId} className="tut-insight-card">
+            <div className="tut-insight-head">
+              {c.chapterName}
+              <span className="tut-insight-kind">chapter · {c.subjectName}</span>
+            </div>
+            <p className="tut-insight-text">{c.insight}</p>
+          </div>
+        ))}
+        {insights.horizontals.length > 0 && (
+          <div className="tut-insight-card">
+            <div className="tut-insight-head">
+              Cross-cutting skills
+              <span className="tut-insight-kind">
+                read across sub-topics · 1–5
+              </span>
+            </div>
+            {insights.horizontals.map((h) => (
+              <div key={`${h.subjectId}:${h.slug}`} className="tut-hz-row">
+                {/* null level = "seen, not yet readable" (D-S2R-9's bound) — a
+                    first-class state, never rendered as a low score. */}
+                <span className={`tut-hz-level${h.level == null ? " is-unread" : ""}`}>
+                  {h.level == null ? "seen" : `L${h.level}`}
+                </span>
+                <span className="tut-hz-meta">
+                  <span className="tut-hz-slug">
+                    {prettySlug(h.slug)} · {h.subjectName}
+                  </span>
+                  <span className="tut-hz-prose">{h.prose}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ASSESS-FIX-4 — weak prerequisites spotted while the student was working on
 // something ELSE ("ran the trig fine, couldn't rationalise the denominator").
 // These carry NO level and count toward NO mastery — by design: the rule that
@@ -1358,9 +1444,18 @@ function AssessmentSitting({
     }));
     trpc.tutor.finalizeAssessmentSession
       .mutate({ sessionId: session.id, items: items.length ? items : undefined })
-      .then(() => {
+      .then(async () => {
+        // S2R-4: the payoff — re-read the sitting for what synthesis wrote
+        // (spec §6: the reasoning survives finalize). Best-effort: the commit
+        // already happened, so a failed re-read must not read as a failed
+        // finalize. onFinalized() is deferred to the Done click so the summary
+        // doesn't unmount the moment it appears (reload drops this entry from
+        // the pending list).
+        const final = await trpc.tutor.getAssessmentSession
+          .query({ sessionId: session.id })
+          .catch(() => null);
+        if (final) setSession(final);
         setPhase("done");
-        onFinalized();
       })
       .catch((e) => {
         setError(String(e?.message ?? e));
@@ -1368,15 +1463,59 @@ function AssessmentSitting({
       });
   }
 
-  if (phase === "done")
+  if (phase === "done") {
+    const syn = session?.synthesis ?? null;
     return (
       <div className="tut-pending-body">
         <p className="tut-s2-done">
           ✓ Certified {entry.subTopicNames.length} sub-topic
           {entry.subTopicNames.length === 1 ? "" : "s"} in one go.
         </p>
+        {syn && (
+          <div className="tut-syn">
+            <div className="tut-syn-head">Read across the whole sitting</div>
+            <p className="tut-syn-reasoning">{syn.reasoning}</p>
+            {syn.horizontals.length > 0 && (
+              <div className="tut-syn-block">
+                {syn.horizontals.map((h) => (
+                  <div key={`${h.subjectKey}:${h.slug}`} className="tut-hz-row">
+                    <span className={`tut-hz-level${h.level == null ? " is-unread" : ""}`}>
+                      {h.level == null ? "seen" : `L${h.level}`}
+                    </span>
+                    <span className="tut-hz-meta">
+                      <span className="tut-hz-slug">{prettySlug(h.slug)}</span>
+                      <span className="tut-hz-prose">{h.prose}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {syn.worklistItems.length > 0 && (
+              <div className="tut-syn-block">
+                <div className="tut-syn-sub">Added to the worklist</div>
+                <ul className="tut-syn-list">
+                  {syn.worklistItems.map((w, i) => (
+                    <li key={i}>{w.note}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(syn.chapterInsights.length > 0 || syn.subjectInsights.length > 0) && (
+              <p className="tut-syn-note">
+                Updated {syn.chapterInsights.length} chapter and{" "}
+                {syn.subjectInsights.length} subject insight view
+                {syn.chapterInsights.length + syn.subjectInsights.length === 1 ? "" : "s"} —
+                shown under “Student insights”.
+              </p>
+            )}
+          </div>
+        )}
+        <button className="tut-assess-btn" onClick={onFinalized}>
+          Done
+        </button>
       </div>
     );
+  }
 
   if (phase === "idle")
     return (
@@ -1428,6 +1567,11 @@ function AssessmentSitting({
           </div>
         );
       })}
+      <SittingChat
+        sessionId={session!.id}
+        initial={session!.messages}
+        disabled={saving}
+      />
       <div className="tut-s2-actions tut-sitting-actions">
         <button className="tut-assess-btn" onClick={finalize} disabled={saving}>
           {saving
@@ -1439,6 +1583,116 @@ function AssessmentSitting({
         <span className="tut-hint">
           Commits every sub-topic together, or none.
         </span>
+      </div>
+    </div>
+  );
+}
+
+// Slice S2R-4 — the Stage-2b ADVISORY chat on an open sitting (D-S2R-10). It
+// discusses the proposals and the evidence; it never commits — any change the
+// conversation convinces the tutor of happens in the form above, by hand. The
+// transcript persists on the sitting and rides into synthesis at finalize
+// (D-S2R-11), so context the tutor states here ("he was ill that week") is not
+// lost at the one moment the system reasons across the sitting.
+function SittingChat({
+  sessionId,
+  initial,
+  disabled,
+}: {
+  sessionId: string;
+  initial: SessionChatMessage[];
+  disabled: boolean;
+}) {
+  const [messages, setMessages] = useState<SessionChatMessage[]>(initial);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+
+  // Follow the newest turn. Text-only bubbles — nothing un-sized in the box
+  // (M44), so scrollHeight is trustworthy here.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, busy]);
+
+  function send() {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setError(null);
+    setDraft("");
+    trpc.tutor.sendAssessmentChat
+      .mutate({ sessionId, text })
+      .then((r) => setMessages(r.messages))
+      .catch((e) => {
+        setError(String(e?.message ?? e));
+        setDraft(text); // don't eat the tutor's words on a failed send
+      })
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <div className="tut-sitchat">
+      <div className="tut-sitchat-head">
+        Talk it through
+        <span className="tut-ccf-sub">
+          advisory - any change still happens in the form above
+        </span>
+      </div>
+      <div className="tut-sitchat-canvas" ref={canvasRef}>
+        {messages.length === 0 && !busy && (
+          <p className="tut-sitchat-hint">
+            Ask why a level was proposed, test a doubt against the evidence, or
+            add context only you know - it feeds the final synthesis.
+          </p>
+        )}
+        {messages.map((m) => (
+          <div
+            key={m.id}
+            className={`tut-chat-row tut-chat-row--${m.role === "user" ? "tutor" : "ai"}`}
+          >
+            <div
+              className={`tut-chat-bubble tut-chat-bubble--${m.role === "user" ? "tutor" : "ai"}`}
+            >
+              {m.role === "assistant" ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                >
+                  {m.text}
+                </ReactMarkdown>
+              ) : (
+                m.text
+              )}
+            </div>
+          </div>
+        ))}
+        {busy && <p className="tut-chat-typing">thinking…</p>}
+      </div>
+      {error && <p className="tut-error">{error}</p>}
+      <div className="tut-sitchat-inputbar">
+        <textarea
+          className="tut-sitchat-input"
+          rows={2}
+          placeholder="Ask about these proposals…"
+          value={draft}
+          disabled={disabled || busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+        />
+        <button
+          className="tut-assess-btn"
+          onClick={send}
+          disabled={disabled || busy || !draft.trim()}
+        >
+          Send
+        </button>
       </div>
     </div>
   );

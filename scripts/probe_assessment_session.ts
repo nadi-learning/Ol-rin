@@ -45,6 +45,22 @@
  *  12. CATCH-ALL certifies for real: the self-serve sub_topic's mastery_state now exists.
  *  13. ownership: another tutor's sitting → NOT_FOUND (no existence leak).
  *  14. RLS: read a P sitting under board Q → NOT_FOUND.
+ *
+ * S2R-4 (the 2b ADVISORY chat + the insights read) — on the CATCH-ALL sitting,
+ * DELIBERATELY: the assignment sitting stays chat-less so claim 10b ("synthesis
+ * ran with NO chat") keeps the premise its name states (M55 — an edit that
+ * changes what an existing gate proves is a defused gate).
+ *
+ *  15. a REAL advisory turn persists the user+assistant pair on the row; a second
+ *      turn sees the first (history reaches the model — codeword recall, engineered
+ *      unrefusable per M52).
+ *  16. the transcript survives finalize, and rides into synthesis's INPUT — FIRM at
+ *      the gather seam (role mapping, deterministic); what the model DOES with it is
+ *      SOFT (its discretion).
+ *  17. chat on a FINALIZED sitting → SESSION_ALREADY_FINALIZED; a foreign tutor's
+ *      chat → NOT_FOUND (no existence leak).
+ *  18. getStudentInsights: the S2R-3 stores come back named (subject/chapter joins);
+ *      a foreign tutor → NOT_FOUND.
  */
 import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
@@ -84,8 +100,14 @@ import {
   openAssessmentSession,
   SessionAlreadyFinalizedError,
 } from "../src/services/assessment_session";
+import { sendAssessmentChatTurn } from "../src/services/assessment_chat";
 import { gatherSynthesisInput, writeSynthesis } from "../src/services/synthesis";
-import { getCrossConceptFlags, setCrossConceptFlagAddressed } from "../src/services/tutor";
+import {
+  getCrossConceptFlags,
+  getStudentInsights,
+  setCrossConceptFlagAddressed,
+  StudentNotFoundError,
+} from "../src/services/tutor";
 import { __aiConfigured } from "../src/services/ai/gemini";
 
 type Tx = PgTransaction<any, any, any>;
@@ -627,6 +649,78 @@ async function main() {
   );
   check("catch-all: the sitting opened over the unassigned evidence", ca.subTopicIds.includes(fx.stLoose));
   check("catch-all: it drafted the self-serve sub_topic", !!ca.drafts[fx.stLoose]);
+  check("S2R-4: a fresh sitting opens with an EMPTY transcript on its view", Array.isArray(ca.messages) && ca.messages.length === 0);
+
+  // ── 15. S2R-4: the ADVISORY chat, on the OPEN catch-all (real Gemini) ──
+  // Turn 1 plants two things: a codeword (the turn-2 recall check — engineered
+  // unrefusable, M52: echoing a string from visible history is not a judgment
+  // call) and a tutor-only fact (the dengue context) that only the chat knows —
+  // the synthesis SOFT check below looks for its influence.
+  const tChat = Date.now();
+  const chat1 = await rows(P.id, (tx) =>
+    sendAssessmentChatTurn(tx, {
+      tutorUserId: tut.id,
+      sessionId: ca.id,
+      text:
+        "Before we go further, two notes for the record. One: the student did this graphs practice while recovering from dengue, so weigh gaps gently. Two: our session codeword is BLUEWHALE7 — remember it, I'll ask for it later.",
+    }),
+  );
+  soft("chat turn 1 wall-clock ms", Date.now() - tChat);
+  soft("chat turn 1 reply", chat1.messages[1]?.text?.slice(0, 200));
+  check(
+    "CHAT: one turn persisted the user+assistant PAIR on the sitting",
+    chat1.messages.length === 2 &&
+      chat1.messages[0]?.role === "user" &&
+      chat1.messages[1]?.role === "assistant" &&
+      (chat1.messages[1]?.text ?? "").trim().length > 0,
+  );
+
+  const chat2 = await rows(P.id, (tx) =>
+    sendAssessmentChatTurn(tx, {
+      tutorUserId: tut.id,
+      sessionId: ca.id,
+      text: "Quick check: repeat the session codeword I gave you earlier, exactly.",
+    }),
+  );
+  soft("chat turn 2 reply", chat2.messages[3]?.text?.slice(0, 200));
+  check("CHAT: the second turn appended (4 messages, alternating roles)", chat2.messages.length === 4 && chat2.messages[2]?.role === "user" && chat2.messages[3]?.role === "assistant");
+  check(
+    "CHAT: HISTORY reaches the model — turn 2 recalled turn 1's codeword",
+    (chat2.messages[3]?.text ?? "").toUpperCase().includes("BLUEWHALE7"),
+  );
+
+  // The thread is on the ROW, not in component state: a fresh read carries it.
+  const caReread = await rows(P.id, (tx) => getAssessmentSession(tx, { tutorUserId: tut.id, sessionId: ca.id }));
+  check("CHAT: the transcript persists on the row (a fresh read returns all 4 turns)", caReread.messages.length === 4);
+
+  // Ownership: the chat is a WRITE on a per-student row — same wall as every read.
+  let chatOwn = false;
+  try {
+    await rows(P.id, (tx) =>
+      sendAssessmentChatTurn(tx, { tutorUserId: tut2.id, sessionId: ca.id, text: "hi" }),
+    );
+  } catch (e) {
+    chatOwn = e instanceof AssessmentSessionNotFoundError;
+  }
+  check("CHAT ownership: a tutor who doesn't tutor this student → NOT_FOUND (no existence leak)", chatOwn);
+
+  // ── 16a. the gather seam, FIRM + deterministic: the transcript maps into
+  // synthesis's input with roles translated (user → tutor). This is the half we
+  // control; finalize's one-line wiring (session.messages → this arg) is exercised
+  // for real by the finalize below, and what the model DOES with it stays SOFT.
+  const chatSeam = await rows(P.id, (tx) =>
+    gatherSynthesisInput(tx, {
+      studentId: stu.id,
+      subTopicIds: ca.subTopicIds,
+      certified: [{ subTopicId: fx.stLoose, conceptualLevel: 3, proceduralLevel: 3, description: "d" }],
+      chatMessages: caReread.messages,
+    }),
+  );
+  check(
+    "SYNTH INPUT: the chat maps in with roles translated (4 turns, user→tutor)",
+    chatSeam.chat.length === 4 && chatSeam.chat[0]?.role === "tutor" && chatSeam.chat[1]?.role === "assistant",
+  );
+
   await rows(P.id, (tx) =>
     finalizeAssessmentSession(tx, { boardId: P.id, tutorUserId: tut.id, sessionId: ca.id }),
   );
@@ -690,6 +784,57 @@ async function main() {
     "incremental: the new sitting's OWN evidence still landed (quantitative_thinking levelled from the graph slip)",
     hz2.some((h) => h.slug === "quantitative_thinking" && h.level != null),
   );
+
+  // ── 16b/17. S2R-4 post-finalize: the transcript is history, not gone ──
+  check("CHAT: the transcript SURVIVES finalize (spec §6 — readable after the fact)", caView.messages.length === 4);
+  // What the model did with the tutor's chat context is its discretion — SOFT.
+  // The dengue fact existed NOWHERE but the chat; if it shows up here, the
+  // transcript demonstrably crossed the finalize wiring into the real call.
+  soft(
+    "did the tutor's chat-only fact (dengue) reach synthesis? (reasoning + worklist)",
+    {
+      reasoning: caView.synthesis?.reasoning,
+      worklist: caView.synthesis?.worklistItems,
+    },
+  );
+  let chatClosed = false;
+  try {
+    await rows(P.id, (tx) =>
+      sendAssessmentChatTurn(tx, { tutorUserId: tut.id, sessionId: ca.id, text: "one more thing…" }),
+    );
+  } catch (e) {
+    chatClosed = e instanceof SessionAlreadyFinalizedError;
+  }
+  check("CHAT: a FINALIZED sitting refuses new turns → SESSION_ALREADY_FINALIZED", chatClosed);
+
+  // ── 18. S2R-4: the insights READ — S2R-3's stores, finally surfaced ──
+  const insights = await rows(P.id, (tx) =>
+    getStudentInsights(tx, { tutorUserId: tut.id, studentId: stu.id }),
+  );
+  soft("getStudentInsights", {
+    subjects: insights.subjects.map((s) => s.subjectName),
+    chapters: insights.chapters.map((c) => `${c.chapterName} (${c.subjectName})`),
+    horizontals: insights.horizontals.map((h) => `${h.slug}=L${h.level}`),
+  });
+  check(
+    "INSIGHTS READ: the subject insight comes back NAMED (join holds)",
+    insights.subjects.length === 1 && insights.subjects[0]?.subjectName === "Physics" && insights.subjects[0]!.insight.trim().length > 0,
+  );
+  check(
+    "INSIGHTS READ: the chapter insight comes back named, with its subject",
+    insights.chapters.length === 1 && insights.chapters[0]?.chapterName === "Motion" && insights.chapters[0]?.subjectName === "Physics",
+  );
+  check(
+    "INSIGHTS READ: the horizontals carry level + evidence prose (what the FE renders)",
+    insights.horizontals.some((h) => h.slug === "language_precision" && h.level != null && h.prose.trim().length > 0),
+  );
+  let insOwn = false;
+  try {
+    await rows(P.id, (tx) => getStudentInsights(tx, { tutorUserId: tut2.id, studentId: stu.id }));
+  } catch (e) {
+    insOwn = e instanceof StudentNotFoundError;
+  }
+  check("INSIGHTS READ ownership: a foreign tutor → NOT_FOUND", insOwn);
 
   // once certified, the sub_topic drops out of the pending partition
   const listed2 = await rows(P.id, (tx) => listPendingAssessments(tx, { tutorUserId: tut.id, studentId: stu.id }));

@@ -30,6 +30,7 @@
  */
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
+import { ChatMessage } from "@b2c/kernel/contracts";
 import {
   assessmentSession,
   assignment,
@@ -107,11 +108,20 @@ export type AssessmentSessionView = {
   status: "open" | "finalized";
   subTopicIds: string[];
   drafts: SessionDrafts;
+  /** S2R-4 — the 2b chat, oldest first. [] until the tutor opens the chat. */
+  messages: ChatMessage[];
   /** S2R-3 — 2b's synthesis + its reasoning. Null until finalized (spec §6). */
   synthesis: (SynthesisResult & { dropped: string[] }) | null;
   finalizedAt: Date | null;
   createdAt: Date;
 };
+
+/** The messages jsonb, validated. A malformed row should fail loudly here, not
+ *  render as a half-parsed transcript (same rule as authoring_chat's). */
+export function parseSessionMessages(raw: unknown): ChatMessage[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr.map((m) => ChatMessage.parse(m));
+}
 
 function kindOf(assignmentId: string | null): "assignment" | "catch_all" {
   return assignmentId ? "assignment" : "catch_all";
@@ -288,6 +298,7 @@ function toView(row: typeof assessmentSession.$inferSelect): AssessmentSessionVi
     status: row.status as "open" | "finalized",
     subTopicIds: row.subTopicIds,
     drafts: row.drafts as SessionDrafts,
+    messages: parseSessionMessages(row.messages),
     synthesis: (row.synthesis as AssessmentSessionView["synthesis"]) ?? null,
     finalizedAt: row.finalizedAt,
     createdAt: row.createdAt,
@@ -506,6 +517,10 @@ export async function finalizeAssessmentSession(
     studentId: session.studentId,
     subTopicIds: session.subTopicIds,
     certified: resolved.map((r) => ({ subTopicId: r.subTopicId, ...r.final })),
+    // S2R-4: the sitting's chat rides into synthesis. A tutor turn can carry
+    // context nothing stored has ("he was ill that week"); silently ignoring it
+    // at the one moment it matters would make the chat decorative.
+    chatMessages: session.messages,
   });
 
   // 3. The ONE synthesis call — no DB inside it, and no writes done yet.

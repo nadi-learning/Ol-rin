@@ -70,6 +70,8 @@ HORIZONTAL SKILLS: a horizontal is a skill that cuts across content — language
 - prose: the EVIDENCE behind the level — what you actually saw, quoted or paraphrased from the notes. A level without evidence is unauditable, so an entry you cannot write prose for is an entry you should not have emitted.
 - Inventing a level from no evidence is the one unrecoverable error here: downstream it is indistinguishable from a real read. Omitting costs nothing; guessing costs a number a tutor will believe.
 
+THE SITTING MAY CARRY A CHAT TRANSCRIPT — the tutor talking with an advisory model about the drafts before finalizing (S2R-4). Read it for what the TUTOR states: a tutor turn can carry context nothing else in this sitting has ("he was ill that week", "I taught this in Hindi", "we only covered half the chapter"), and that context is real evidence for YOUR outputs. The advisory model's turns are NOT evidence — never treat something the model said as something the student did. And nothing in the transcript changes the certified levels: they are final regardless of what either party said. If the transcript is empty or adds nothing, synthesize EXACTLY as you would without it.
+
 YOUR PRIMARY RAW MATERIAL is the pooled NON-SUB-TOPIC NOTES. Stage 1 is the only stage that ever saw the student's raw answer, and it recorded there anything that did not belong to the sub-topic being scored. Nobody else is looking at these. A single such note is an anecdote; the SAME thing across several notes is a pattern, and patterns are what you exist to find. Say which it is — do not inflate one slip into a standing weakness.
 
 Be concrete and be honest about thin evidence. "Some difficulty with wording" is worthless to a tutor; "twice wrote 'speed' where the question established 'velocity', losing the direction each time" is actionable. If the sitting genuinely shows nothing above the sub-topic, say so and return empty lists — an empty, honest synthesis is far better than a confident invented one.`;
@@ -96,6 +98,8 @@ export type SynthesisCallInput = {
     description: string;
   }>;
   notes: Array<{ subTopicName: string; axis: string; level: number; note: string; at: Date }>;
+  /** S2R-4 — the sitting's 2b chat, oldest first. Empty on the accept-all path. */
+  chat: Array<{ role: "tutor" | "assistant"; text: string }>;
 };
 
 export const synthesisSchema = z.object({
@@ -203,6 +207,11 @@ export async function gatherSynthesisInput(
       proceduralLevel: number | null;
       description: string;
     }>;
+    /** S2R-4 — the sitting's chat messages ({role: 'user'|'assistant', text}).
+     *  The tutor's turns can carry context no stored evidence has; the model's
+     *  turns are passed for coherence but flagged as non-evidence (see
+     *  SYNTHESIS_SYSTEM). Omitted/empty = the accept-all path, no transcript. */
+    chatMessages?: Array<{ role: string; text: string }>;
   },
 ): Promise<SynthesisCallInput> {
   // sub_topic → chapter → subject for the whole sitting.
@@ -385,6 +394,10 @@ export async function gatherSynthesisInput(
       };
     }),
     notes,
+    chat: (args.chatMessages ?? []).map((m) => ({
+      role: m.role === "user" ? ("tutor" as const) : ("assistant" as const),
+      text: m.text,
+    })),
   };
 }
 
@@ -446,6 +459,12 @@ export async function runSynthesisCall(i: SynthesisCallInput): Promise<Synthesis
         .join("\n")
     : "  (none — no answer in this sitting revealed anything outside its sub-topic)";
 
+  const chatBlock = i.chat.length
+    ? i.chat
+        .map((m) => `  ${m.role === "tutor" ? "TUTOR" : "ADVISOR"}: ${m.text}`)
+        .join("\n")
+    : "  (none — the tutor finalized without opening the chat)";
+
   const prompt = `SUBJECTS IN SCOPE:
 ${subjectBlock}
 
@@ -463,6 +482,9 @@ ${certBlock}
 
 POOLED NON-SUB-TOPIC NOTES (${i.notes.length}; oldest first — your primary raw material):
 ${noteBlock}
+
+CHAT TRANSCRIPT THIS SITTING (tutor ↔ advisory model, before finalize; TUTOR turns are evidence, ADVISOR turns are not):
+${chatBlock}
 
 Read across the whole sitting. Update the chapter/subject insight text incrementally, level only the horizontals this evidence actually supports, and emit worklist ACTIONS. Return the structured JSON.`;
 

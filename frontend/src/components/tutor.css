@@ -2734,3 +2734,130 @@
 }
 .tut-ccf-note { font-size: 13.5px; color: #33364a; flex: 1 1 260px; }
 .tut-ccf-from { font-size: 11.5px; color: var(--muted, #6b6f80); }
+
+/* ── Slice S2R-4: the Stage-2b chat + the above-sub-topic insight surface ──
+   .tut-sitchat- / .tut-insight- / .tut-hz- / .tut-syn- scoped (landmine rule). */
+
+.tut-sitchat {
+  margin-top: 14px;
+  border: 1px solid var(--border, #e3e5ee);
+  border-radius: var(--r-card, 12px);
+  background: var(--surface, #fff);
+  display: flex;
+  flex-direction: column;
+}
+.tut-sitchat-head {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #33364a;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid var(--border, #e3e5ee);
+}
+.tut-sitchat-canvas {
+  max-height: 320px;
+  min-height: 72px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-sitchat-hint {
+  margin: auto;
+  max-width: 420px;
+  text-align: center;
+  color: var(--muted, #6b6f80);
+  font-size: 13px;
+}
+.tut-sitchat-inputbar {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border, #e3e5ee);
+}
+.tut-sitchat-input {
+  flex: 1;
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e3e5ee);
+  border-radius: 8px;
+  line-height: 1.45;
+}
+
+.tut-insights { display: flex; flex-direction: column; gap: 12px; }
+.tut-insight-card {
+  border: 1px solid var(--border, #e3e5ee);
+  border-radius: var(--r-card, 12px);
+  background: var(--surface, #fff);
+  padding: 12px 14px;
+}
+.tut-insight-head {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #33364a;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tut-insight-kind {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+}
+.tut-insight-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #33364a;
+  white-space: pre-wrap;
+}
+
+.tut-hz-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 0 0;
+}
+.tut-hz-row + .tut-hz-row { border-top: 1px solid #f0f1f6; margin-top: 8px; }
+.tut-hz-level {
+  flex: none;
+  min-width: 38px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary, #2f63ff);
+  background: var(--surface-sunk, #f4f6fd);
+  border: 1px solid var(--border, #e3e5ee);
+  border-radius: var(--r-pill, 999px);
+  padding: 3px 8px;
+}
+.tut-hz-level.is-unread { color: var(--muted, #6b6f80); }
+.tut-hz-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tut-hz-slug { font-size: 12.5px; font-weight: 600; color: #33364a; text-transform: capitalize; }
+.tut-hz-prose { font-size: 12.5px; color: var(--muted, #6b6f80); line-height: 1.5; }
+
+.tut-syn {
+  margin: 10px 0;
+  border-left: 3px solid var(--primary, #2f63ff);
+  background: var(--surface, #fff);
+  border-radius: 0 var(--r-card, 12px) var(--r-card, 12px) 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-syn-head { font-size: 13px; font-weight: 700; color: #33364a; }
+.tut-syn-sub { font-size: 12px; font-weight: 600; color: var(--muted, #6b6f80); margin-bottom: 4px; }
+.tut-syn-reasoning { margin: 0; font-size: 13px; line-height: 1.55; color: #33364a; }
+.tut-syn-block { padding-top: 2px; }
+.tut-syn-list { margin: 0; padding-left: 18px; font-size: 13px; color: #33364a; line-height: 1.6; }
+.tut-syn-note { margin: 0; font-size: 12.5px; color: var(--muted, #6b6f80); }

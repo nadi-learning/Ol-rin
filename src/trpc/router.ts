@@ -74,6 +74,7 @@ import { env } from "../config/env";
 import {
   getObservations,
   getProgressTree,
+  getStudentInsights,
   getStudentMastery,
   getStudentPacePlan,
   getSubTopicQuestions,
@@ -123,6 +124,8 @@ import {
   openAssessmentSession,
   SessionAlreadyFinalizedError,
 } from "../services/assessment_session";
+// Slice S2R-4 — the Stage-2b advisory chat on an open sitting.
+import { sendAssessmentChatTurn } from "../services/assessment_chat";
 import { getDueQueue } from "../services/scheduler";
 import {
   AssignmentNotFoundError,
@@ -1282,6 +1285,53 @@ export const appRouter = router({
           }
           if (e instanceof SessionAlreadyFinalizedError) {
             throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Slice S2R-4 — the Stage-2b chat: one ADVISORY turn on an OPEN sitting
+    // (D-S2R-10). Runs INLINE like open does — the tutor is mid-conversation and
+    // waits for the reply. The transcript persists on the row and rides into
+    // synthesis at finalize (D-S2R-11); it can never change a level itself.
+    sendAssessmentChat: tutorProcedure
+      .input(
+        z.object({
+          sessionId: z.string().uuid(),
+          text: z.string().trim().min(1).max(4000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await sendAssessmentChatTurn(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            sessionId: input.sessionId,
+            text: input.text,
+          });
+        } catch (e) {
+          if (e instanceof AssessmentSessionNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof SessionAlreadyFinalizedError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Slice S2R-4 — the above-sub-topic stores (S2R-3), finally tutor-readable:
+    // chapter/subject insight text + horizontal levels with evidence prose.
+    getStudentInsights: tutorProcedure
+      .input(z.object({ studentId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getStudentInsights(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;
         }

@@ -32,10 +32,14 @@ import {
   chapter,
   crossConceptFlag,
   eventLog,
+  horizontalSkillState,
   masteryState,
   observation,
   question,
+  studentChapterInsight,
+  studentSubjectInsight,
   subTopic,
+  subject,
   topic,
   tutorStudent,
 } from "@b2c/kernel/schema";
@@ -809,4 +813,93 @@ export async function overrideObservation(
     questionId: u.questionId,
     createdAt: u.createdAt,
   };
+}
+
+// ── Slice S2R-4: the student's above-sub-topic stores, tutor-readable ────────
+// S2R-3 wrote these (synthesis at finalize); until now nothing rendered them.
+// TUTOR-facing only — none of this reaches the parent report (computeChildReport
+// selects its own fields) or any student surface (the M11/M53 projection rule:
+// name the audience before widening a read).
+
+export type StudentInsightsView = {
+  subjects: Array<{
+    subjectId: string;
+    subjectName: string;
+    grade: string;
+    insight: string;
+    updatedAt: Date;
+  }>;
+  chapters: Array<{
+    chapterId: string;
+    chapterName: string;
+    subjectName: string;
+    insight: string;
+    updatedAt: Date;
+  }>;
+  horizontals: Array<{
+    subjectId: string;
+    subjectName: string;
+    slug: string;
+    /** null = seen but not yet readable (the D-S2R-9 bound). */
+    level: number | null;
+    prose: string;
+    updatedAt: Date;
+  }>;
+};
+
+/**
+ * Everything synthesis knows about this student ABOVE the sub-topic: the
+ * chapter/subject insight text + the horizontal-skill levels with their
+ * evidence prose. Ownership-guarded like every per-student tutor read. Rows
+ * exist only where a finalized sitting wrote them — empty lists are the normal
+ * state for a student who has never been through a Stage-2 sitting.
+ */
+export async function getStudentInsights(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string },
+): Promise<StudentInsightsView> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+
+  const subjects = await tx
+    .select({
+      subjectId: studentSubjectInsight.subjectId,
+      subjectName: subject.name,
+      grade: subject.grade,
+      insight: studentSubjectInsight.insight,
+      updatedAt: studentSubjectInsight.updatedAt,
+    })
+    .from(studentSubjectInsight)
+    .innerJoin(subject, eq(subject.id, studentSubjectInsight.subjectId))
+    .where(eq(studentSubjectInsight.studentId, args.studentId))
+    .orderBy(asc(subject.name));
+
+  const chapters = await tx
+    .select({
+      chapterId: studentChapterInsight.chapterId,
+      chapterName: chapter.name,
+      subjectName: subject.name,
+      insight: studentChapterInsight.insight,
+      updatedAt: studentChapterInsight.updatedAt,
+    })
+    .from(studentChapterInsight)
+    .innerJoin(chapter, eq(chapter.id, studentChapterInsight.chapterId))
+    .innerJoin(subject, eq(subject.id, chapter.subjectId))
+    .where(eq(studentChapterInsight.studentId, args.studentId))
+    .orderBy(asc(subject.name), asc(chapter.ordinal));
+
+  const horizontals = await tx
+    .select({
+      subjectId: horizontalSkillState.subjectId,
+      subjectName: subject.name,
+      slug: horizontalSkillState.slug,
+      level: horizontalSkillState.level,
+      prose: horizontalSkillState.prose,
+      updatedAt: horizontalSkillState.updatedAt,
+    })
+    .from(horizontalSkillState)
+    .innerJoin(subject, eq(subject.id, horizontalSkillState.subjectId))
+    .where(eq(horizontalSkillState.studentId, args.studentId))
+    .orderBy(asc(subject.name), asc(horizontalSkillState.slug));
+
+  return { subjects, chapters, horizontals };
 }
