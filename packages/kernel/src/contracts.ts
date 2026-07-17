@@ -95,11 +95,20 @@ export type ChatMessage = z.infer<typeof ChatMessage>;
 // screen. It is the flow's only multi-answer beat, so it does NOT go through
 // saveStep (which is one-step-one-column by design) — it has its own mutation,
 // saveAboutYou. saveStep REJECTS it rather than half-writing it.
+// S96 (ONB-5, the story reskin) — `pikachu` is GONE (founder: "leave Pikachu out
+// of v0"). He was the flow's echo beat AND the loader's courier; both jobs move
+// to Olórin, who now has a body (a sketch) and can carry them. The reason is
+// style, not sentiment: a bright yellow Pokémon inside a pencil-drawn
+// Middle-earth reads as two products. He is parked, not killed.
+//
+// ⚠️ A row can still hold current_step='pikachu' — real students walked S91–S95.
+// A step this array no longer names would resume nowhere, so the SERVER maps a
+// retired step forward (see RETIRED_ONBOARDING_STEPS). Deleting a step is never
+// just a deletion from this list.
 export const ONBOARDING_STEPS = [
   "greet",
   "about_you",
   "fav_character",
-  "pikachu",
   "pet",
   "phone",
   "lore",
@@ -107,6 +116,34 @@ export const ONBOARDING_STEPS = [
 ] as const;
 export const OnboardingStep = z.enum(ONBOARDING_STEPS);
 export type OnboardingStep = z.infer<typeof OnboardingStep>;
+
+/**
+ * Steps that USED to exist, mapped to where a student sitting on one should
+ * resume. Read by the server when it loads a row (never by the client).
+ *
+ * This exists because a stored `current_step` outlives the flow that wrote it:
+ * `pikachu` rows are real (S91–S95 walks), and without this they'd resolve to
+ * "unknown step" and either trap the student or silently restart them at greet,
+ * replaying beats they already answered. Mapping to the SUCCESSOR is what makes
+ * removing a beat safe — the student loses the retired beat, nothing else.
+ */
+export const RETIRED_ONBOARDING_STEPS: Record<string, OnboardingStep> = {
+  pikachu: "pet",
+  // S90/S91 cut these before the step list was the resume key; kept for the
+  // same reason — a row that names them must still resolve somewhere real.
+  school: "fav_character",
+  fun_fact_about: "pet",
+  fun_fact: "pet",
+  grade: "about_you",
+};
+
+/** Where a stored step resumes: itself if live, its successor if retired. */
+export function resolveOnboardingStep(stored: string): OnboardingStep {
+  if ((ONBOARDING_STEPS as readonly string[]).includes(stored)) {
+    return stored as OnboardingStep;
+  }
+  return RETIRED_ONBOARDING_STEPS[stored] ?? "greet";
+}
 
 // S92 — how Olórin refers to the student when he talks ABOUT them (to a tutor,
 // in a report). Deliberately NOT a gender field:
@@ -131,16 +168,66 @@ export type Pronoun = z.infer<typeof Pronoun>;
 // arrives from a client, so the server validates it (a hand-rolled POST is the
 // only way to miss the chips) and the FE still routes it through canEcho as
 // defence in depth.
+// S96 (ONB-5) — the roster grew to 11 and became PRONOUN-AWARE, and both
+// changes are the same idea: the hero is no longer trivia, it is the character
+// the story hands you. So the list a student sees is the list they'd actually
+// pick from (`about_you` asks pronoun BEFORE this beat, so tailoring is free),
+// and every hero pairs with a companion from their OWN universe — picking Jon
+// and then meeting Ghost is the wink the whole beat exists for.
+//
+// ⚠️ This is the FULL set — the server validates against it and must accept any
+// hero regardless of pronoun. The pronoun only decides what is SHOWN (see
+// HEROES_BY_PRONOUN in the FE copy): a boy who wants Arya taps "more heroes"
+// and gets her, and that pick must not 400. Validating per-pronoun would make
+// the display default a cage, which is not what it is.
+//
+// `spider_man` and `gandalf` are GONE as picks: no founder art arrived for
+// Spider-Man, and Gandalf-as-a-hero collides with the lore beat now that Olórin
+// is a visible character in the story rather than a closing reveal.
 export const FAV_CHARACTERS = [
+  // shown to `he` by default
   "harry_potter",
+  "jon_snow",
+  "hiccup",
+  "thor",
   "iron_man",
-  "spider_man",
   "batman",
-  "gandalf",
   "naruto",
+  // shown to `she` by default
+  "arya_stark",
+  "daenerys",
+  "mulan",
+  "wonder_woman",
 ] as const;
 export const FavCharacter = z.enum(FAV_CHARACTERS);
 export type FavCharacter = z.infer<typeof FavCharacter>;
+
+/**
+ * The companion each hero brings — the pet that is PRE-SELECTED on the next
+ * beat, with a wink ("Ghost has been waiting").
+ *
+ * Lives in contracts, not the copy file, because it is a RULE (which pet
+ * defaults) rather than a voice (what Olórin says about it) — the probe asserts
+ * against this, and a copy-file table would let the two drift.
+ *
+ * Partial by design: Wonder Woman has no canonical companion, so she gets a
+ * free choice rather than an invented one. `undefined` here means "no default,
+ * let them pick" — it is not a gap to be filled.
+ */
+export const HERO_COMPANION: Partial<Record<FavCharacter, Pet>> = {
+  harry_potter: "owl",
+  jon_snow: "direwolf",
+  arya_stark: "direwolf",
+  hiccup: "dragon",
+  daenerys: "dragon",
+  thor: "groot",
+  naruto: "kurama",
+  iron_man: "jarvis",
+  batman: "alfred",
+  // wonder_woman + mulan: deliberately absent — free pick. Mulan's Khan is a
+  // real pairing, but no standalone horse art exists yet (he is only inside her
+  // scene art), and a companion with no sticker cannot be handed over. v1.
+};
 
 // S91 — the pet (founder). Four temperaments + an OTHER escape hatch, which is
 // why this is NOT a closed set server-side: `other` commits whatever the
@@ -152,7 +239,23 @@ export type FavCharacter = z.infer<typeof FavCharacter>;
 //
 // S92 — fox/panda gave way to direwolf/groot when the founder supplied real
 // sticker art for all four. The art is the beat; emoji were always a stand-in.
-export const PETS = ["owl", "dragon", "direwolf", "groot"] as const;
+// S96 (ONB-5) — three more, one per hero-universe that had no animal: Naruto's
+// Kurama, Iron Man's JARVIS, Batman's Alfred (founder's call on the last two).
+// JARVIS and Alfred are not animals, which is the point — "companion" is the
+// category, and a butler who has seen everything is a better read on a student
+// who picks Batman than any creature would be.
+//
+// Order matters: it is the render order of the pet cards, so the four originals
+// stay first and read as the house set.
+export const PETS = [
+  "owl",
+  "dragon",
+  "direwolf",
+  "groot",
+  "kurama",
+  "jarvis",
+  "alfred",
+] as const;
 export const Pet = z.enum(PETS);
 export type Pet = z.infer<typeof Pet>;
 

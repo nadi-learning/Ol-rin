@@ -15,3 +15,13 @@ declare module "*.png" {
   const src: string;
   export default src;
 }
+
+// S96 (ONB-5) — the story scenes are JPEGs (photographic sketch art; PNG would
+// be ~4x the bytes for no gain, and these ship to phones in India). The copy
+// file imports them, so the BE program sees them too — and the moment it did,
+// the root typecheck went red with 18 errors in a file the FE compiles cleanly.
+// That is this precedent's cost arriving exactly where S92 said it would.
+declare module "*.jpg" {
+  const src: string;
+  export default src;
+}

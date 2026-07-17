@@ -31,6 +31,7 @@ import {
   ONBOARDING_ANSWER_COLUMNS,
   ONBOARDING_STEPS,
   PRONOUNS,
+  resolveOnboardingStep,
   type OnboardingStep,
 } from "@b2c/kernel/contracts";
 import { onboarding, subject } from "@b2c/kernel/schema";
@@ -133,7 +134,12 @@ export async function getState(
   return {
     needsOnboarding: row.status !== "completed",
     status: row.status as "in_progress" | "completed",
-    currentStep: row.currentStep as OnboardingStep,
+    // S96 — resolve, don't cast. Real rows hold `pikachu` (S91–S95 walks) and
+    // ONB-5 removed that beat; a bare cast would hand the client a step no beat
+    // answers to, which the walker treats as "copy file doesn't know this" and
+    // skips the student straight out of onboarding. Retired steps map to their
+    // successor instead. The cast lied about a value the DB does not constrain.
+    currentStep: resolveOnboardingStep(row.currentStep),
     answers: {
       grade: row.grade,
       pronoun: row.pronoun,
