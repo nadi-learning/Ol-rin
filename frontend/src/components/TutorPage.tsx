@@ -2565,9 +2565,13 @@ type DraftCard = {
   stem: string;
   referenceAnswer: string;
   explanation: string;
+  // Author's intent + self-rubric — shown read-only above the question so the
+  // tutor can recall WHY this question exists (founder call 2026-07-18).
+  pedagogicalNote: string | null;
   image: ImageSpec | null;
   imageId: string | null;
   verifierLabel: string | null;
+  verifierModel: string | null; // "tutor_override" → "✓ Verified (tutor)" badge
 };
 const toCard = (
   d: AuthorDraftItem,
@@ -2581,9 +2585,11 @@ const toCard = (
   stem: d.stem,
   referenceAnswer: d.referenceAnswer,
   explanation: d.explanation ?? "",
+  pedagogicalNote: d.pedagogicalNote ?? null,
   image: d.image,
   imageId: d.imageId,
   verifierLabel: d.verifierLabel,
+  verifierModel: d.verifierModel ?? null,
 });
 // The confirmed authoring target (from a proposal the tutor accepted). Carried
 // so save() has the sub_topic without re-deriving it from a picker.
@@ -3622,9 +3628,13 @@ function AuthorChat({
 function VerifierBadge({
   imageId,
   label,
+  model,
 }: {
   imageId: string | null;
   label: string | null;
+  // verifier_model — "tutor_override" marks a manual tutor verification, badged
+  // distinctly so a later reviewer can see WHO vouched for the figure.
+  model?: string | null;
 }) {
   let tone: string;
   let text: string;
@@ -3633,7 +3643,7 @@ function VerifierBadge({
     text = "Rendering…";
   } else if (label === "PASS") {
     tone = "pass";
-    text = "✓ Verified";
+    text = model === "tutor_override" ? "✓ Verified (tutor)" : "✓ Verified";
   } else if (label === "FAIL") {
     tone = "fail";
     text = "✗ Failed check";
@@ -3648,13 +3658,49 @@ function VerifierBadge({
 }
 
 // One authored-question card (tags + figure + collapsible reference answer).
+// The verifier badge carries the manual-override action here too (founder call
+// 2026-07-18): a FAIL/ERROR on an already-approved question can be overruled
+// without re-opening the draft flow. Local img state so the card updates in place.
 function AuthoredQuestionCard({ q }: { q: AuthoredQuestion }) {
+  const [img, setImg] = useState<{ verifierLabel: string | null; verifierModel: string | null }>({
+    verifierLabel: q.verifierLabel,
+    verifierModel: q.verifierModel,
+  });
+  const [overriding, setOverriding] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setImg({ verifierLabel: q.verifierLabel, verifierModel: q.verifierModel });
+  }, [q.id, q.verifierLabel, q.verifierModel]);
+
+  function overrideVerdict() {
+    if (!q.imageId || overriding) return;
+    setOverriding(true);
+    setErr(null);
+    trpc.tutor.overrideQuestionImage
+      .mutate({ questionId: q.id, imageId: q.imageId })
+      .then((r) => setImg({ verifierLabel: r.label, verifierModel: r.model }))
+      .catch(() => setErr("We couldn't mark this diagram as verified. Please try again."))
+      .finally(() => setOverriding(false));
+  }
+
   return (
     <div className="tut-saved-q">
       <div className="tut-saved-qhead">
         <span className="tut-saved-axis">{q.axis}</span>
         {q.hasImage && <span className="tut-saved-fig">figure</span>}
-        {q.hasImage && <VerifierBadge imageId={q.imageId} label={q.verifierLabel} />}
+        {q.hasImage && (
+          <VerifierBadge imageId={q.imageId} label={img.verifierLabel} model={img.verifierModel} />
+        )}
+        {q.imageId && (img.verifierLabel === "FAIL" || img.verifierLabel === "ERROR") && (
+          <button
+            className="tut-auth-fig-link tut-auth-fig-override"
+            onClick={overrideVerdict}
+            disabled={overriding}
+            title="Overrule the automatic check — the figure will be shown to the student"
+          >
+            {overriding ? "Marking…" : "Mark as correct"}
+          </button>
+        )}
       </div>
       <p className="tut-saved-stem">
         <MathText text={q.stem} />
@@ -3667,6 +3713,7 @@ function AuthoredQuestionCard({ q }: { q: AuthoredQuestion }) {
           loading="lazy"
         />
       )}
+      {err && <p className="tut-error">{err}</p>}
       <details className="tut-saved-ref">
         <summary>Reference answer</summary>
         <p>
@@ -3910,6 +3957,26 @@ function FieldPreview({ text }: { text: string }) {
   );
 }
 
+// The author's intent + 5-axis self-rubric for a draft, read-only ABOVE the
+// question in the preview (founder call 2026-07-18: "the pedagogy of the question
+// visible to the tutor so it's easy to recall"). pedagogical_note is composed as
+// "<intent>\n\n[Author rubric — …]" (composePedagogicalNote, D-AUTH-5) — split it
+// so the intent reads as prose and the rubric as a muted metadata line.
+function PedagogyNote({ note }: { note: string }) {
+  const cut = note.indexOf("\n\n[Author rubric");
+  const intent = (cut === -1 ? note : note.slice(0, cut)).trim();
+  const rubric =
+    cut === -1 ? null : note.slice(cut).trim().replace(/^\[/, "").replace(/\]$/, "");
+  if (!intent && !rubric) return null;
+  return (
+    <div className="tut-auth-pedagogy">
+      <span className="tut-auth-pedagogy-tag">Pedagogy</span>
+      {intent && <p className="tut-auth-pedagogy-intent">{intent}</p>}
+      {rubric && <p className="tut-auth-pedagogy-rubric">{rubric}</p>}
+    </div>
+  );
+}
+
 function AuthorCardForm({
   n,
   card,
@@ -3963,6 +4030,8 @@ function AuthorCardForm({
           Discard
         </button>
       </div>
+
+      {card.pedagogicalNote && <PedagogyNote note={card.pedagogicalNote} />}
 
       <label className="tut-auth-cardfield">
         <span>Question</span>
@@ -4060,16 +4129,26 @@ function DraftFigureSection({
   const [showRegen, setShowRegen] = useState(false);
   const [refine, setRefine] = useState("");
   const [reverifying, setReverifying] = useState(false);
+  const [overriding, setOverriding] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Current rendered figure (id + verdict), seeded from the card, kept fresh by the
   // poll after a generate + re-seeded when a revise replaces the draft's figure.
-  const [img, setImg] = useState<{ imageId: string | null; verifierLabel: string | null }>({
+  const [img, setImg] = useState<{
+    imageId: string | null;
+    verifierLabel: string | null;
+    verifierModel: string | null;
+  }>({
     imageId: card.imageId,
     verifierLabel: card.verifierLabel,
+    verifierModel: card.verifierModel,
   });
   useEffect(() => {
-    setImg({ imageId: card.imageId, verifierLabel: card.verifierLabel });
-  }, [card.id, card.imageId, card.verifierLabel]);
+    setImg({
+      imageId: card.imageId,
+      verifierLabel: card.verifierLabel,
+      verifierModel: card.verifierModel,
+    });
+  }, [card.id, card.imageId, card.verifierLabel, card.verifierModel]);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jobRef = useRef<string | null>(null);
@@ -4135,7 +4214,12 @@ function DraftFigureSection({
     trpc.tutor.getQuestionImage
       .query({ questionId: card.id })
       .then(async (cur) => {
-        if (cur) setImg({ imageId: cur.imageId, verifierLabel: cur.verifierLabel });
+        if (cur)
+          setImg({
+            imageId: cur.imageId,
+            verifierLabel: cur.verifierLabel,
+            verifierModel: cur.verifierModel,
+          });
         if (cur && cur.verifierLabel) {
           setGenerating(false); // terminal — PASS / FAIL / ERROR
           return;
@@ -4166,10 +4250,31 @@ function DraftFigureSection({
       .mutate({ questionId: card.id, imageId: img.imageId })
       .then(() => trpc.tutor.getQuestionImage.query({ questionId: card.id }))
       .then((cur) => {
-        if (cur) setImg({ imageId: cur.imageId, verifierLabel: cur.verifierLabel });
+        if (cur)
+          setImg({
+            imageId: cur.imageId,
+            verifierLabel: cur.verifierLabel,
+            verifierModel: cur.verifierModel,
+          });
       })
       .catch(() => setErr("We couldn't re-check this diagram. Please try again."))
       .finally(() => setReverifying(false));
+  }
+
+  // Manual override (founder call 2026-07-18): the tutor overrules a FAIL/ERROR
+  // verdict. This PUBLISHES the figure to the student (PASS gates D-IMG-13);
+  // Re-verify is the undo (a fresh AI verdict overwrites the override).
+  function overrideVerdict() {
+    if (!img.imageId || overriding) return;
+    setOverriding(true);
+    setErr(null);
+    trpc.tutor.overrideQuestionImage
+      .mutate({ questionId: card.id, imageId: img.imageId })
+      .then((r) =>
+        setImg({ imageId: r.imageId, verifierLabel: r.label, verifierModel: r.model }),
+      )
+      .catch(() => setErr("We couldn't mark this diagram as verified. Please try again."))
+      .finally(() => setOverriding(false));
   }
 
   if (!open) {
@@ -4190,7 +4295,9 @@ function DraftFigureSection({
     <div className="tut-auth-fig">
       <div className="tut-auth-fig-head">
         <span>Figure</span>
-        {img.imageId && <VerifierBadge imageId={img.imageId} label={img.verifierLabel} />}
+        {img.imageId && (
+          <VerifierBadge imageId={img.imageId} label={img.verifierLabel} model={img.verifierModel} />
+        )}
         {generating && !img.imageId && (
           <span className="tut-auth-fig-gen">Generating… (~1–4 min)</span>
         )}
@@ -4273,6 +4380,16 @@ function DraftFigureSection({
             >
               {reverifying ? "Verifying…" : "Re-verify"}
             </button>
+            {(img.verifierLabel === "FAIL" || img.verifierLabel === "ERROR") && (
+              <button
+                className="tut-auth-fig-link tut-auth-fig-override"
+                onClick={overrideVerdict}
+                disabled={disabled || overriding || reverifying || generating}
+                title="Overrule the automatic check — the figure will be shown to the student"
+              >
+                {overriding ? "Marking…" : "Mark as correct"}
+              </button>
+            )}
           </>
         )}
       </div>

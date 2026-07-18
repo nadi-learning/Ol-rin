@@ -29,6 +29,13 @@
  *  7. RLS/not-found: verifyImage(Q, pImage) → VerifyImageNotFoundError, and the P
  *     row's verdict is UNCHANGED (nothing stamped under Q). [FIRM]
  *  8. unknown image id → VerifyImageNotFoundError. [FIRM]
+ *  9-13. MANUAL TUTOR OVERRIDE (founder call 2026-07-18) — all FIRM, no AI:
+ *     an ERROR row overrides to PASS (model=tutor_override, prior verdict kept in
+ *     meta.tutorOverride, reason references it) and the STUDENT GATE flips (the
+ *     currentImageFor read practice gates on, D-IMG-13); a FAIL row overrides the
+ *     same way; a PASS row → ImageNotOverridableError; a PENDING row (label null)
+ *     → ImageNotOverridableError; a wrong (question,image) pairing and a
+ *     cross-board attempt → VerifyImageNotFoundError, row untouched.
  */
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -53,10 +60,14 @@ import { redisConnection } from "../src/redis/connection";
 import { __aiConfigured } from "../src/services/ai/gemini";
 import { generateImageForQuestion } from "../src/services/image_gen";
 import {
+  ImageNotOverridableError,
+  TUTOR_OVERRIDE_MODEL,
   VerifyImageNotFoundError,
   computeSpecHash,
+  overrideImageVerdict,
   verifyImage,
 } from "../src/services/image_verify";
+import { currentImageFor } from "../src/services/image_read";
 import { pyrenderHealth } from "../src/services/matplotlib";
 
 type Tx = PgTransaction<any, any, any>;
@@ -164,6 +175,77 @@ async function main() {
   let unknown = false;
   try { await verifyImage(P.id, randomUUID()); } catch (e) { unknown = e instanceof VerifyImageNotFoundError; }
   check("unknown image id → VerifyImageNotFoundError", unknown);
+
+  // ── 9-13. MANUAL TUTOR OVERRIDE (founder 2026-07-18) — deterministic, no AI ──
+
+  // 9. Override from ERROR (the row's current state after #6): → PASS + audit.
+  const o1 = await withBoard(P.id, (tx: Tx) =>
+    overrideImageVerdict(tx, { questionId: fx.q, imageId: r.imageId }),
+  );
+  const row5 = await readRow(P.id, r.imageId);
+  check("override(ERROR) → returns PASS with model=tutor_override",
+    o1.label === "PASS" && o1.model === TUTOR_OVERRIDE_MODEL);
+  check("row stamped PASS + verifierModel=tutor_override",
+    row5?.verifierLabel === "PASS" && row5?.verifierModel === TUTOR_OVERRIDE_MODEL);
+  check("prior verdict preserved: meta.tutorOverride.priorLabel === 'ERROR'",
+    (row5?.meta as any)?.tutorOverride?.priorLabel === "ERROR");
+  check("reason references the overridden verdict",
+    /tutor override/i.test(row5?.verifierReason ?? "") && /ERROR/.test(row5?.verifierReason ?? ""));
+  check("verifiedAt bumped by the override",
+    row5?.verifiedAt instanceof Date && row5.verifiedAt.getTime() > (row3?.verifiedAt?.getTime() ?? 0));
+  // THE POINT of the override: the read practice gates students on (D-IMG-13,
+  // practice.ts `verifierLabel === "PASS"`) now exposes the figure.
+  const gate = await withBoard(P.id, (tx: Tx) => currentImageFor(tx, fx.q));
+  check("STUDENT GATE flips: currentImageFor → verifierLabel PASS (figure now student-visible)",
+    gate?.imageId === r.imageId && gate?.verifierLabel === "PASS");
+
+  // 10. Override from FAIL: stamp FAIL directly (a fresh AI reject), override again.
+  await withBoard(P.id, (tx: Tx) => tx.update(questionImage)
+    .set({ verifierLabel: "FAIL", verifierReason: "missing right-angle mark", verifierModel: env.GEMINI_MODEL, meta: null })
+    .where(eq(questionImage.id, r.imageId)));
+  const o2 = await withBoard(P.id, (tx: Tx) =>
+    overrideImageVerdict(tx, { questionId: fx.q, imageId: r.imageId }),
+  );
+  const row6 = await readRow(P.id, r.imageId);
+  check("override(FAIL) → PASS, priorLabel FAIL + its reason preserved in meta",
+    o2.label === "PASS" &&
+    (row6?.meta as any)?.tutorOverride?.priorLabel === "FAIL" &&
+    (row6?.meta as any)?.tutorOverride?.priorReason === "missing right-angle mark");
+
+  // 11. A PASS row needs no override → rejected, row untouched.
+  let notOverridablePass = false;
+  try {
+    await withBoard(P.id, (tx: Tx) => overrideImageVerdict(tx, { questionId: fx.q, imageId: r.imageId }));
+  } catch (e) { notOverridablePass = e instanceof ImageNotOverridableError; }
+  const row7 = await readRow(P.id, r.imageId);
+  check("override on a PASS row → ImageNotOverridableError, row untouched",
+    notOverridablePass && row7?.verifiedAt?.getTime() === row6?.verifiedAt?.getTime());
+
+  // 12. A PENDING row (verifier may still be racing) → rejected.
+  await withBoard(P.id, (tx: Tx) => tx.update(questionImage)
+    .set({ verifierLabel: null }).where(eq(questionImage.id, r.imageId)));
+  let notOverridablePending = false;
+  try {
+    await withBoard(P.id, (tx: Tx) => overrideImageVerdict(tx, { questionId: fx.q, imageId: r.imageId }));
+  } catch (e) { notOverridablePending = e instanceof ImageNotOverridableError; }
+  check("override on a PENDING row (label null) → ImageNotOverridableError", notOverridablePending);
+  // restore a FAIL so the remaining pairing/RLS legs run against an overridable row
+  await withBoard(P.id, (tx: Tx) => tx.update(questionImage)
+    .set({ verifierLabel: "FAIL" }).where(eq(questionImage.id, r.imageId)));
+
+  // 13. Wrong (question,image) pairing + cross-board → not found, nothing stamped.
+  let wrongPair = false;
+  try {
+    await withBoard(P.id, (tx: Tx) => overrideImageVerdict(tx, { questionId: randomUUID(), imageId: r.imageId }));
+  } catch (e) { wrongPair = e instanceof VerifyImageNotFoundError; }
+  check("override with a mismatched questionId → VerifyImageNotFoundError", wrongPair);
+  let crossBoardOverride = false;
+  try {
+    await withBoard(Q.id, (tx: Tx) => overrideImageVerdict(tx, { questionId: fx.q, imageId: r.imageId }));
+  } catch (e) { crossBoardOverride = e instanceof VerifyImageNotFoundError; }
+  const row8 = await readRow(P.id, r.imageId);
+  check("override under board Q (RLS-hidden) → VerifyImageNotFoundError, P row still FAIL",
+    crossBoardOverride && row8?.verifierLabel === "FAIL");
 
   // ── cleanup (FK-safe) ──
   await withBoard(P.id, async (tx: Tx) => {

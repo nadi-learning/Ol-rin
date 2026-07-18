@@ -485,12 +485,12 @@ export function PracticePage() {
                         </div>
                       )
                     )}
-                    {/* T1 — immediate AI feedback on a typed answer. Additive:
-                        the model answer below shows regardless. Stays mounted
-                        while the read is in flight (M31). */}
-                    {!lastWasPhoto && attemptId && (
-                      <FeedbackCard attemptId={attemptId} />
-                    )}
+                    {/* T1 — immediate AI feedback on the answer, typed AND photo
+                        (photo widened 2026-07-18: the server reads the uploaded
+                        photos via the Stage-1 vision pattern). Additive: the
+                        model answer below shows regardless. Stays mounted while
+                        the read is in flight (M31). */}
+                    {attemptId && <FeedbackCard attemptId={attemptId} />}
                     {/* The model answer is ALWAYS collapsed behind a CTA (typed +
                         photo): the student answers first, then opts in to compare
                         against the model — it isn't handed to them by default. */}
@@ -913,9 +913,9 @@ function PhotoThumb({ src, alt }: { src: string; alt?: string }) {
   );
 }
 
-// Slice UPLOAD-UX — the post-submit model answer. On a PHOTO reveal it's collapsed
-// behind a "Show model answer" toggle (the student just uploaded a worked answer;
-// the model answer is opt-in). On a typed reveal it renders inline as before.
+// Slice UPLOAD-UX — the post-submit model answer. Collapsed behind a "What's the
+// model answer" toggle on BOTH typed and photo reveals (the student answers
+// first; comparing against the model is opt-in — reaffirmed 2026-07-18).
 function ModelAnswer({
   reveal,
   collapsible,

@@ -152,7 +152,9 @@ import {
 } from "../services/report";
 import {
   approveDrafts,
+  assertOwnedAuthored,
   assertOwnedDraft,
+  AuthoredQuestionNotFoundError,
   discardDraft,
   draftItemSchema,
   draftQuestions,
@@ -179,7 +181,12 @@ import {
   startChat,
 } from "../services/authoring_chat";
 import { enqueueImageGeneration, getImageJobState } from "../worker/queue";
-import { verifyImage, VerifyImageNotFoundError } from "../services/image_verify";
+import {
+  ImageNotOverridableError,
+  overrideImageVerdict,
+  verifyImage,
+  VerifyImageNotFoundError,
+} from "../services/image_verify";
 import { currentImageFor } from "../services/image_read";
 import { VendorChoice } from "@b2c/kernel/contracts";
 
@@ -1909,6 +1916,38 @@ export const appRouter = router({
         } catch (e) {
           if (e instanceof VerifyImageNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: "IMAGE_NOT_FOUND" });
+          }
+          throw e;
+        }
+      }),
+
+    // Manual verifier override (founder call 2026-07-18): the tutor overrules a
+    // FAIL/ERROR vision verdict on their own judgment. Stamps PASS (the AI's
+    // verdict is preserved in meta) — since PASS gates student visibility
+    // (D-IMG-13), this is what publishes a figure the AI wrongly rejected.
+    // Works on a DRAFT (preview pane) and an APPROVED question (Saved surface).
+    overrideQuestionImage: tutorProcedure
+      .input(z.object({ questionId: z.string().uuid(), imageId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await assertOwnedAuthored(ctx.tx, ctx.membership.userId, input.questionId);
+        } catch (e) {
+          if (
+            e instanceof AuthoredQuestionNotFoundError ||
+            e instanceof StudentNotFoundError
+          ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: (e as { code: string }).code });
+          }
+          throw e;
+        }
+        try {
+          return await overrideImageVerdict(ctx.tx, input);
+        } catch (e) {
+          if (e instanceof VerifyImageNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "IMAGE_NOT_FOUND" });
+          }
+          if (e instanceof ImageNotOverridableError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
           }
           throw e;
         }

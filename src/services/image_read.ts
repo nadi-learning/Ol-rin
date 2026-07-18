@@ -17,6 +17,10 @@ export interface CurrentImage {
   imageId: string;
   version: number;
   verifierLabel: string | null; // PASS | FAIL | ERROR | null(=PENDING)
+  // The stamping model — a Gemini id, or TUTOR_OVERRIDE_MODEL ("tutor_override")
+  // when a tutor manually overrode a FAIL/ERROR. The FE badges the latter as
+  // "✓ Verified (tutor)".
+  verifierModel: string | null;
 }
 
 /** Map questionId → its current (highest-version) image, for a batch of ids. */
@@ -32,6 +36,7 @@ export async function currentImagesFor(
       id: questionImage.id,
       version: questionImage.version,
       verifierLabel: questionImage.verifierLabel,
+      verifierModel: questionImage.verifierModel,
     })
     .from(questionImage)
     .where(inArray(questionImage.questionId, questionIds))
@@ -41,6 +46,7 @@ export async function currentImagesFor(
       imageId: r.id,
       version: r.version,
       verifierLabel: r.verifierLabel,
+      verifierModel: r.verifierModel,
     });
   }
   return map;

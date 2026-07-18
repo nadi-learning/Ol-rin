@@ -20,6 +20,7 @@
 
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
+import type { PgTransaction } from "drizzle-orm/pg-core";
 import { Type, type Schema } from "@google/genai";
 import { chapter, question, questionImage, subTopic, topic } from "@b2c/kernel/schema";
 import { env } from "../config/env";
@@ -28,12 +29,29 @@ import { geminiJson } from "./ai/gemini";
 import type { FigureSpec } from "./image_gen";
 import { readImage } from "./image_storage";
 
+type Tx = PgTransaction<any, any, any>;
+
 export type VerifierLabel = "PASS" | "FAIL" | "ERROR";
+
+// verifier_model stamped by a MANUAL tutor override (vs a real Gemini model id).
+// The FE renders it as "✓ Verified (tutor)"; the AI verdict it replaced is
+// preserved in the row's meta.tutorOverride.
+export const TUTOR_OVERRIDE_MODEL = "tutor_override";
 
 export class VerifyImageNotFoundError extends Error {
   constructor(imageId: string) {
     super(`question_image ${imageId} not found under the given board`);
     this.name = "VerifyImageNotFoundError";
+  }
+}
+
+export class ImageNotOverridableError extends Error {
+  readonly code = "IMAGE_NOT_OVERRIDABLE";
+  constructor(imageId: string, label: string | null) {
+    super(
+      `question_image ${imageId} is ${label ?? "PENDING"} — only a FAIL/ERROR verdict can be overridden`,
+    );
+    this.name = "ImageNotOverridableError";
   }
 }
 
@@ -229,4 +247,65 @@ export async function verifyImage(
   const reason = verdict.reason?.trim() || (label === "PASS" ? "OK" : "no reason given");
   await stampVerifier(boardId, imageId, { label, reason, specHash });
   return { imageId, label, reason, model: env.GEMINI_MODEL };
+}
+
+/**
+ * MANUAL tutor override (founder call 2026-07-18): stamp a FAIL/ERROR verdict to
+ * PASS on the tutor's say-so. PASS gates student visibility (D-IMG-13), so this
+ * is what actually publishes a figure the AI wrongly rejected. The AI's verdict
+ * is preserved in meta.tutorOverride (audit); verifier_model = TUTOR_OVERRIDE_MODEL
+ * is what the FE renders as "✓ Verified (tutor)". A PASS needs no override and a
+ * PENDING row may still be racing the verifier → both are rejected. Undo = the
+ * existing Re-verify (a fresh AI verdict overwrites these columns wholesale).
+ * Runs inside the caller's board-scoped tx (tutorProcedure → withBoard); the
+ * tutor-owns-this-question guard is the ROUTER's, like every draft op.
+ */
+export async function overrideImageVerdict(
+  tx: Tx,
+  args: { questionId: string; imageId: string },
+): Promise<{ imageId: string; label: "PASS"; reason: string; model: string }> {
+  const [row] = await tx
+    .select({
+      id: questionImage.id,
+      questionId: questionImage.questionId,
+      verifierLabel: questionImage.verifierLabel,
+      verifierReason: questionImage.verifierReason,
+      verifierModel: questionImage.verifierModel,
+      meta: questionImage.meta,
+    })
+    .from(questionImage)
+    .where(eq(questionImage.id, args.imageId))
+    .limit(1);
+  // Wrong pairing / cross-board / unknown all read the same: nothing to stamp.
+  if (!row || row.questionId !== args.questionId) {
+    throw new VerifyImageNotFoundError(args.imageId);
+  }
+  if (row.verifierLabel !== "FAIL" && row.verifierLabel !== "ERROR") {
+    throw new ImageNotOverridableError(args.imageId, row.verifierLabel);
+  }
+  const reason =
+    `Approved by tutor override (verifier said ${row.verifierLabel}: ${row.verifierReason ?? "no reason"})`.slice(
+      0,
+      1000,
+    );
+  await tx
+    .update(questionImage)
+    .set({
+      verifierLabel: "PASS",
+      verifierReason: reason,
+      verifierModel: TUTOR_OVERRIDE_MODEL,
+      verifiedAt: new Date(),
+      // spec_hash untouched — it tracks what the AI verdict was computed against.
+      meta: {
+        ...((row.meta as Record<string, unknown> | null) ?? {}),
+        tutorOverride: {
+          at: new Date().toISOString(),
+          priorLabel: row.verifierLabel,
+          priorReason: row.verifierReason,
+          priorModel: row.verifierModel,
+        },
+      },
+    })
+    .where(eq(questionImage.id, args.imageId));
+  return { imageId: args.imageId, label: "PASS", reason, model: TUTOR_OVERRIDE_MODEL };
 }

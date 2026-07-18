@@ -1129,6 +1129,36 @@
   color: var(--ink, #15162b);
   overflow-x: auto;
 }
+/* Pedagogy of the question (author intent + self-rubric), read-only ABOVE the
+   question in the draft preview — recall aid for the tutor (2026-07-18). */
+.tut-auth-pedagogy {
+  border: 1px dashed var(--line, #d9dbe4);
+  border-left: 3px solid var(--primary, #4956e3);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--page, #f7f8fa);
+  display: grid;
+  gap: 4px;
+}
+.tut-auth-pedagogy-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--primary, #4956e3);
+}
+.tut-auth-pedagogy-intent {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink, #15162b);
+  margin: 0;
+}
+.tut-auth-pedagogy-rubric {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted, #6b6f80);
+  margin: 0;
+}
 .tut-auth-intent-read,
 .tut-auth-honest {
   font-size: 13px;
@@ -2197,6 +2227,14 @@
 .tut-auth-fig-link:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* Manual verifier override — green (it approves), to separate it from the
+   neutral Regenerate/Re-verify links beside it. */
+.tut-auth-fig-override {
+  color: #1e7d43;
+}
+.tut-auth-fig-override:hover:not(:disabled) {
+  color: #14522c;
 }
 .tut-auth-fig-regen {
   display: flex;

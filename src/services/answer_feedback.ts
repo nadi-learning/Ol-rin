@@ -22,17 +22,20 @@
  * NOT persist on failure, so a retry can succeed; the router maps a failure to a
  * soft FE state (the reveal + model answer are already shown regardless).
  *
- * v0 scope = TYPED answers. A skip (no answer) or a photo answer (answer_text
- * null — the Q3 upload path) is NOT_EVALUABLE here; photo-answer feedback is a
- * follow-on. Ownership-guarded (attempt.app_user_id == caller) like every
+ * TYPED + PHOTO answers (photo widened 2026-07-18, founder call — the v0
+ * typed-only scope is lifted). A photo answer (answer_text null — the Q3 upload
+ * path) sends its attempt_image rows to the SAME Gemini call as inline images,
+ * exactly the Stage-1 vision pattern (Q3-2). Only a skip (no answer at all) is
+ * NOT_EVALUABLE. Ownership-guarded (attempt.app_user_id == caller) like every
  * practice read — RLS scopes by board, not user (D-L-5).
  */
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { attempt, question } from "@b2c/kernel/schema";
+import { attempt, attemptImage, question } from "@b2c/kernel/schema";
 import { Type } from "@google/genai";
 import { geminiJson } from "./ai/gemini";
+import { getObject } from "./object_storage";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -47,7 +50,7 @@ export class AttemptFeedbackNotFoundError extends Error {
 export class NotEvaluableError extends Error {
   readonly code = "NOT_EVALUABLE";
   constructor(attemptId: string) {
-    super(`attempt ${attemptId} has no typed answer to evaluate`);
+    super(`attempt ${attemptId} has no answer to evaluate`);
     this.name = "NotEvaluableError";
   }
 }
@@ -73,10 +76,12 @@ export const answerFeedbackSchema = z.object({
 });
 export type AnswerFeedback = z.infer<typeof answerFeedbackSchema>;
 
-// What we cache on attempt.feedback: the read + forensics meta.
+// What we cache on attempt.feedback: the read + forensics meta. photoCount
+// marks a vision read of a photo answer (absent on typed reads).
 const storedFeedbackSchema = answerFeedbackSchema.extend({
   model: z.string(),
   generatedAt: z.string(),
+  photoCount: z.number().int().min(1).optional(),
 });
 
 const geminiResponseSchema = {
@@ -170,9 +175,27 @@ export async function getAnswerFeedback(
     return answerFeedbackSchema.parse(a.feedback);
   }
 
-  // v0 = typed answers only. A skip / photo answer has no answer_text to read.
-  if (a.skipReason || !a.answerText) {
+  // A skip has nothing to read.
+  if (a.skipReason) {
     throw new NotEvaluableError(args.attemptId);
+  }
+
+  // A photo answer (Q3): answer_text is null and the attempt_image rows ARE the
+  // answer — load them in ordinal order and send them to the same Gemini call as
+  // inline images (the Stage-1 vision pattern, Q3-2). Typed answers have no rows
+  // here → images stays empty and the text path is unchanged.
+  const imgRows = await tx
+    .select()
+    .from(attemptImage)
+    .where(eq(attemptImage.attemptId, args.attemptId))
+    .orderBy(asc(attemptImage.ordinal));
+  if (!a.answerText && imgRows.length === 0) {
+    throw new NotEvaluableError(args.attemptId);
+  }
+  const images: Array<{ mimeType: string; data: string }> = [];
+  for (const r of imgRows) {
+    const bytes = await getObject(r.storageKey);
+    images.push({ mimeType: r.mime, data: Buffer.from(bytes).toString("base64") });
   }
 
   const [q] = await tx
@@ -193,7 +216,15 @@ REFERENCE ANSWER (what a good response looks like — judge the student against 
 ${q.referenceAnswer}${q.explanation ? `\n\nEXPLANATION: ${q.explanation}` : ""}
 
 THE STUDENT'S ANSWER:
-${a.answerText}
+${
+    images.length
+      ? `The student answered ON PAPER — their answer is in the ${
+          images.length === 1 ? "attached photo" : `${images.length} attached photos`
+        }. Read the handwriting, including every step of working, any diagrams, and the final result.${
+          a.answerText ? `\n\nTyped note alongside the photo(s): ${a.answerText}` : ""
+        }`
+      : a.answerText
+  }
 
 Give this student your feedback per your instructions. Return the structured JSON.`;
 
@@ -201,10 +232,14 @@ Give this student your feedback per your instructions. Return the structured JSO
     label: `answerFeedback:${args.attemptId}`,
     systemInstruction: FEEDBACK_SYSTEM,
     prompt,
+    images: images.length ? images : undefined,
     responseSchema: geminiResponseSchema as never,
-    // Default cap (8192) is generous headroom over the small answer — the
-    // thinking-model budget (M28) isn't near the answer size here. Timeout +
-    // retry-once in geminiJson remain the runaway guards.
+    // Typed: default cap (8192) is generous headroom over the small answer — the
+    // thinking-model budget (M28) isn't near the answer size. A VISION read (OCR
+    // of handwriting) spikes thinking well above a text read — run it UNCAPPED
+    // (model default) so thinking can't starve the JSON, same as Stage-1 (Q3-2).
+    // Timeout + retry-once in geminiJson remain the runaway guards.
+    maxOutputTokens: images.length ? null : undefined,
   });
 
   const feedback = answerFeedbackSchema.parse(raw);
@@ -227,6 +262,8 @@ Give this student your feedback per your instructions. Return the structured JSO
     ...feedback,
     model: process.env.GEMINI_MODEL ?? "gemini-3-flash-preview",
     generatedAt: new Date().toISOString(),
+    // Forensics: this read was of a photo answer (Q3), not typed text.
+    ...(images.length ? { photoCount: images.length } : {}),
   });
   await tx
     .update(attempt)

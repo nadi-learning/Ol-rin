@@ -15,6 +15,11 @@
  *   5. IDEMPOTENT (D-T1-3): a second call returns the byte-identical cached read
  *      (proves it did NOT re-call Gemini).
  *   6. NOT_EVALUABLE: a skip attempt (no answer) → NotEvaluableError.
+ *   6c. PHOTO answer (widened 2026-07-18, founder call): the REAL Q3 flow — a
+ *      pyrender "handwritten" PNG → mint → phone upload → submitPhotoAttempt →
+ *      getAnswerFeedback reads the photo via Gemini VISION (no NotEvaluable):
+ *      well-formed read, declared-marks anchor holds, persisted with photoCount
+ *      forensics, idempotent cached. Needs pyrender UP (same bar as probe:vision).
  *   7. ownership (D-L-5): a bystander on the SAME board → ATTEMPT_NOT_FOUND.
  *   8. cross-board RLS: the attempt under another board claim → ATTEMPT_NOT_FOUND.
  *   9. HTTP: practice.getAnswerFeedback unauth → 401 (soft; new route needs a
@@ -22,26 +27,32 @@
  *
  * SOFT (don't over-read one AI response): the exact verdict is logged, with a
  * light directional nudge (a strong on-reference answer should not read
- * off_track) — a WARN, never a failure.
+ * off_track) — a WARN, never a failure. The vision OCR read is held to the same
+ * bar: plumbing FIRM, the model's judgement SOFT.
  */
 import { eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   attempt,
+  attemptImage,
   board,
   chapter,
   membership,
+  observation,
   practiceSession,
   question,
   subTopic,
   subject,
   topic,
+  uploadToken,
   whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { startSession, submitAttempt, skip } from "../src/services/practice";
+import { pyrenderHealth, renderScript } from "../src/services/matplotlib";
+import { startSession, submitAttempt, skip, submitPhotoAttempt } from "../src/services/practice";
+import { mintUploadToken, recordPhoneUpload } from "../src/services/upload";
 import {
   AttemptFeedbackNotFoundError,
   declaredMarksTotal,
@@ -65,7 +76,34 @@ function check(name: string, ok: boolean) {
   }
 }
 
+function isPng(b: Uint8Array): boolean {
+  return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+}
+
+// A legible "handwritten" answer PNG via pyrender (the probe_vision_scoring
+// proxy: printed text verifies the vision PLUMBING; true-handwriting OCR is SOFT).
+function answerScript(lines: string[]): string {
+  const body = lines
+    .map((t, n) => `ax.text(0.04, ${(0.9 - n * 0.13).toFixed(2)}, ${JSON.stringify(t)}, fontsize=19, va="top")`)
+    .join("\n");
+  return `import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(6.5, 4.5))
+ax.axis("off")
+${body}
+plt.savefig("out.png", dpi=150)`;
+}
+
 async function main() {
+  if (!(await pyrenderHealth())) {
+    console.error(
+      "nadi-pyrender is DOWN (the photo-feedback leg needs it) — start it first:\n" +
+        "  (cd /Users/mab/Desktop/nadi/nadi-pyrender && .venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8002)",
+    );
+    await queryClient.end();
+    process.exit(1);
+  }
   const tag = `${Date.now()}`;
 
   // 1. connectivity
@@ -104,7 +142,15 @@ async function main() {
       referenceAnswer: "(a) Zero. [2 marks]\n(b) Gravity acts on the ball throughout the flight, so the acceleration stays 9.8 m/s^2 downward even at the instant the velocity is zero. [3 marks]",
       explanation: null, pedagogicalNote: null, ordinal: 3, source: "b2c_authoring",
     }).returning();
-    return { subTopic: st!.id, q1: q1!.id, q2: q2!.id, q3: q3!.id };
+    // q4: the PHOTO-answered question (6c) — procedural with declared marks so
+    // the deterministic anchor is FIRM even on a vision read. Sum = 2.
+    const [q4] = await tx.insert(question).values({
+      boardId: T.id, subTopicId: st!.id, axis: "procedural", kind: "subjective",
+      stem: "A block has mass 240 g and volume 30 cm³. Calculate its density, showing your working. [2 marks]",
+      referenceAnswer: "density = mass / volume = 240 g / 30 cm³ = 8 g/cm³. [2 marks]",
+      explanation: null, pedagogicalNote: null, ordinal: 4, source: "b2c_authoring",
+    }).returning();
+    return { subTopic: st!.id, q1: q1!.id, q2: q2!.id, q3: q3!.id, q4: q4!.id };
   });
 
   // two members on T: owner W + bystander X (REAL flow, M11)
@@ -195,6 +241,49 @@ async function main() {
     Number.isInteger(fb3.marksAwarded) && (fb3.marksAwarded as number) >= 0 && (fb3.marksAwarded as number) <= 5);
   console.log(`    → anchored score ${fb3.marksAwarded}/${fb3.marksMax}`);
 
+  // 6c. PHOTO answer (widened 2026-07-18) — the REAL Q3 flow, then feedback
+  // reads the photo via vision. q4 is current after the q3 submit.
+  const png = await renderScript({
+    script: answerScript([
+      "Density",
+      "density = mass / volume",
+      "= 240 g / 30 cm3",
+      "= 8 g/cm3",
+    ]),
+  });
+  check("pyrender → a valid PNG for the photo answer (magic header, >1KB)", isPng(png) && png.length > 1024);
+  const mint = await withBoard(T.id, (tx: Tx) =>
+    mintUploadToken(tx, { boardId: T.id, appUserId: userW, sessionId: s1.sessionId, questionId: fx.q4 }),
+  );
+  await recordPhoneUpload(mint.token, [{ bytes: png, mime: "image/png" }]);
+  const r4 = await withBoard(T.id, (tx) => submitPhotoAttempt(tx, {
+    boardId: T.id, appUserId: userW, sessionId: s1.sessionId, questionId: fx.q4,
+    uploadToken: mint.token, confidence: 4, timeMs: 60000,
+  }));
+  check("photo attempt persisted (answer IS the photos — attempt_image linked)",
+    typeof r4.attemptId === "string" && r4.photoImageIds.length >= 1);
+
+  const fb4 = await withBoard(T.id, (tx) => getAnswerFeedback(tx, { appUserId: userW, attemptId: r4.attemptId }));
+  check("PHOTO attempt is EVALUABLE — vision read returns a well-formed AnswerFeedback",
+    ["strong", "partial", "off_track"].includes(fb4.verdict) &&
+    typeof fb4.feedback === "string" && fb4.feedback.trim().length > 0);
+  check(`photo read: declared-marks anchor holds ([2 marks] → marksMax 2, got ${fb4.marksMax})`,
+    fb4.marksMax === 2);
+  check("photo read: awarded within 0..2",
+    Number.isInteger(fb4.marksAwarded) && (fb4.marksAwarded as number) >= 0 && (fb4.marksAwarded as number) <= 2);
+  console.log(`    → photo verdict=${fb4.verdict} | score ${fb4.marksAwarded}/${fb4.marksMax} | ${fb4.feedback.slice(0, 120)}…`);
+  // SOFT directional (WARN only): a correct on-reference worked answer shouldn't read off_track.
+  if (fb4.verdict === "off_track") {
+    console.warn("    ~ SOFT: correct on-reference photo answer scored off_track — review the vision read (not a failure)");
+  }
+
+  const [row4] = await withBoard(T.id, (tx) => tx.select().from(attempt).where(eq(attempt.id, r4.attemptId)));
+  check("photo feedback PERSISTED with photoCount forensics",
+    (row4?.feedback as any)?.verdict === fb4.verdict && (row4?.feedback as any)?.photoCount >= 1);
+  const fb4b = await withBoard(T.id, (tx) => getAnswerFeedback(tx, { appUserId: userW, attemptId: r4.attemptId }));
+  check("photo second call returns the CACHED read (byte-identical → no re-call)",
+    JSON.stringify(fb4) === JSON.stringify(fb4b));
+
   // 7. ownership — bystander X cannot read W's attempt feedback.
   let notOwned = false;
   try {
@@ -227,7 +316,13 @@ async function main() {
 
   // ── cleanup (FK-safe order) ──
   await withBoard(T.id, async (tx: Tx) => {
+    // Defensive: a running dev worker may have drained the Stage-1 enqueue and
+    // written observations for these throwaway attempts (memory: worker-breaks-probes).
+    await tx.delete(observation).where(eq(observation.boardId, T.id));
+    await tx.delete(attemptImage).where(eq(attemptImage.boardId, T.id));
     await tx.delete(attempt).where(eq(attempt.boardId, T.id));
+    // upload_token is GLOBAL (no board scope in RLS) — delete by the session link.
+    await tx.delete(uploadToken).where(eq(uploadToken.practiceSessionId, s1.sessionId));
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, T.id));
     await tx.delete(question).where(eq(question.boardId, T.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, T.id));

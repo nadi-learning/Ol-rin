@@ -545,6 +545,8 @@ export type AuthoredQuestionView = {
   // yet; verifierLabel null = rendered-but-not-yet-verified (PENDING).
   imageId: string | null;
   verifierLabel: string | null; // PASS | FAIL | ERROR | null(=PENDING)
+  // "tutor_override" when a tutor manually verified — FE badges "(tutor)".
+  verifierModel: string | null;
   createdAt: Date;
 };
 
@@ -614,6 +616,7 @@ export async function listAuthoredQuestions(
       hasImage: r.image != null,
       imageId: img?.imageId ?? null,
       verifierLabel: img?.verifierLabel ?? null,
+      verifierModel: img?.verifierModel ?? null,
       createdAt: r.createdAt,
     };
   });
@@ -635,9 +638,15 @@ export type PersistedDraft = {
   stem: string;
   referenceAnswer: string;
   explanation: string | null;
+  // The author's intent + self-rubric (composePedagogicalNote, D-AUTH-5) — shown
+  // read-only ABOVE the question in the review form (founder call 2026-07-18) so
+  // the tutor can recall WHY the question exists.
+  pedagogicalNote: string | null;
   image: ImageSpec | null; // the editable figure spec (or null)
   imageId: string | null; // current rendered figure (highest version), or null
   verifierLabel: string | null; // PASS | FAIL | ERROR | null(=PENDING/none)
+  // "tutor_override" when a tutor manually verified — FE badges "(tutor)".
+  verifierModel: string | null;
   ordinal: number;
 };
 
@@ -691,9 +700,11 @@ export async function persistDrafts(
       stem: draft.stem,
       referenceAnswer: draft.referenceAnswer,
       explanation: draft.explanation,
+      pedagogicalNote: composePedagogicalNote(draft),
       image: draft.image ?? null,
       imageId: null,
       verifierLabel: null,
+      verifierModel: null,
       ordinal,
     });
     ordinal += 1;
@@ -720,6 +731,7 @@ async function assertOwnedDraft(
   stem: string;
   referenceAnswer: string;
   explanation: string | null;
+  pedagogicalNote: string | null;
   image: ImageSpec | null;
 }> {
   const [q] = await tx
@@ -734,6 +746,7 @@ async function assertOwnedDraft(
       stem: question.stem,
       referenceAnswer: question.referenceAnswer,
       explanation: question.explanation,
+      pedagogicalNote: question.pedagogicalNote,
       image: question.image,
     })
     .from(question)
@@ -751,8 +764,48 @@ async function assertOwnedDraft(
     stem: q.stem,
     referenceAnswer: q.referenceAnswer,
     explanation: q.explanation,
+    pedagogicalNote: q.pedagogicalNote,
     image: (q.image as ImageSpec | null) ?? null,
   };
+}
+
+/**
+ * Ownership guard for ops that apply to a DRAFT *or* an APPROVED authored
+ * question — the verifier-override lives on both surfaces (the draft preview and
+ * the Saved-questions review). Same opacity rules as assertOwnedDraft.
+ */
+export async function assertOwnedAuthored(
+  tx: Tx,
+  tutorUserId: string,
+  questionId: string,
+): Promise<{ id: string; targetStudentId: string; status: string }> {
+  const [q] = await tx
+    .select({
+      id: question.id,
+      source: question.source,
+      status: question.status,
+      targetStudentId: question.targetStudentId,
+    })
+    .from(question)
+    .where(eq(question.id, questionId));
+  if (
+    !q ||
+    q.source !== AUTHORING_SOURCE ||
+    (q.status !== "draft" && q.status !== "approved") ||
+    !q.targetStudentId
+  ) {
+    throw new AuthoredQuestionNotFoundError(questionId);
+  }
+  await assertTutorsStudent(tx, tutorUserId, q.targetStudentId); // → STUDENT_NOT_FOUND if not owned
+  return { id: q.id, targetStudentId: q.targetStudentId, status: q.status };
+}
+
+export class AuthoredQuestionNotFoundError extends Error {
+  readonly code = "QUESTION_NOT_FOUND";
+  constructor(questionId: string) {
+    super(`authored question ${questionId} not found`);
+    this.name = "AuthoredQuestionNotFoundError";
+  }
 }
 
 export class DraftNotFoundError extends Error {
@@ -817,9 +870,11 @@ export async function updateDraft(
     stem: p.stem,
     referenceAnswer: p.referenceAnswer,
     explanation: p.explanation,
+    pedagogicalNote: q.pedagogicalNote,
     image: p.image ?? null,
     imageId: img?.imageId ?? null,
     verifierLabel: img?.verifierLabel ?? null,
+    verifierModel: img?.verifierModel ?? null,
     ordinal: row?.ordinal ?? 0,
   };
 }
@@ -864,9 +919,11 @@ export async function applyDraftRevision(
     stem: d.stem,
     referenceAnswer: d.referenceAnswer,
     explanation: d.explanation,
+    pedagogicalNote: composePedagogicalNote(d),
     image: d.image ?? null,
     imageId: img?.imageId ?? null,
     verifierLabel: img?.verifierLabel ?? null,
+    verifierModel: img?.verifierModel ?? null,
     ordinal: row?.ordinal ?? 0,
   };
 }
@@ -923,6 +980,7 @@ export async function listDrafts(
       stem: question.stem,
       referenceAnswer: question.referenceAnswer,
       explanation: question.explanation,
+      pedagogicalNote: question.pedagogicalNote,
       image: question.image,
       ordinal: question.ordinal,
     })
@@ -949,9 +1007,11 @@ export async function listDrafts(
       stem: r.stem,
       referenceAnswer: r.referenceAnswer,
       explanation: (r.explanation as string | null) ?? null,
+      pedagogicalNote: (r.pedagogicalNote as string | null) ?? null,
       image: (r.image as ImageSpec | null) ?? null,
       imageId: img?.imageId ?? null,
       verifierLabel: img?.verifierLabel ?? null,
+      verifierModel: img?.verifierModel ?? null,
       ordinal: r.ordinal,
     };
   });
