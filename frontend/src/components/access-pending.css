@@ -43,122 +43,219 @@
   padding: 16px 20px 64px;
 }
 
-/* ── the board ──────────────────────────────────────────────────────────── */
+/* ── the fingerpost ─────────────────────────────────────────────────────────
+   S122 (founder) — rebuilt from a single flat slab into a Middle-earth
+   fingerpost, after their own signpost sketch: one buried post, hand-lettered
+   planks nailed across it at angles, each pointing somewhere.
+
+   Wood tones are kept (the sketch is graphite on paper, but this page sits on
+   the app's graph-paper background and pure grey planks read as disabled UI
+   rather than as a sign). The SHAPE is what carries the reference: the mast,
+   the alternating tilt, the arrow end, the hand lettering.
+   ------------------------------------------------------------------------- */
 
 .shire-board {
-  position: relative;
   width: min(560px, 100%);
-  /* Room for the posts to show beneath the plank. */
-  padding-bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* Two posts, angled out slightly so the board reads as planted rather than
-   floating. Behind the plank (z-index) so the plank's shadow falls on them. */
-.shire-post {
+/* The signs, and ONLY the signs. The mast is positioned against this box so it
+   cannot reach the prose below — the first cut spanned the whole board and ran
+   wood grain straight down through the body copy. */
+.shire-signs {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Room below the last plank for the post to run on into the ground. */
+  padding-bottom: 76px;
+}
+
+/* The post itself. Runs BEHIND the planks and past the last one, so they read
+   as nailed to something continuing into the ground rather than as three
+   floating cards. */
+.shire-mast {
   position: absolute;
+  top: 6px;
   bottom: 0;
-  width: 12px;
-  height: 76px;
+  left: 50%;
+  width: 26px;
+  margin-left: -13px;
   border-radius: 3px;
-  background: linear-gradient(180deg, #b98a55, #8d6538);
   z-index: 0;
+  background:
+    /* grain */
+    repeating-linear-gradient(
+      180deg,
+      rgba(90, 58, 24, 0.13) 0 2px,
+      rgba(90, 58, 24, 0) 2px 9px
+    ),
+    linear-gradient(90deg, #8d6538 0%, #b98a55 34%, #a3743f 68%, #7d5730 100%);
+  box-shadow: 0 8px 18px rgba(80, 50, 15, 0.22);
 }
-.shire-post--l {
-  left: 16%;
-  transform: rotate(-3deg);
-}
-.shire-post--r {
-  right: 16%;
-  transform: rotate(3deg);
-}
+
+/* ── planks ─────────────────────────────────────────────────────────────── */
 
 .shire-plank {
   position: relative;
   z-index: 1;
+  margin: 0;
   text-align: center;
-  padding: 34px 30px 32px;
-  border-radius: 14px;
-  /* Warm wood, with the grain suggested by two soft bands rather than an
-     image — this page must not depend on an asset that may never arrive. */
+  color: #3a2410;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.06)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.07)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(120, 80, 34, 0.05) 0 3px,
+      rgba(120, 80, 34, 0) 3px 14px
+    ),
     linear-gradient(90deg, #d8a86a, #c9955a 40%, #d3a163 70%, #c08a4e);
   border: 2px solid #9a6f3f;
-  box-shadow: 0 10px 24px rgba(80, 50, 15, 0.22);
-  color: #3a2410;
+  border-radius: 5px;
+  box-shadow: 0 8px 18px rgba(80, 50, 15, 0.2);
 }
 
-.shire-eyebrow {
-  margin: 0 0 6px;
-  font-size: 11.5px;
+/* The two nails, fixing the plank to the post. Every sign in the sketch is
+   pinned, and the pins are what stop a rectangle from reading as a button.
+   🔴 First cut put them at the plank's vertical CENTRE, one either side of the
+   midline — which is exactly where the text is. They landed between letters and
+   read as punctuation: "TUTOR·ACCOUNT", "Not quite·open yet". Moved to the top
+   and bottom EDGES on the centre line, which is both where a real nail goes
+   (through the plank into the post behind) and the one part of the plank no
+   glyph occupies. */
+.shire-plank::before,
+.shire-plank::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: rgba(107, 74, 36, 0.75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.shire-plank::before {
+  top: 5px;
+}
+.shire-plank::after {
+  bottom: 5px;
+}
+
+/* Per-plank tilt, not nth-child: no two signs on a real fingerpost sit
+   parallel, and the angle must survive reordering the copy. */
+.shire-plank--eyebrow {
+  /* 11px top/bottom, not 7: this is the shortest plank, so its nails are the
+     only ones close enough to the lettering to collide — at 7px the top pin sat
+     on the "A" of ACCOUNT and read as a stray mark. The padding is clearance,
+     not taste. */
+  padding: 11px 26px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #6b4a24;
-}
-
-.shire-head {
-  margin: 0 0 10px;
-  font-size: 26px;
-  line-height: 1.15;
-  color: #33200d;
-}
-
-.shire-body {
-  margin: 0 auto 22px;
-  max-width: 40ch;
-  font-size: 14.5px;
-  line-height: 1.55;
-  color: #4b3018;
-}
-
-.shire-call {
-  margin: 0 0 4px;
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
   color: #5c3c1c;
+  transform: rotate(-2.4deg);
+  margin-bottom: 20px;
 }
 
-/* 🔑 The founder asked for the number "in larger form" — it is the one thing
-   on this page anyone needs, so it is set as the page's real headline and sized
-   to be read at arm's length. `clamp` so it never overflows a 320px phone,
-   which a fixed 34px does (the number is 14 characters wide). */
-.shire-number {
-  display: inline-block;
-  font-size: clamp(22px, 6.4vw, 34px);
+.shire-plank--head {
+  padding: 12px 34px;
+  /* Caveat is loaded globally (tokens.css) but `--font-tale` is declared on
+     `.onb-root`, so it does NOT reach this page — naming the stack directly
+     rather than leaning on a var that resolves only by fallback. This is the
+     one line of Olórin's own hand outside onboarding, and it is deliberate:
+     the lettering is what makes a plank a sign rather than a card. */
+  font-family: "Caveat", "Bradley Hand", cursive;
+  font-size: clamp(30px, 7vw, 44px);
+  font-weight: 600;
+  line-height: 1.1;
+  color: #33200d;
+  transform: rotate(1.6deg);
+  margin-bottom: 22px;
+}
+
+/* 🔑 The number keeps the treatment it earned: the founder asked for it "in
+   larger form" because it is the only thing on this page anyone needs. It gets
+   the widest plank AND the arrow end — it is the one direction actually being
+   pointed in. `clamp` so it never overflows a 320px phone (14 characters). */
+.shire-plank--number {
+  display: block;
+  padding: 15px 52px 15px 34px;
+  font-size: clamp(23px, 6.6vw, 36px);
   font-weight: 800;
   letter-spacing: 0.01em;
   line-height: 1.2;
   color: #2b1908;
   text-decoration: none;
-  border-bottom: 3px solid rgba(43, 25, 8, 0.35);
-  padding-bottom: 2px;
-  /* Never break a phone number across two lines. */
   white-space: nowrap;
+  transform: rotate(-1.4deg);
+  /* The arrow end. Squared on the left where it meets the mast, pointed on the
+     right — the same asymmetry every plank in the sketch has. */
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 50%, calc(100% - 22px) 100%, 0 100%);
+  border-radius: 5px 0 0 5px;
 }
-.shire-number:hover {
-  border-bottom-color: #2b1908;
+.shire-plank--number:hover {
+  filter: brightness(1.05);
+}
+.shire-plank--number:focus-visible {
+  outline: 3px solid #2b1908;
+  outline-offset: 3px;
+}
+
+/* ── the note on the paper ──────────────────────────────────────────────── */
+
+/* Prose stays OFF the wood. The sketch's planks carry two or three words each,
+   and that is exactly why they read; two sentences set at an angle on a board
+   is a poster, not a sign. */
+.shire-note {
+  position: relative;
+  z-index: 1;
+  margin-top: 30px;
+  max-width: 42ch;
+  text-align: center;
+}
+
+.shire-body {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-soft, #4b3018);
 }
 
 .shire-foot {
-  margin: 14px 0 0;
+  margin: 0;
   font-size: 14px;
-  color: #4b3018;
+  line-height: 1.55;
+  color: var(--ink-muted, #6b5844);
 }
 
 @media (max-width: 480px) {
+  .shire-signs {
+    padding-bottom: 58px;
+  }
+  .shire-mast {
+    width: 20px;
+    margin-left: -10px;
+  }
+  .shire-plank--head {
+    padding: 10px 20px;
+  }
+  .shire-plank--number {
+    padding: 13px 40px 13px 22px;
+    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 50%, calc(100% - 16px) 100%, 0 100%);
+  }
+  .shire-note {
+    margin-top: 24px;
+  }
+}
+
+/* The tilt is decoration, not information. */
+@media (prefers-reduced-motion: reduce) {
   .shire-plank {
-    padding: 26px 18px 24px;
-  }
-  .shire-head {
-    font-size: 22px;
-  }
-  /* The posts crowd the plank on a narrow screen — pull them inward. */
-  .shire-post--l {
-    left: 10%;
-  }
-  .shire-post--r {
-    right: 10%;
+    transform: none;
   }
 }

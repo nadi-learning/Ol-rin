@@ -38,22 +38,56 @@ export function AccessPending({
       </header>
 
       <main className="shire-stage">
-        {/* The board itself. `role="note"` rather than a heading-only block:
-            this is an aside about the account, not the page's subject. */}
-        <section className="shire-board" role="note" aria-labelledby="shire-head">
-          {/* The two posts the board hangs from. Purely decorative — hidden
-              from the a11y tree so a screen reader gets the message, not the
-              scenery. */}
-          <span className="shire-post shire-post--l" aria-hidden="true" />
-          <span className="shire-post shire-post--r" aria-hidden="true" />
+        {/* S122 (founder) — THE BOARD IS NOW A FINGERPOST, after their own
+            Middle-earth signpost sketch: one buried post with hand-lettered
+            planks nailed across it at angles, each pointing somewhere.
+            It replaces a single flat slab, and the shape is the message —
+            a fingerpost is what you meet at the edge of a place you cannot
+            enter yet, and it tells you which way to go.
 
-          <div className="shire-plank">
-            <p className="shire-eyebrow">
+            Built in CSS, not as an image, for the reason the old comment gave
+            and which still holds: this page must not depend on an asset that
+            may never arrive. The planks are real text on real elements, so the
+            number stays selectable, dialable and screen-reader-legible — which
+            a picture of a signpost would not be.
+
+            `role="note"`: an aside about the account, not the page's subject. */}
+        <section className="shire-board" role="note" aria-labelledby="shire-head">
+          {/* The mast is scoped to THIS wrapper, not the whole board. First cut
+              had it span everything, so the post ran straight down through the
+              body copy — wood grain behind prose, unreadable. The post belongs
+              to the signs; the note stands clear of it on the paper. */}
+          <div className="shire-signs">
+            {/* The post the planks are nailed to. Decorative — hidden from the
+                a11y tree so a screen reader gets the message, not the scenery. */}
+            <span className="shire-mast" aria-hidden="true" />
+
+            {/* Each plank leans a different way, as in the sketch — no two signs
+                on a real fingerpost sit parallel. Angles are per-plank rather
+                than nth-child so the tilt survives reordering the copy. */}
+            <p className="shire-plank shire-plank--eyebrow">
               {role === "tutor" ? "Tutor account" : "Parent account"}
             </p>
-            <h1 className="shire-head" id="shire-head">
+
+            <h1 className="shire-plank shire-plank--head" id="shire-head">
               Not quite open yet
             </h1>
+
+            {/* The number is the page, so it gets the biggest plank and the
+                arrow end — it is the one direction actually being pointed in.
+                A tel: link so a phone dials it, large enough to read without one. */}
+            <a
+              className="shire-plank shire-plank--number"
+              href={`tel:${PHONE.replace(/\s/g, "")}`}
+            >
+              {PHONE}
+            </a>
+          </div>
+
+          {/* Prose stays OFF the planks and on the paper. Two sentences set at
+              an angle on wood is a poster, not a sign — the sketch's planks
+              carry two or three words each, and that is why they read. */}
+          <div className="shire-note">
             {/* Role-specific, because one sentence cannot serve both without
                 going vague. A parent is linked to a child; a tutor is given
                 students. Saying "children" to a tutor reads as a mistake. */}
@@ -62,14 +96,9 @@ export function AccessPending({
                 ? "We set tutor accounts up by hand, so you're matched with the right students before you start."
                 : "We set parent accounts up by hand, so you're linked to your own child and nobody else's."}
             </p>
-
-            {/* The number is the page. A tel: link so a phone dials it, and
-                large enough to read without one. */}
-            <p className="shire-call">Please reach out to</p>
-            <a className="shire-number" href={`tel:${PHONE.replace(/\s/g, "")}`}>
-              {PHONE}
-            </a>
-            <p className="shire-foot">and we'll switch this on for you.</p>
+            <p className="shire-foot">
+              Give us a ring on the number above and we'll switch this on for you.
+            </p>
           </div>
         </section>
       </main>

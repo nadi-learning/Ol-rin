@@ -68,10 +68,26 @@ export function App() {
   //    `ClaimMint` clears the persona on success and the reboot has not landed
   //    yet — swapping the component out from under its own request.
   //
-  // So: sample every render, keep the first non-null answer forever.
+  // So: sample every render, keep the LATEST non-null answer.
+  //
+  // 🔴 S122 — it used to keep the FIRST non-null answer, and that was a third
+  // failure mode, worse than either above because it fired on the happy path.
+  // `b2c.persona` survives in localStorage until a mint SUCCEEDS, so anyone who
+  // ever clicked Tutor and did not complete carries that claim into their next
+  // visit. App mounts, reads it, and latches "tutor" BEFORE a single card is
+  // clicked. Picking Student then updates localStorage but can never update the
+  // latch — `!claimRef.current` is already false — so the stale claim outranks
+  // the choice actually made, and ClaimMint mints a DISABLED TUTOR membership.
+  // The founder hit exactly this: signed in as a student, got the tutor
+  // signboard, and was locked out of the app by a role they never picked.
+  //
+  // Latest-non-null keeps both original guarantees — null never overwrites, so
+  // ClaimMint's clearPersona still cannot swap the component out mid-request —
+  // while letting a genuine re-pick win, which is the entire point of the
+  // "Choose a different role" button sitting next to it.
   const claimRef = useRef<string | null>(null);
   const livePersona = getPersona();
-  if (livePersona && !claimRef.current) claimRef.current = livePersona;
+  if (livePersona && livePersona !== claimRef.current) claimRef.current = livePersona;
   const claimedRole = claimRef.current;
   const isPendingRoleClaim = claimedRole === "parent" || claimedRole === "tutor";
 
