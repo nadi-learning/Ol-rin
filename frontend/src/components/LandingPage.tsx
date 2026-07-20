@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { signIn, devLogin } from "../lib/auth";
+import { signIn } from "../lib/auth";
 import { setPersona } from "../trpc";
 import "./landing.css";
 
 // Orion persona-select front door (logged-out). Ported from design artifact
-// 0f84478e. Each persona routes dev-login to its seed user; role is resolved by
-// membership on the BE (the persona picked is just the email preset).
+// 0f84478e. Google is now the only way in: S122 closed the dev bypass at both
+// layers (this form, and the backend's NODE_ENV gate in src/auth/auth.ts).
+// The persona picked is a CLAIM carried into signup (D-121-1/2), no longer an
+// email preset — `ROLE_EMAIL` went with the form that consumed it.
 type Persona = "student" | "parent" | "tutor";
-
-const ROLE_EMAIL: Record<Persona, string> = {
-  student: "smoke@example.com",
-  parent: "parent@example.com",
-  tutor: "tutor@example.com",
-};
 const SUB: Record<Persona, string> = {
   student: "Sign in to open your lessons, practice, and progress.",
   parent: "Sign in to see your child's reports and pace.",
@@ -73,8 +69,8 @@ export function LandingPage() {
   const doneRef = useRef(splashSeen());
   const [revealed, setRevealed] = useState(splashSeen);
   const [chosen, setChosen] = useState<Persona | null>(null);
-  const [email, setEmail] = useState(ROLE_EMAIL.student);
-  const [busy, setBusy] = useState(false);
+  // S122 — `email` and `busy` went with the dev-login form. `err` stays: the
+  // Google path still has failures worth showing.
   const [err, setErr] = useState<string | null>(null);
 
   const reveal = useCallback(() => {
@@ -91,7 +87,6 @@ export function LandingPage() {
 
   const selectRole = (p: Persona) => {
     setChosen(p);
-    setEmail(ROLE_EMAIL[p]);
     setErr(null);
     // 🔑 Founder, this session — the persona STOPS being cosmetic. It used to
     // prefill a dev-login email and nothing else, so a parent signing up became
@@ -107,17 +102,9 @@ export function LandingPage() {
     signIn.social({ provider: "google", callbackURL: window.location.origin });
   };
 
-  const onDevSignIn = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await devLogin(email);
-    } catch (e) {
-      setErr(String((e as Error)?.message ?? e));
-      setBusy(false);
-    }
-    // On success the session flips and App swaps this screen out; no reset needed.
-  };
+  // S122 — `onDevSignIn` deleted with the form it drove. `devLogin` itself
+  // still exists in lib/auth.ts and is still used by the local probes/walks,
+  // which run against a dev backend where the route is live.
 
   // Splash intro sequence + the per-lane generative canvas flow. Ported ~verbatim
   // from the artifact; scoped to the component root and fully torn down on unmount
@@ -315,30 +302,22 @@ export function LandingPage() {
             <h2 className="or-welcome">Continue as <b>{chosen ?? "student"}</b></h2>
             <p className="or-sub">{SUB[chosen ?? "student"]}</p>
             <button className="or-gbtn" type="button" onClick={onGoogle}>Continue with Google</button>
-            {/* This block ships to production ON PURPOSE, and must keep shipping
-                until a real Google sign-in is proven end-to-end. Every prod account
-                is email/password, and Google cannot link onto a pre-existing user
-                (see the note in src/auth/auth.ts) — so gating this on
-                import.meta.env.DEV, which Vite inlines as false at build time,
-                removes the only login prod actually has.
-                The live gate is the BACKEND's NODE_ENV !== "production" check in
-                auth.ts, which prod does not currently trip. Closing that is the
-                fix; hiding the form is not. */}
-            <div className="or-dev">
-              <span className="or-dev-label">dev login (bypass)</span>
-              <div className="or-dev-row">
-                <input
-                  className="or-dev-input"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  aria-label="Dev email"
-                />
-                <button className="or-dev-btn" type="button" onClick={onDevSignIn} disabled={busy}>
-                  {busy ? "Signing in…" : "Dev sign in"}
-                </button>
-              </div>
-              {err && <p className="or-err">{err}</p>}
-            </div>
+            {/* S122 — THE DEV-LOGIN BLOCK IS GONE. It shipped to production on
+                purpose from S93 until now, because prod ran NODE_ENV=development
+                and every prod account was email/password: hiding the form would
+                have removed the only login prod had.
+                Both halves of that reason are now closed in the same change —
+                auth.ts trusts Google for linking, the real student's row is
+                verified, and the box runs NODE_ENV=production. Deleting this
+                markup is the COSMETIC half; the live gate has always been the
+                backend's NODE_ENV !== "production" check in auth.ts. Removing
+                the UI alone would have left the endpoint open, and anyone could
+                still POST /api/auth/sign-in/email as any student.
+                probe_auth_hardening §4 asserted this block WAS in the bundle;
+                that leg is inverted in this same edit — a probe whose subject
+                you delete must change direction with it, or it silently guards
+                nothing (M77). */}
+            {err && <p className="or-err">{err}</p>}
             <button className="or-back" type="button" onClick={() => setChosen(null)}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 6l-6 6 6 6" /></svg> Choose a different role
             </button>

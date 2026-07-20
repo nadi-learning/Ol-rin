@@ -43,16 +43,28 @@ export const auth = betterAuth({
       clientSecret: env.GOOGLE_CLIENT_SECRET,
     },
   },
-  // NOTE (2026-07-16): no account.accountLinking config here, deliberately.
-  // Better Auth's default trustedProviders is [] and the Google callback never
-  // passes isTrustedProvider, so Google CANNOT link onto a pre-existing user
-  // row — a legacy dev-bypass account would get "account not linked" forever.
-  // That is fine only because no such account is meant to survive: every
-  // email/password account is being retired, and a first-time Google sign-in
-  // creates its user outright (the sign-up path, which never links). If a
-  // legacy row ever needs rescuing, it needs BOTH trustedProviders:["google"]
-  // and users.email_verified=true — trustedProviders alone is not enough, as
-  // requireLocalEmailVerified defaults true and is checked independently.
+  // S122 — THIS IS THE RESCUE, and it is the reason the dev-login closure is
+  // one change rather than three.
+  //
+  // Until now there was deliberately no accountLinking config: Better Auth's
+  // default trustedProviders is [] and the Google callback never passes
+  // isTrustedProvider, so Google could NOT link onto a pre-existing user row.
+  // The old note excused that with "no such account is meant to survive".
+  // Prod's data said otherwise. Measured 2026-07-20, as b2c_app, before the
+  // flip: 12 users — 1 google (the founder) and 11 credential, of which TEN are
+  // @example.com probe rows and ONE is spranav.iitkgp@gmail.com, a real student
+  // holding the only completed onboarding on prod. Turning email/password off
+  // without this block strands that student with no way back in.
+  //
+  // trustedProviders alone is NOT sufficient: requireLocalEmailVerified
+  // defaults true and is checked independently, so the rescued row also needs
+  // users.email_verified = true. Both halves ship together or neither works.
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google"],
+    },
+  },
   trustedOrigins: [env.FRONTEND_URL],
   session: {
     expiresIn: 60 * 60 * 24 * 30,

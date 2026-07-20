@@ -91,9 +91,21 @@ async function main() {
   // retired rather than migrated, so if someone later adds trustedProviders
   // without also thinking about requireLocalEmailVerified, a squatted
   // unverified row could absorb a real Google identity. Fail loudly here.
-  console.log("1. account-linking stays off (deliberate — see auth.ts)");
+  // S122 — INVERTED. This asserted `no accountLinking config`, which was right
+  // while every legacy account was disposable. Prod's data killed that premise:
+  // spranav.iitkgp@gmail.com is a real student on a credential row holding the
+  // only completed onboarding on prod, and closing email/password without
+  // trusting Google for linking strands them permanently. The leg now guards
+  // the rescue instead of the absence of one.
+  console.log("1. Google is a TRUSTED linking provider (the rescue)");
   const linking = (auth.options as any).account?.accountLinking;
-  check("no accountLinking config (legacy accounts are retired, not linked)", !linking);
+  check("accountLinking is configured", Boolean(linking));
+  check("accountLinking is enabled", linking?.enabled === true);
+  check(
+    "google is trusted for linking (without this a rescued row gets 'account not linked' forever)",
+    Array.isArray(linking?.trustedProviders) && linking.trustedProviders.includes("google"),
+    JSON.stringify(linking?.trustedProviders),
+  );
 
   // ── 2. DEV STILL HAS THE BYPASS (regression guard for probe:session) ────
   console.log("\n2. dev mode (this process)");
@@ -235,32 +247,28 @@ async function main() {
       bundle.includes("Continue with Google"),
     );
 
-    // This assertion is INVERTED from how it was first written, deliberately.
-    // It used to demand the dev-login block be absent from the artifact. That
-    // is the right end state and the wrong assertion TODAY: every prod account
-    // is email/password and Google cannot link onto one (auth.ts), so an
-    // artifact without this block is an artifact nobody can log into. The probe
-    // now guards the login that actually works, and will fail the moment
-    // someone hides the form again — which is the mistake we are undoing.
+    // S122 — RE-INVERTED, which is exactly the step this comment used to
+    // prescribe. The three preconditions it named are now met in one change:
+    // trustedProviders:["google"] is set (section 1), the one real credential
+    // account is email_verified, and the box runs NODE_ENV=production (section
+    // 3 proves the route denies correct credentials). So the bundle must no
+    // longer carry the form.
     //
-    // TO RE-INVERT (the real fix, as its own slice): set trustedProviders:
-    // ["google"] AND users.email_verified=true, prove a real Google sign-in on
-    // prod end to end, THEN flip the box to NODE_ENV=production (which kills
-    // the backend route — see section 3) and restore these as negative greps.
-    for (const required of ["dev login (bypass", "Dev sign in"]) {
+    // These are NEGATIVE greps, and a negative grep passes trivially against an
+    // empty or wrong file — which is why the two positive controls above
+    // ("Continue with Google", non-empty bundle) run FIRST and are not
+    // optional. Without them "absent" and "never looked" are the same result.
+    for (const gone of ["dev login (bypass", "Dev sign in", "or-dev-input", "or-dev-btn"]) {
       check(
-        `bundle SHIPS ${JSON.stringify(required)} (prod's only working login — see auth.ts)`,
-        bundle.includes(required),
+        `bundle no longer ships ${JSON.stringify(gone)}`,
+        !bundle.includes(gone),
       );
     }
 
-    // Shipping the form ships the password next to it. Stated, not hidden: this
-    // is a real exposure and it is NOT what gates entry — the whitelist +
-    // NODE_ENV are. Closing it means closing the backend route, not the UI.
+    // The dev password went with the form it was typed into.
     check(
-      "known + accepted: the dev password ships with the form",
-      bundle.includes(DEV_PASSWORD),
-      "expected while the bypass is prod's login",
+      "the dev password no longer ships in the bundle",
+      !bundle.includes(DEV_PASSWORD),
     );
   }
 
