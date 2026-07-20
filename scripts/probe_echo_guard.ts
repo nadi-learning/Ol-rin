@@ -21,6 +21,7 @@ import { canEcho, looksLikeRefusal } from "../frontend/src/lib/safeEcho";
 import type { BeatCtx } from "../frontend/src/components/onboarding.copy";
 import {
   ABOUT_ROWS,
+  BEATS,
   BEAT_BY_ID,
   EPILOGUE_PAGES,
   EPILOGUE_TOTAL_MS,
@@ -226,12 +227,25 @@ check(
 );
 
 const phoneReaction = BEAT_BY_ID["phone"]!.reaction;
+// INVERTED this session — there is no skip to take. The claim S91 was really
+// making survives the change and is what is asserted now: a student who types
+// "no" is NOT answered with "Got it!", because that is the not-listening bug
+// whatever the form allows. Only the consolation changed, not the rule.
 check(
-  "typing 'no' at phone takes the SKIP voice, not 'Got it!'",
-  phoneReaction("no", ctx()).includes("Skipped"),
+  "typing 'no' at phone is still HEARD — not answered with 'Got it!'",
+  !phoneReaction("no", ctx()).includes("Got it"),
+  phoneReaction("no", ctx()),
+);
+check(
+  "and it says the number is still needed, rather than pretending it was skipped",
+  /still need|whenever you're ready/i.test(phoneReaction("no", ctx())),
   phoneReaction("no", ctx()),
 );
 check("a real number is accepted", phoneReaction("9876543210", ctx()).includes("Got it"), phoneReaction("9876543210", ctx()));
+
+// The beat no longer offers an opt-out — asserted on the DATA, not on the
+// rendered button, so a stray re-add in copy reddens here first.
+check("no beat in the flow is optional any more", BEATS.every((b) => !b.optional));
 
 // ── 7b. the reveal is GONE from onboarding (ONB-7, founder) ────────────────
 // The Gandalf reveal leaves the flow entirely — Olórin introduces himself
@@ -570,6 +584,32 @@ check(
 // leg would be green while the student looked at a Pikachu.
 const src = async (p: string) =>
   await Bun.file(new URL(`../frontend/src/${p}`, import.meta.url)).text();
+
+/**
+ * 🔑 M77, and the reason it recurred — SOURCE WITH THE PROSE REMOVED.
+ *
+ * These files argue with themselves on purpose: their comments explain what was
+ * deleted and why, so a grep for a deleted thing finds the explanation and
+ * reports it as present. M77 was the worst form of that (a comment kept a probe
+ * green after the property it guarded was removed) and its fix was applied to
+ * ONE leg — so the very next structural grep inherited the bug. It did: a
+ * comment added between `label="Crew"` and its `onClick` pushed them apart and
+ * reddened a leg about code that was correct.
+ *
+ * Hence one helper rather than another per-site `.replace()`. Handles block
+ * comments (which covers JSX `{/* … *​/}`) and line comments, with `://` spared
+ * so a URL in a string literal is not mistaken for one.
+ */
+const code = (s: string) =>
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1")
+    // Collapse the blank, still-indented lines the two passes above leave
+    // behind. Without this a stripped 8-line comment is ~110 characters of
+    // whitespace that any proximity grep still has to span — the comment goes
+    // on affecting the match after being removed, which is the whole bug.
+    // Line STARTS are preserved, so `^`-anchored CSS claims are unaffected.
+    .replace(/\n(?:[ \t]*\n)+/g, "\n");
 
 const [voicePanel, practicePage, appShell, appTsx, revisionPage, practiceCss, voiceCss] =
   await Promise.all([
@@ -1045,13 +1085,18 @@ check(
 // Client claims again (M43), for the same reason as §Slice J: no backend, so a
 // server leg would be green while the page rendered wrong. The look is the
 // walk's job; these hold the rules an edit could break silently.
-const [crewPage, crewCss, appShellK, appTsxK, appShellCss] = await Promise.all([
-  src("components/CrewPage.tsx"),
-  src("components/crew.css"),
-  src("components/AppShell.tsx"),
-  src("App.tsx"),
-  src("components/app-shell.css"),
-]);
+// Comment-stripped (see `code`): every claim in this section is STRUCTURAL —
+// which element sits where, which prop exists — so prose between two tokens is
+// noise that either hides a real break or invents one that isn't there.
+const [crewPage, crewCss, appShellK, appTsxK, appShellCss] = (
+  await Promise.all([
+    src("components/CrewPage.tsx"),
+    src("components/crew.css"),
+    src("components/AppShell.tsx"),
+    src("App.tsx"),
+    src("components/app-shell.css"),
+  ])
+).map(code) as [string, string, string, string, string];
 
 // 1. The page exists and is reachable. Four mechanical edits, four claims —
 // any one of them missing gives a rail item that highlights nothing or a view
@@ -1064,7 +1109,13 @@ check(
 );
 check(
   "Slice K (D-K2): the Crew rail item navigates",
-  /label="Crew"[\s\S]{0,200}onClick=\{\(\) => onNavigate\("crew"\)\}/.test(appShellK),
+  // 200 → 400: this is a PROXIMITY heuristic ("the onClick belongs to this
+  // item"), and every prop the item gains eats the window. At 200 it reddened
+  // on a correct element that had grown one prop, which is a false red the
+  // moment anyone edits the rail — the failure mode this whole section exists
+  // to avoid. Still bounded, so it cannot match a DIFFERENT item's onClick:
+  // the next RailItem is ~500 characters away.
+  /label="Crew"[\s\S]{0,400}onClick=\{\(\) => onNavigate\("crew"\)\}/.test(appShellK),
 );
 // 🔑 D-K2 is a claim about WHICH GROUP, not merely about presence — and the
 // groups are the whole reason the rail reads as two ideas (who walks with you /
@@ -1080,22 +1131,40 @@ check(
 check("Slice K: the Search rail item is gone", !/label="Search"/.test(appShellK));
 check("Slice K: its icon went with it, not orphaned", !/function SearchIcon/.test(appShellK));
 
-// 3. 🔑 THE STRUCTURAL HALF OF THE SOON RULE. Search was the last user of the
-// rail's inert variant, so removing it retires the whole affordance — and with
-// the variant deleted the rail can no longer EXPRESS "soon" at all. That is
-// stronger than any per-item assertion: the rule (once per page, never per row)
-// is now enforced by the type rather than by everyone remembering it.
+// 3. 🔑 INVERTED THIS SESSION — the founder reversed Slice K's soon rule.
+//
+// Slice K asserted the rail could not EXPRESS "soon" at all, on the reasoning
+// that a coming-soon belongs once, on the page it describes. That held while
+// the only candidate was Search, which pointed NOWHERE — the marker was
+// dressing up a dead end. Crew is the opposite case: it navigates, its page is
+// real, and what is unbuilt is what the crew will do. A student could not see
+// that from the rail and clicked a sparkle expecting a feature.
+//
+// So the claim changes shape rather than being dropped. What Slice K was really
+// protecting is the SECOND leg below — every rail item goes somewhere — and
+// that one is untouched and now carries the weight alone. The distinction the
+// old leg enforced by absence is enforced here by opposition: a `soon` sticker
+// may exist, an INERT item may not.
 check(
-  "Slice K: RailItem can no longer be made inert",
-  !/\bsoon\?: boolean/.test(appShellK) && !/nav-item--soon/.test(appShellK),
+  "the rail can mark a real page as coming-soon (founder, reversing D-K's soon rule)",
+  // ⚠️ Anchored on the DECLARATION (`{`), not the prefix. Caught by this
+  // slice's own negative control: renaming the rule to `.nav-soon-NEGCTRL`
+  // left `/^\.nav-soon/` matching happily, so the leg reported a style that no
+  // longer existed — M77's family again, found only because the control was
+  // run. A prefix match is not an existence proof.
+  /\bsoon\?: boolean/.test(appShellK) && /^\.nav-soon \{/m.test(appShellCss),
+);
+check(
+  "🔑 but STILL no inert variant — a marked item is not a dead one",
+  !/nav-item--soon/.test(appShellK) && !/^\.nav-item--soon/m.test(appShellCss),
 );
 check(
   "Slice K: every rail item goes somewhere (onClick is required)",
   /onClick: \(\) => void/.test(appShellK),
 );
 check(
-  "Slice K: the inert variant's CSS is deleted, not orphaned (M59)",
-  !/^\.nav-item--soon/m.test(appShellCss) && !/^\.nav-tip-soon/m.test(appShellCss),
+  "the sticker reaches a screen reader through the NAME, not just the pixels",
+  /aria-label=\{soon \?/.test(appShellK),
 );
 
 // 4. D-K1 — ONE soon panel, and the capability cards are PLAIN. The plan asked

@@ -16,7 +16,7 @@ import {
   whoami,
   withBoardBySlug,
 } from "../services/session_boards";
-import { OnboardingStep, Role } from "@b2c/kernel/contracts";
+import { OnboardingStep, Role, SELF_ASSIGNABLE_ROLES } from "@b2c/kernel/contracts";
 import {
   complete as completeOnboarding,
   getState as getOnboardingState,
@@ -243,7 +243,12 @@ export const appRouter = router({
       .where(eq(appUser.id, ctx.membership.userId))
       .limit(1);
     if (!u) throw new Error("membership references a missing app_user");
-    return { user: u, board: ctx.board, role: ctx.membership.role };
+    return {
+      user: u,
+      board: ctx.board,
+      role: ctx.membership.role,
+      enabled: ctx.membership.enabled,
+    };
   }),
 
   // Slice E — the ONLY namespace that runs before a board exists. See
@@ -282,13 +287,23 @@ export const appRouter = router({
     // delegates to `resolveMembership`, whose read-before-write means a tutor
     // re-picking their own board keeps their role (the S110b invariant).
     chooseBoard: sessionProcedure
-      .input(z.object({ board: z.string().min(1) }))
+      .input(
+        z.object({
+          board: z.string().min(1),
+          // Validated against the SELF-ASSIGNABLE set, not `Role` — a request
+          // naming "admin" is rejected at the edge rather than being quietly
+          // downgraded inside the service. Both defences stay: the service
+          // re-checks, because this is not the only way in.
+          intendedRole: z.enum(SELF_ASSIGNABLE_ROLES).optional(),
+        }),
+      )
       .mutation(async ({ ctx, input }) => {
         try {
           return await chooseBoard({
             slug: input.board,
             email: ctx.realUser.email,
             name: ctx.realUser.name,
+            intendedRole: input.intendedRole,
           });
         } catch (e) {
           if (e instanceof BoardNotFoundError) {

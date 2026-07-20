@@ -365,10 +365,41 @@ async function main() {
     // one (the write path is now closed, which is the point).
     check("isKnownPet('llama') → false, so a legacy row takes the stand-in owl", isKnownPet("llama") === false);
 
-    const skipped = await saveStep(tx, { ...S, step: "phone", value: null });
-    check("optional phone skips with no answer", skipped.answers.phone === null);
-    check("and still advances phone → done (lore is gone, ONB-7)", skipped.currentStep === "done", skipped.currentStep);
-    check("the pet survives the skip", skipped.answers.pet === "owl", String(skipped.answers.pet));
+    // INVERTED this session: the Skip button is gone and phone is required, so
+    // the three legs that lived here — "optional phone skips with no answer",
+    // its advance, and the pet surviving that skip — assert behaviour that no
+    // longer exists. S119's lesson is why they are inverted rather than
+    // deleted: a probe that drives saveStep directly does not fail when the
+    // rule tightens under it, it THROWS, and takes every downstream leg with it.
+    const ePhoneNull = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "phone", value: null }),
+    );
+    check(
+      "phone REQUIRED — a null answer is refused, not skipped",
+      ePhoneNull instanceof OnboardingValidationError,
+      ePhoneNull ? ePhoneNull.message : "did not throw",
+    );
+    const ePhoneLand = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "phone", value: "1234567890" }),
+    );
+    check(
+      "phone SHAPED — ten digits starting 1 is refused",
+      ePhoneLand instanceof OnboardingValidationError,
+      ePhoneLand ? ePhoneLand.message : "did not throw",
+    );
+    const ePhoneShort = await expectThrow(() =>
+      saveStep(tx, { ...S, step: "phone", value: "987654321" }),
+    );
+    check(
+      "phone SHAPED — nine digits is refused",
+      ePhoneShort instanceof OnboardingValidationError,
+      ePhoneShort ? ePhoneShort.message : "did not throw",
+    );
+
+    const phoned = await saveStep(tx, { ...S, step: "phone", value: "9876543210" });
+    check("a real mobile is accepted", phoned.answers.phone === "9876543210", String(phoned.answers.phone));
+    check("and advances phone → done (lore is gone, ONB-7)", phoned.currentStep === "done", phoned.currentStep);
+    check("the pet survives the phone step", phoned.answers.pet === "owl", String(phoned.answers.pet));
   });
 
   // ── 7. idempotent ───────────────────────────────────────────────────────

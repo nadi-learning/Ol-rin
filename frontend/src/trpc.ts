@@ -47,6 +47,49 @@ export function clearBoard(): void {
   }
 }
 
+/**
+ * What the person said they were on the landing page — the persona card,
+ * which the founder made load-bearing this session (it used to only prefill a
+ * dev-login email).
+ *
+ * Kept client-side between the persona click and the membership mint, because
+ * those are two different pages with a sign-in round trip in between and there
+ * is nowhere on the server to hang it until a membership exists.
+ *
+ * 🔴 UNTRUSTED, by construction. It is a claim typed into a browser, and the
+ * server treats it as one: `chooseBoard` accepts only the self-assignable set,
+ * and a non-student claim mints a DISABLED membership. Nothing here grants
+ * anything — the worst a tampered value can do is put someone in a waiting room
+ * they could have reached by clicking a card.
+ *
+ * Cleared once spent, so it cannot re-apply on a later login.
+ */
+const PERSONA_KEY = "b2c.persona";
+
+export function getPersona(): string | null {
+  try {
+    return localStorage.getItem(PERSONA_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setPersona(persona: string): void {
+  try {
+    localStorage.setItem(PERSONA_KEY, persona);
+  } catch {
+    /* see getBoard */
+  }
+}
+
+export function clearPersona(): void {
+  try {
+    localStorage.removeItem(PERSONA_KEY);
+  } catch {
+    /* see getBoard */
+  }
+}
+
 // Type-only import of the backend router → end-to-end type safety with no
 // shared build step. Calls go through the Vite proxy to BE :3010. credentials:
 // "include" so the Better Auth session cookie travels with every request.

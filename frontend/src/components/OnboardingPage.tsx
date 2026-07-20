@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ONBOARDING_ANSWER_COLUMNS,
   ONBOARDING_STEPS,
+  isValidPhone,
   type OnboardingStep,
 } from "@b2c/kernel/contracts";
 import { trpc, setBoard } from "../trpc";
@@ -276,6 +277,24 @@ export function OnboardingPage({
 
   const beat: Beat | undefined = BEAT_BY_ID[stepId];
   const name = useMemo(() => firstName(studentName), [studentName]);
+
+  // The phone beat, validated. Kept here rather than inline in the form so the
+  // submit handler and the button read the SAME value — a button disabled by
+  // one rule and a handler guarded by another is how a disabled-looking form
+  // still submits on Enter.
+  //
+  // Normalised before testing: students type "+91 98765 43210" and paste from
+  // contacts. Stripping to digits and dropping a leading 91/0 means the rule
+  // judges the number, not the formatting. The NORMALISED value is what gets
+  // committed (below), so the column holds ten bare digits either way.
+  const isPhoneBeat = beat?.id === "phone";
+  const phoneDigits = useMemo(
+    () => draft.replace(/\D/g, "").replace(/^(?:91|0)(?=\d{10}$)/, ""),
+    [draft],
+  );
+  const phoneOk = isValidPhone(phoneDigits);
+  const textReady = isPhoneBeat ? phoneOk : Boolean(draft.trim()) || Boolean(beat?.optional);
+  const showPhoneHint = isPhoneBeat && draft.trim().length > 0 && !phoneOk;
 
   // Slice E — the boards on offer. Only fetched for a student who must pick;
   // for everyone else the row is filtered out and this list is never read.
@@ -814,35 +833,41 @@ export function OnboardingPage({
                 className="onb-form"
                 onSubmit={(ev) => {
                   ev.preventDefault();
-                  if (draft.trim() || beat.optional) commit(draft.trim() || null);
+                  // Commit the NORMALISED digits, not the raw draft — the
+                  // column should hold "9876543210" whether they typed that or
+                  // "+91 98765 43210".
+                  if (textReady) commit((isPhoneBeat ? phoneDigits : draft.trim()) || null);
                 }}
               >
                 <input
                   className="onb-field"
                   value={draft}
                   autoFocus
+                  // `tel` + numeric keypad: this is a phone on a phone, and the
+                  // student should not have to hunt for the number row.
+                  type={beat.id === "phone" ? "tel" : "text"}
+                  inputMode={beat.id === "phone" ? "numeric" : undefined}
+                  // Ten digits max — a paste of "+91 98765 43210" is stripped to
+                  // its ten below rather than silently truncated here.
+                  maxLength={beat.id === "phone" ? 14 : undefined}
                   placeholder={beat.input.placeholder}
                   onChange={(ev) => setDraft(ev.target.value)}
                   disabled={saving}
+                  aria-invalid={showPhoneHint || undefined}
+                  aria-describedby={showPhoneHint ? "onb-field-hint" : undefined}
                 />
-                <button
-                  className="onb-btn"
-                  type="submit"
-                  disabled={saving || (!draft.trim() && !beat.optional)}
-                >
+                <button className="onb-btn" type="submit" disabled={saving || !textReady}>
                   {saving ? "…" : "Send"}
                 </button>
-                {beat.optional && (
-                  <button
-                    type="button"
-                    className="onb-skip"
-                    disabled={saving}
-                    onClick={() => commit(null)}
-                  >
-                    Skip
-                  </button>
-                )}
               </form>
+            )}
+            {/* Only once they've typed something — an error sitting under an
+                empty field scolds a student who has not yet done anything. */}
+            {showPhoneHint && (
+              <p className="onb-field-hint" id="onb-field-hint" role="alert">
+                That doesn't look like a mobile number - ten digits, starting with 6,
+                7, 8 or 9.
+              </p>
             )}
           </div>
         )}

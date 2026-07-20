@@ -64,6 +64,25 @@ export const membership = pgTable(
       .notNull()
       .references(() => board.id),
     role: text("role").notNull(),
+    /**
+     * Is this role ACTUALLY switched on, or is the person waiting on us?
+     *
+     * Added the session the landing persona started setting the role at signup.
+     * Before that, role could only come from an admin, so holding one WAS being
+     * enabled. Now anyone can pick "Parent" or "Tutor" on the way in — and a
+     * self-assigned tutor with no further check would have authoring access,
+     * which is how content gets made. Role says what you claim to be; this says
+     * whether we agreed.
+     *
+     * DEFAULT true, deliberately: every membership that exists before this
+     * column did was admin-minted, so defaulting false would lock out every
+     * current tutor, parent and admin on deploy. New self-assigned non-student
+     * rows are written `false` explicitly (services/membership.ts).
+     *
+     * Students are never gated — `enabled` is always true for them. There is no
+     * one to wait for.
+     */
+    enabled: boolean("enabled").notNull().default(true),
     createdAt: createdAt(),
   },
   // ONE role per (user, board) — S109. The unique used to include `role`, so a

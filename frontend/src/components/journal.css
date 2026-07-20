@@ -72,6 +72,36 @@
   font-size: 14px;
   line-height: 1.5;
   color: var(--ink-muted);
+  /* The explainer is ONE string joined by newlines and typed by one hook, so
+     the line breaks live in the text. Without this they collapse and the three
+     lines run together as a paragraph. */
+  white-space: pre-line;
+  /* Hold the full three-line height from the first frame. The text grows a
+     character at a time; without a floor the blurred preview below jumps up
+     the page on every line break while Olórin is still speaking. */
+  min-height: 4.2em;
+}
+
+/* Blinks only while typing — it is unmounted on `done`, so there is no caret
+   parked at the end of a finished sentence. */
+.jrnl-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--ink-muted);
+  animation: jrnl-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes jrnl-caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jrnl-caret {
+    animation: none;
+  }
 }
 
 /* ── the stage: preview and panel share one grid cell ───────────────────── */

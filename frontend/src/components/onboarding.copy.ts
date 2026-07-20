@@ -871,19 +871,24 @@ export const BEATS: Beat[] = [
     // and the student's own companion carries the scene (it is picked by now):
     // the messenger asking how messages should travel.
     prompt: "Nearly there. May I keep a phone number?",
-    sub: "So a real tutor can reach you when you're stuck. Nothing noisy - and skipping is fine.",
+    sub: "So a real tutor can reach you when you're stuck. Nothing noisy - I promise.",
     scene: (ctx) => {
       const img = loaderPetImg(ctx.answers.pet);
       return { kind: "single", img, side: "left", alt: loaderPetAlt(ctx.answers.pet) };
     },
-    input: { kind: "text", placeholder: "Optional" },
-    optional: true,
+    input: { kind: "text", placeholder: "10-digit mobile, starting 6-9" },
+    // Founder, this session: the Skip is GONE and every answer is now a
+    // deliberate act. `optional` stays in the type — it is the beat-level
+    // affordance, not a phone-specific one — but no beat sets it today.
+    optional: false,
     // S91 — typing "no" here used to get "Got it! Nothing noisy, promise.",
-    // which is the same not-listening bug on a smaller stage. A refusal now
-    // takes the skip voice, because that is what it is.
+    // which is the same not-listening bug on a smaller stage. A refusal keeps
+    // its own voice even though there is no longer a skip to take: a student
+    // who types "no" is still talking to someone, and answering them with
+    // "Got it!" is the not-listening bug regardless of what the form allows.
     reaction: (v) =>
       !v || looksLikeRefusal(v)
-        ? "Skipped - honestly, I'd have skipped it too."
+        ? "I'll still need one to reach you - whenever you're ready."
         : "Got it! Nothing noisy, promise.",
   },
   // ONB-7 (founder): the `lore` beat — the Gandalf reveal — is CUT from

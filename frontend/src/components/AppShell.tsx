@@ -97,6 +97,15 @@ export function AppShell({
             icon={<SparkleIcon />}
             hoverArt={heroImg(hero)}
             hoverArtAlt={heroLabel(hero) ?? "Your hero"}
+            // Founder, this session — Crew's "coming soon" was invisible from
+            // the rail. The page itself has always said it, but nothing on the
+            // way in did, so the sparkle read as a finished feature and the
+            // student only learned otherwise after clicking.
+            //
+            // NOT the retired inert variant: this item still navigates, and the
+            // page it opens is real. The sticker marks what the crew will DO as
+            // unbuilt, which is a different claim from "this button is dead".
+            soon
             active={view === "crew"}
             onClick={() => onNavigate("crew")}
           />
@@ -167,6 +176,7 @@ function RailItem({
   icon,
   active = false,
   badge = false,
+  soon = false,
   hoverArt,
   hoverArtAlt,
   onClick,
@@ -176,6 +186,12 @@ function RailItem({
   active?: boolean;
   /** Red dot — draws the eye to a rail slot worth noticing. */
   badge?: boolean;
+  /**
+   * A visible "soon" sticker on the icon. The item still navigates and its page
+   * is real — this marks the FEATURE as unbuilt, not the button as inert.
+   * Distinct from `badge`, which says "new, go look".
+   */
+  soon?: boolean;
   /**
    * Slice M — art shown INSIDE the hover tooltip, above the label. Undefined
    * (the default, and every item but Crew) renders the plain text tip exactly
@@ -189,12 +205,20 @@ function RailItem({
   return (
     <button
       className={`nav-item${active ? " nav-item--active" : ""}`}
-      aria-label={label}
+      // The sticker is aria-hidden below, so "soon" has to reach a screen
+      // reader through the name — otherwise the one signal the sighted user
+      // gets is the one signal the non-sighted user doesn't.
+      aria-label={soon ? `${label} - coming soon` : label}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
     >
       {icon}
       {badge && <span className="nav-dot" aria-hidden />}
+      {soon && (
+        <span className="nav-soon" aria-hidden>
+          soon
+        </span>
+      )}
       <span className={`nav-tip${hoverArt ? " nav-tip--art" : ""}`}>
         {/* aria-hidden + empty alt: the button's aria-label already names this
             item, and announcing the hero here would name it twice. The art is
@@ -209,11 +233,17 @@ function RailItem({
             still "Crew", so nothing is lost to a screen reader — this only
             changes what the eye gets, which is the founder's ask. */}
         {hoverArt ? (
-          <em className="nav-tip-who">{hoverArtAlt ?? label}</em>
+          <>
+            <em className="nav-tip-who">{hoverArtAlt ?? label}</em>
+            {/* The hero's NAME replaces the label here, so without this the
+                tooltip is the one place the sticker's claim disappears. */}
+            {soon && <em className="nav-tip-soon">coming soon</em>}
+          </>
         ) : (
           <>
             {label}
             {badge && <em className="nav-tip-new">new</em>}
+            {soon && <em className="nav-tip-soon">coming soon</em>}
           </>
         )}
       </span>

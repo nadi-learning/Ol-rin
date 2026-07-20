@@ -72,11 +72,19 @@
   background: var(--primary);
   color: #fff;
 }
-/* Slice K — `.nav-item--soon` is DELETED. Search was its last user, and with
-   Search gone every rail item navigates somewhere real. The rule this closes:
-   a coming-soon lives once, on the page it describes, never on the row that
-   points at it (SoonBanner, `practice.css:90`). The rail can no longer express
-   the other answer, which is the point. */
+/* Slice K deleted `.nav-item--soon` and wrote the rule "a coming-soon lives
+   once, on the page it describes, never on the row that points at it".
+
+   ⚠️ THE FOUNDER REVERSED THAT THIS SESSION, and the reason is worth keeping:
+   the rule was right about INERT items (Search pointed nowhere, so a marker on
+   the row was dressing up a dead end) and wrong about this one. Crew navigates,
+   and its page is real — what is unbuilt is what the crew will DO. A student
+   who could not see that from the rail clicked a sparkle expecting a feature.
+
+   So the sticker below is NOT the old variant restored. The old one said "this
+   row goes nowhere"; this one says "this page is real, the thing it promises is
+   not yet". Different claims, and only the second one survives having a page
+   behind it. */
 
 /* red dot — a rail slot worth noticing. Sits on the icon's top-right corner
    with a ring in the rail's own white so it reads as a badge, not a smudge. */
@@ -93,6 +101,47 @@
 /* on the active (blue) item the ring must match the tile, not the rail */
 .nav-item--active .nav-dot {
   box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* The "soon" sticker. Sits across the icon's bottom edge rather than in a
+   corner: the 44px tile has no corner big enough for a word, and a corner chip
+   at this size either clips or shrinks the text past legibility.
+
+   Amber, not the badge's red — red on this rail already means "new, go look",
+   and two meanings on one colour is how a student learns to ignore both. */
+.nav-soon {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: #f59e0b;
+  color: #fff;
+  /* Ring in the rail's own white so it reads as a sticker ON the icon. */
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+.nav-item--active .nav-soon {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* In the tooltip the sticker becomes a full phrase — there is room there, and
+   "soon" alone under a hero's name reads as part of the name. */
+.nav-tip-soon {
+  display: block;
+  margin-top: 3px;
+  font-style: normal;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fbbf24;
 }
 
 /* instant hover flyout label — the native title tooltip is too slow to feel

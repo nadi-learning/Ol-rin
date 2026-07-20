@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { signIn, devLogin } from "../lib/auth";
+import { setPersona } from "../trpc";
 import "./landing.css";
 
 // Orion persona-select front door (logged-out). Ported from design artifact
@@ -54,6 +55,14 @@ export function LandingPage() {
     setChosen(p);
     setEmail(ROLE_EMAIL[p]);
     setErr(null);
+    // 🔑 Founder, this session — the persona STOPS being cosmetic. It used to
+    // prefill a dev-login email and nothing else, so a parent signing up became
+    // a student (DEFAULT_ROLE) and was walked through picking a hero and a pet.
+    // Recorded at the click rather than at submit because the Google path
+    // leaves the page entirely and comes back on a fresh load.
+    //
+    // It is a CLAIM, not a grant — see `setPersona` for why that is safe.
+    setPersona(p);
   };
 
   const onGoogle = () => {

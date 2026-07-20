@@ -13,8 +13,28 @@ export const ROLES = ["admin", "tutor", "parent", "student"] as const;
 export const Role = z.enum(ROLES);
 export type Role = z.infer<typeof Role>;
 
-/** The role a brand-new member gets. Everyone starts here; admin promotes. */
+/** The role a brand-new member gets when they claim nothing. */
 export const DEFAULT_ROLE: Role = "student";
+
+/**
+ * The roles a person may CLAIM for themselves at signup — the landing persona,
+ * founder's call this session.
+ *
+ * 🔴 `admin` is absent and must stay absent: it is the role that can set every
+ * other role (`admin.setRole`), so a self-assignable admin is a self-service
+ * promotion to everything. `tutor` and `parent` are claimable but land
+ * DISABLED (`membership.enabled`), so what a claim buys you is a waiting room,
+ * not a capability. Only an admin moves someone out of it.
+ *
+ * `student` is here because it is the honest answer for most people and needs
+ * no gate at all.
+ */
+export const SELF_ASSIGNABLE_ROLES = ["student", "parent", "tutor"] as const;
+
+/** True when a role is one a person may claim for themselves at signup. */
+export function isSelfAssignableRole(role: string | null | undefined): role is Role {
+  return Boolean(role) && (SELF_ASSIGNABLE_ROLES as readonly string[]).includes(role!);
+}
 
 export const Axis = z.enum(["conceptual", "procedural"]);
 export type Axis = z.infer<typeof Axis>;
@@ -283,6 +303,27 @@ export type Pet = z.infer<typeof Pet>;
  */
 export function isKnownPet(pet: string | null | undefined): pet is Pet {
   return Boolean(pet) && (PETS as readonly string[]).includes(pet!);
+}
+
+/**
+ * An Indian mobile number: ten digits, first one 6-9.
+ *
+ * ONE definition, called by the onboarding input, its submit button and
+ * `saveStep`. Split across the client and the server it becomes two rules that
+ * agree until they don't — the exact drift `SUPPORTED_GRADES` was made a
+ * constant to prevent (D-M2).
+ *
+ * ⚠️ Phone stopped being optional here: the founder removed the Skip button, so
+ * this is now a REQUIRED field holding child PII, where the copy's own comment
+ * had it asked last precisely "where a refusal costs nothing". That trade is
+ * the founder's to make, but it is a real one and it is not visible in the
+ * diff — hence this note.
+ */
+export const PHONE_RE = /^[6-9]\d{9}$/;
+
+/** True when `phone` is a number we can actually reach a student on. */
+export function isValidPhone(phone: string | null | undefined): boolean {
+  return typeof phone === "string" && PHONE_RE.test(phone.trim());
 }
 
 // The only SINGLE-answer beats → the onboarding column each writes. Anything

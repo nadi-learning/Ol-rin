@@ -181,6 +181,13 @@ export async function chooseBoard(args: {
   slug: string;
   email: string;
   name: string | null;
+  /**
+   * The landing persona, passed straight through to `resolveMembership`, which
+   * honours it only when MINTING and only for a self-assignable role. Named
+   * "intended" rather than "role" on purpose: it is what the person said, not
+   * what they are, and the two are only the same after an admin agrees.
+   */
+  intendedRole?: string | null;
 }): Promise<ResolvedMembership> {
   const [b] = await db
     .select({ id: boardTable.id, slug: boardTable.slug })
@@ -194,6 +201,7 @@ export async function chooseBoard(args: {
       email: args.email,
       name: args.name,
       board: b,
+      intendedRole: args.intendedRole,
     }),
   );
 }

@@ -101,7 +101,13 @@ function columnsFor(hero: string | null, pet: string | null): Column[] {
       // Non-null by construction: art only resolves for a hero the table knows,
       // and the table gives every one of those a label.
       name: heroLabel(hero) ?? "Your hero",
-      role: "Who you talk to",
+      // Founder, this session — "explain clearly what the role of hero and pet
+      // is". "Who you talk to" / "Who stays with you" were true and rhymed, but
+      // a student reading both learned that one talks and one stays, which does
+      // not tell them WHY there are two. These name the job instead, and they
+      // are deliberately parallel so the contrast is the thing that lands:
+      // the hero does the WORK, the pet does the COMPANY.
+      role: "Your study partner - the one who explains things",
       art: heroArt,
       alt: heroLabel(hero) ?? "Your hero",
       caps: HERO_CAPS,
@@ -113,7 +119,7 @@ function columnsFor(hero: string | null, pet: string | null): Column[] {
   cols.push({
     key: "pet",
     name: loaderPetAlt(pet),
-    role: "Who stays with you",
+    role: "Your companion - the one who keeps you company",
     art: loaderPetImg(pet),
     alt: loaderPetSpoken(pet),
     caps: PET_CAPS,

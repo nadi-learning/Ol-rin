@@ -33,6 +33,7 @@ import {
   ONBOARDING_STEPS,
   PETS,
   PRONOUNS,
+  isValidPhone,
   resolveOnboardingStep,
   type OnboardingStep,
 } from "@b2c/kernel/contracts";
@@ -274,6 +275,25 @@ export async function saveStep(
     if (!value) throw new OnboardingValidationError("pet is required");
     if (!(PETS as readonly string[]).includes(value)) {
       throw new OnboardingValidationError(`pet must be one of: ${PETS.join(", ")}`);
+    }
+  }
+
+  // Founder, this session — phone is REQUIRED and shaped. Until now it fell
+  // through to the generic write below with no check on either side: the client
+  // had no pattern and the server had no rule, so `saveStep(phone, "banana")`
+  // stored "banana". The Skip button is gone, so a null no longer means "they
+  // chose not to" — it means the request did not come from our form.
+  //
+  // Same closed-set discipline as fav_character/pet above, one layer stricter:
+  // those reject values we have no ART for, this rejects values we cannot CALL.
+  // `isValidPhone` is the kernel's, shared with the input and its submit button
+  // (D-M2's lesson: one definition, or the two rules drift).
+  if (step === "phone") {
+    if (!value) throw new OnboardingValidationError("phone is required");
+    if (!isValidPhone(value)) {
+      throw new OnboardingValidationError(
+        "phone must be a 10-digit Indian mobile number starting with 6, 7, 8 or 9",
+      );
     }
   }
 

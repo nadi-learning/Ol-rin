@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   firstName,
   heroCompositeImg,
@@ -5,7 +6,21 @@ import {
   loaderPetImg,
   loaderPetSpoken,
 } from "./onboarding.copy";
+import { useTypewriter } from "../lib/useTypewriter";
 import "./journal.css";
+
+/**
+ * What a journal IS, in Olórin's voice — the founder's ask this session.
+ *
+ * Three lines, and each earns its place: what it is, what he does with it, and
+ * who else can see it. The last one is not filler — a student asked to write
+ * down a bad day wants to know where it goes before they write anything.
+ */
+const EXPLAINER = [
+  "A journal is where you tell me how the day actually went - typed, or just spoken out loud.",
+  "I keep it. I notice what keeps tripping you up, and I bring it back when it matters.",
+  "Nobody else reads it. This one is yours.",
+].join("\n");
 
 // Slice J — the Journal surface. A real AppView (D-J1) whose CONTENT is the
 // coming-soon: the hero greets and asks about the day, and the shape of the
@@ -61,6 +76,24 @@ export function JournalPage({
   // tour reuses. "How was today, Amarnath Bollu?" reads like a form.
   const name = firstName(studentName);
 
+  // Founder, this session — the page has to SAY what a journal is, in Olórin's
+  // voice, typed the way onboarding types. Same hook, so there is one typing
+  // feel in the product rather than two that drift.
+  //
+  // ⚠️ UNCONDITIONAL today, and that is a known gap, not an oversight. The ask
+  // was "until at least one journal is created" — but Journal has no entries
+  // backend at all (this whole page is a blurred mock, D-J2), so there is
+  // nothing to count. When entries exist, THIS is the line that grows a
+  // condition; until then a flag would be permanently false and would read as
+  // though the rule were implemented.
+  const [reducedMotion] = useState(
+    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+  );
+  // One typewriter across all three lines, joined by newlines and rendered with
+  // `white-space: pre-line` — three separate hooks would type the lines in
+  // parallel, which reads as a wall appearing rather than someone speaking.
+  const { visible, done } = useTypewriter(EXPLAINER, !reducedMotion, 22);
+
   return (
     <section className="jrnl" aria-labelledby="jrnl-head">
       <header className="jrnl-say">
@@ -69,9 +102,14 @@ export function JournalPage({
           <h1 className="jrnl-head" id="jrnl-head">
             How was today, {name}?
           </h1>
-          <p className="jrnl-sub">
-            Tell me what went well and what didn't. I'll remember it, and we'll pick up
-            from there tomorrow.
+          {/* The full string is in the a11y tree from the first frame — a
+              screen reader should not have to wait out an animation, and a
+              live region would re-announce on every single character. */}
+          <p className="jrnl-sub" aria-label={EXPLAINER}>
+            <span aria-hidden="true">
+              {visible}
+              {!done && <span className="jrnl-caret" />}
+            </span>
           </p>
         </div>
       </header>

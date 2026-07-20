@@ -31,7 +31,7 @@
 import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { appUser, membership } from "@b2c/kernel/schema";
-import { DEFAULT_ROLE, type Role } from "@b2c/kernel/contracts";
+import { DEFAULT_ROLE, isSelfAssignableRole, type Role } from "@b2c/kernel/contracts";
 
 export class NoMembershipError extends Error {
   readonly code = "NO_MEMBERSHIP";
@@ -45,13 +45,32 @@ export type ResolvedMembership = {
   user: { id: string; email: string; name: string | null };
   board: { id: string; slug: string };
   role: string;
+  /** False only for a self-assigned parent/tutor still waiting on an admin. */
+  enabled: boolean;
 };
 
 export async function resolveMembership(
   tx: PgTransaction<any, any, any>,
-  args: { email: string; name: string | null; board: { id: string; slug: string } },
+  args: {
+    email: string;
+    name: string | null;
+    board: { id: string; slug: string };
+    /**
+     * What the person said they were on the way in (the landing persona,
+     * founder's call this session). Advisory ONLY, and in two ways:
+     *
+     *  - it is read solely when MINTING a membership. An existing role always
+     *    wins, so this can never demote or promote someone who already has one.
+     *  - anything outside `SELF_ASSIGNABLE_ROLES` is ignored, so a hand-rolled
+     *    request cannot mint an admin.
+     *
+     * A self-assigned non-student role lands DISABLED — the claim is recorded,
+     * the capability is not granted.
+     */
+    intendedRole?: string | null;
+  },
 ): Promise<ResolvedMembership> {
-  const { email, name, board } = args;
+  const { email, name, board, intendedRole } = args;
 
   // 1. upsert app_user by email (global; insert-or-fetch). On re-login keep the
   // existing row; backfill name if it was null.
@@ -70,32 +89,54 @@ export async function resolveMembership(
   // 'student'. RLS-scoped to the active board, so a membership on another board
   // is invisible here and correctly counts as absent.
   const [existing] = await tx
-    .select({ role: membership.role })
+    .select({ role: membership.role, enabled: membership.enabled })
     .from(membership)
     .where(and(eq(membership.userId, user.id), eq(membership.boardId, board.id)))
     .limit(1);
 
   let role: string;
+  let enabled: boolean;
   if (existing) {
     role = existing.role;
+    enabled = existing.enabled;
   } else {
-    // 3. First entry on this board — create at the default role. DoNothing on
-    // conflict covers the concurrent-login race (two tabs, one new user): the
-    // loser's insert is a no-op rather than an error, and both return 'student'
-    // — which is what the winner wrote anyway, so the answer is still correct.
-    role = DEFAULT_ROLE;
+    // 3. First entry on this board — mint it. DoNothing on conflict covers the
+    // concurrent-login race (two tabs, one new user): the loser's insert is a
+    // no-op rather than an error, and both return the same answer the winner
+    // wrote, so the result is still correct.
+    //
+    // The role is the person's own claim when it is one they may make, and the
+    // default otherwise. `enabled` is what keeps that safe: a student is on
+    // immediately (nobody to wait for), a self-declared parent or tutor is
+    // recorded but OFF until an admin agrees.
+    role = isSelfAssignableRole(intendedRole) ? intendedRole : DEFAULT_ROLE;
+    enabled = role === DEFAULT_ROLE;
     await tx
       .insert(membership)
-      .values({ userId: user.id, boardId: board.id, role })
+      .values({ userId: user.id, boardId: board.id, role, enabled })
       .onConflictDoNothing({
         target: [membership.userId, membership.boardId],
       });
+    // 🔴 Re-read after a DoNothing. On the losing side of the race the insert
+    // wrote nothing, so the local `role`/`enabled` describe a row that does not
+    // exist — and if the two tabs claimed different personas, returning the
+    // loser's claim would hand back a role the database disagrees with.
+    const [settled] = await tx
+      .select({ role: membership.role, enabled: membership.enabled })
+      .from(membership)
+      .where(and(eq(membership.userId, user.id), eq(membership.boardId, board.id)))
+      .limit(1);
+    if (settled) {
+      role = settled.role;
+      enabled = settled.enabled;
+    }
   }
 
   return {
     user: { id: user.id, email: user.email, name: user.name },
     board,
     role,
+    enabled,
   };
 }
 
@@ -135,15 +176,25 @@ export async function grantRole(
 
   // Force-set: the point of this function is to CHANGE a role, so a conflict
   // must overwrite rather than no-op. Targets (user, board) — the S109 unique.
+  // 🔑 ENABLED travels with the grant, and must. This is the ONLY way out of
+  // the waiting room a self-assigned parent/tutor lands in — an admin setting
+  // the role without switching it on would leave them staring at the same
+  // "reach out to us" board they were already looking at, having been enabled.
+  // Granting a role IS agreeing to it; there is no third state.
   await tx
     .insert(membership)
-    .values({ userId: user.id, boardId: board.id, role })
+    .values({ userId: user.id, boardId: board.id, role, enabled: true })
     .onConflictDoUpdate({
       target: [membership.userId, membership.boardId],
-      set: { role },
+      set: { role, enabled: true },
     });
 
-  return { user: { id: user.id, email: user.email, name: user.name }, board, role };
+  return {
+    user: { id: user.id, email: user.email, name: user.name },
+    board,
+    role,
+    enabled: true,
+  };
 }
 
 /**
@@ -158,7 +209,7 @@ export async function grantRole(
 export async function requireMembership(
   tx: PgTransaction<any, any, any>,
   args: { email: string; board: { id: string; slug: string } },
-): Promise<{ userId: string; role: string }> {
+): Promise<{ userId: string; role: string; enabled: boolean }> {
   const { email, board } = args;
   const [user] = await tx
     .select({ id: appUser.id })
@@ -168,11 +219,16 @@ export async function requireMembership(
   if (!user) throw new NoMembershipError(email, board.slug);
 
   const [m] = await tx
-    .select({ role: membership.role })
+    .select({ role: membership.role, enabled: membership.enabled })
     .from(membership)
     .where(and(eq(membership.userId, user.id), eq(membership.boardId, board.id)))
     .limit(1);
   if (!m) throw new NoMembershipError(email, board.slug);
 
-  return { userId: user.id, role: m.role };
+  // ⚠️ Returned, NOT enforced. This function answers "do they belong here",
+  // and a disabled parent still belongs — they are waiting, not rejected.
+  // Throwing here would 403 them out of the very screen that tells them who to
+  // call. The gate is a RENDER decision (App.tsx), which is why it travels as
+  // data rather than as an exception.
+  return { userId: user.id, role: m.role, enabled: m.enabled };
 }

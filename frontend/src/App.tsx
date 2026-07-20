@@ -13,6 +13,7 @@ import { PacePlanPage } from "./components/PacePlanPage";
 import { ProfilePage } from "./components/ProfilePage";
 import { TutorPage } from "./components/TutorPage";
 import { ParentPage } from "./components/ParentPage";
+import { AccessPending } from "./components/AccessPending";
 import { AdminPage } from "./components/AdminPage";
 import { OnboardingPage } from "./components/OnboardingPage";
 import "./theme/tokens.css";
@@ -52,6 +53,12 @@ export function App() {
     setRevisionTarget(subTopicId);
     setView("revision");
   };
+
+  // Read once per mount, not on every render: `ClaimMint` CLEARS the persona
+  // when it succeeds, and a value re-read after that would flip this to false
+  // mid-flight and swap the component out from under its own request.
+  const [claimedRole] = useState(() => getPersona());
+  const isPendingRoleClaim = claimedRole === "parent" || claimedRole === "tutor";
 
   useEffect(() => {
     if (!session) {
@@ -147,6 +154,22 @@ export function App() {
   //
   // The name comes from the auth session, not `me` — there is no spine identity
   // to read yet, which is precisely the state being handled.
+  // 🔑 A CLAIMED PARENT/TUTOR NEVER SEES STUDENT ONBOARDING.
+  //
+  // Onboarding is what mints the membership (`chooseBoard`, in the about_you
+  // beat), so without this branch a self-declared parent would be asked their
+  // class, their pronoun, a hero and a pet before the app could discover they
+  // are not a student. The flow is written for a child; marching a parent
+  // through it to reach a "call us" board is the wrong first impression.
+  //
+  // So they mint DIRECTLY and land on the waiting room. The board is a
+  // placeholder: they are disabled until an admin sets them up by hand, and
+  // setting them up is exactly when the right board gets chosen. Picking one
+  // here would be asking a question whose answer we are about to overwrite.
+  if (needsBoard && isPendingRoleClaim) {
+    return <ClaimMint onDone={() => setBootNonce((n) => n + 1)} />;
+  }
+
   if (needsBoard) {
     return (
       <OnboardingPage
@@ -175,6 +198,23 @@ export function App() {
   }
 
   const displayName = me.user.name ?? me.user.email.split("@")[0] ?? "there";
+
+  // 🔑 THE WAITING ROOM (founder, this session) — BEFORE the role routes below,
+  // and that order is the whole guarantee.
+  //
+  // The landing persona now sets the role at signup, so `tutor` is a role anyone
+  // can CLAIM. `membership.enabled` is what separates a claim from a grant: a
+  // self-assigned tutor lands here, not on the authoring surface. Put this check
+  // after the routes and a stranger picking "Tutor" on the login page would be
+  // writing questions for real students.
+  //
+  // Students are never gated — `enabled` is written true for them at mint, so
+  // this can never swallow the flow it sits in front of.
+  if ((me.role === "tutor" || me.role === "parent") && !me.enabled) {
+    return (
+      <AccessPending name={displayName} role={me.role} onSignOut={() => signOut()} />
+    );
+  }
 
   // Slice T — tutors get their own read surface (different target user), routed
   // entirely separately from the student shell (Revision/Practice).

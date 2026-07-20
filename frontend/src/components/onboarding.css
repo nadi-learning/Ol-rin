@@ -874,18 +874,14 @@
   cursor: default;
 }
 
-/* Skip is deliberately a real, visible control — an optional ask with a hidden
-   skip is not optional. */
-.onb-skip {
-  background: none;
-  border: none;
+/* The phone rule, shown only after they have typed. Sits under the field as a
+   quiet correction, not a red form error — Olórin is asking, not validating. */
+.onb-field-hint {
+  margin: 8px 2px 0;
+  font-size: 13.5px;
+  line-height: 1.45;
   color: var(--ink-muted);
-  font-size: 14px;
-  text-decoration: underline;
-  padding: 8px 4px;
-}
-.onb-skip:hover:not(:disabled) {
-  color: var(--ink-soft);
+  max-width: 34ch;
 }
 
 /* ── the loader close ── */
