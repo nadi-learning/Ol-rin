@@ -54,12 +54,6 @@ export function App() {
     setView("revision");
   };
 
-  // Read once per mount, not on every render: `ClaimMint` CLEARS the persona
-  // when it succeeds, and a value re-read after that would flip this to false
-  // mid-flight and swap the component out from under its own request.
-  const [claimedRole] = useState(() => getPersona());
-  const isPendingRoleClaim = claimedRole === "parent" || claimedRole === "tutor";
-
   useEffect(() => {
     if (!session) {
       setMe(null);
@@ -154,22 +148,20 @@ export function App() {
   //
   // The name comes from the auth session, not `me` — there is no spine identity
   // to read yet, which is precisely the state being handled.
-  // 🔑 A CLAIMED PARENT/TUTOR NEVER SEES STUDENT ONBOARDING.
   //
-  // Onboarding is what mints the membership (`chooseBoard`, in the about_you
-  // beat), so without this branch a self-declared parent would be asked their
-  // class, their pronoun, a hero and a pet before the app could discover they
-  // are not a student. The flow is written for a child; marching a parent
-  // through it to reach a "call us" board is the wrong first impression.
+  // ⚠️ PARKED (founder, mid-session): a branch stood here that sent a claimed
+  // parent/tutor straight to the waiting room instead of through student
+  // onboarding. It called a `ClaimMint` component that was never written, so
+  // the tree did not compile. The branch is removed rather than stubbed — a
+  // stub would route real people into a half-built flow.
   //
-  // So they mint DIRECTLY and land on the waiting room. The board is a
-  // placeholder: they are disabled until an admin sets them up by hand, and
-  // setting them up is exactly when the right board gets chosen. Picking one
-  // here would be asking a question whose answer we are about to overwrite.
-  if (needsBoard && isPendingRoleClaim) {
-    return <ClaimMint onDone={() => setBootNonce((n) => n + 1)} />;
-  }
-
+  // What REMAINS committed and is deliberately inert: `membership.enabled`
+  // (migration 0035), `AccessPending`, the persona written at the landing page,
+  // and `chooseBoard`'s `intendedRole` input. Nothing passes `intendedRole`
+  // today, so every signup still mints a student and `enabled` is always true —
+  // the parked feature grants nothing and blocks nothing. Resuming it means
+  // writing the mint step and passing the persona through; see the session
+  // notes before doing so.
   if (needsBoard) {
     return (
       <OnboardingPage
