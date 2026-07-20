@@ -9,7 +9,8 @@
  *
  * Emails are lowercase to match what Better Auth stores at signup (M27).
  *
- * For a live eyeball: log in as admin@example.com (dev login) → pick a chapter
+ * For a live eyeball: log in as the seeded admin (dev login) → go to /admin
+ * (S124: the portal has no other door) → pick a chapter
  * (cbse already has "Exploring Mixtures…" from seed:ch5 + others from
  * seed:registry) → paste that chapter's topics.md → Extract → Confirm.
  *
@@ -18,6 +19,7 @@
 import { eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { board } from "@b2c/kernel/schema";
+import { ADMIN_EMAILS } from "@b2c/kernel/contracts";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { grantRole } from "../src/services/membership";
@@ -25,7 +27,24 @@ import { grantRole } from "../src/services/membership";
 type Tx = PgTransaction<any, any, any>;
 
 const BOARD_SLUG = "cbse";
-const ADMIN_EMAIL = "admin@example.com";
+
+/**
+ * 🔴 S124 — THE SEEDED ADMIN MUST BE A WHITELISTED ONE, AND IS READ FROM THE
+ * WHITELIST RATHER THAN RETYPED.
+ *
+ * This used to be `admin@example.com`. Since the admin surface took its second
+ * lock (`ADMIN_EMAILS`, kernel), that address grants a role that can no longer
+ * open anything: the membership is minted, the login works, and every admin.*
+ * call is refused — a seed that appears to succeed and produces an admin who
+ * cannot admin. Taking `[0]` from the list instead means the seed cannot drift
+ * from the gate, because there is only one list.
+ *
+ * ⚠️ Consequence worth knowing before you run this against a shared database:
+ * it creates a membership for a REAL person's address. That is intended locally
+ * (it is the only way to eyeball the portal) and is why the seed names it out
+ * loud below.
+ */
+const ADMIN_EMAIL = ADMIN_EMAILS[0];
 const ADMIN_NAME = "Admin One";
 
 async function main() {

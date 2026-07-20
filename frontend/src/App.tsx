@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useSession, signOut } from "./lib/auth";
-import { trpc, clearBoard, setBoard, getPersona } from "./trpc";
+import { trpc, clearBoard, setBoard, getPersona, setPersona } from "./trpc";
+import { isAdminEmail } from "@b2c/kernel/contracts";
 import { AppShell, type AppView } from "./components/AppShell";
 import { LandingPage } from "./components/LandingPage";
 import { DashboardPage } from "./components/DashboardPage";
@@ -28,6 +29,22 @@ import "./components/gate.css";
 type Me = Awaited<ReturnType<typeof trpc.me.query>>;
 type Onb = Awaited<ReturnType<typeof trpc.onboarding.getState.query>>;
 
+/**
+ * S124 — the admin portal's one and only URL.
+ *
+ * Read at module scope, not in the component: nothing in this app pushes
+ * history (there is no router — `/u/:token` in main.tsx is the only other path
+ * branch), and the one navigation to it is a `location.replace`, which reloads.
+ * So the pathname genuinely cannot change under a mounted App, and re-reading it
+ * every render would imply otherwise.
+ *
+ * Trailing slash tolerated because browsers and humans both add one; the match
+ * is otherwise exact, so `/administrator` and `/admin/secrets` are NOT the admin
+ * route. A prefix match here would be the M79 mistake wearing a URL.
+ */
+const ADMIN_PATH = "/admin";
+const isAdminRoute = window.location.pathname.replace(/\/+$/, "") === ADMIN_PATH;
+
 export function App() {
   const { data: session, isPending } = useSession();
   const [me, setMe] = useState<Me | null>(null);
@@ -50,6 +67,10 @@ export function App() {
   // Tutor, they are not a tutor, and the honest answer is the waiting room
   // rather than silently handing them whatever profile they DO have.
   const [missingProfile, setMissingProfile] = useState<string | null>(null);
+  // S124 — the profiles this identity ACTUALLY holds, kept so the signboard can
+  // offer a way out of a stale claim. See the `heldRoles` block at the
+  // AccessPending call site for why a dead end was the bug worth fixing.
+  const [heldRoles, setHeldRoles] = useState<string[]>([]);
   // Deep-link target for "Continue lesson" — the sub_topic the dashboard wants
   // Revision to open at. Cleared (null) means Revision opens at its default.
   const [revisionTarget, setRevisionTarget] = useState<string | null>(null);
@@ -126,6 +147,10 @@ export function App() {
       const claimUnheld =
         who.memberships.length > 0 && !!claimedRole && !heldProfiles.has(claimedRole);
       if (cancelled) return;
+      // S124 — recorded so the signboard can offer the profiles they DO hold.
+      // Sorted for a stable button order across boots; a set has no order and
+      // the server makes no promise about membership order.
+      setHeldRoles([...heldProfiles].sort());
       setMissingProfile(claimUnheld ? claimedRole : null);
       if (claimUnheld) {
         setNeedsBoard(false);
@@ -226,6 +251,33 @@ export function App() {
         name={session.user.name ?? session.user.email.split("@")[0] ?? "there"}
         role={missingProfile}
         onSignOut={() => signOut()}
+        // 🔑 S124 — THE WAY OUT OF A STALE CLAIM. `b2c.persona` is written once
+        // on the landing page and NOTHING has ever cleared it (`clearPersona`
+        // has zero call sites), so it outlives the visit that set it. Anyone who
+        // once clicked "Tutor" and wandered off carries that claim forever, and
+        // on their next sign-in as a student it lands them here — a waiting room
+        // for a role they never pursued, in front of an account that works.
+        //
+        // The escape existed before this (sign out → click the right card), but
+        // nobody who hits this page knows that, and from the outside it reads as
+        // "the app is broken". Offering the profiles they actually hold turns a
+        // dead end into a choice, without a sign-out round-trip.
+        //
+        // 🔴 NOT FIXED BY CLEARING THE PERSONA ON A GOOD BOOT, which is the
+        // obvious move: this value is also the `x-profile` header for the whole
+        // session (trpc.ts), so dropping it would break the profile SELECTION
+        // that S123 built. The claim is not stale state to purge — it is stale
+        // only when it disagrees with the memberships, which is exactly here.
+        heldRoles={heldRoles}
+        onUseProfile={(role) => {
+          setPersona(role);
+          // Re-boot rather than patch state: `claimedRole` is read from
+          // localStorage at render and is in the boot effect's deps, so bumping
+          // the nonce re-runs the whole validation against the new claim. No
+          // branch is left holding a value derived from the old one.
+          setMissingProfile(null);
+          setBootNonce((n) => n + 1);
+        }}
       />
     );
   }
@@ -297,6 +349,54 @@ export function App() {
 
   const displayName = me.user.name ?? me.user.email.split("@")[0] ?? "there";
 
+  // ── S124 — `/admin` IS THE ONLY DOOR TO THE ADMIN PORTAL (founder). ──
+  //
+  // It sits ABOVE every other route so the URL has exactly two outcomes and
+  // they are easy to hold in your head: the portal, or nothing. A tutor, a
+  // parent, a student and an off-list admin all get the same not-found page —
+  // the surface does not announce itself to anyone who cannot use it.
+  //
+  // 🔴 THE EMAIL CHECK HERE IS A COURTESY, NOT THE GATE. Anyone can edit a
+  // bundle; the enforcement that matters is `adminProcedure` (trpc/init.ts),
+  // which runs the same `isAdminEmail` server-side on every admin.* call. This
+  // check exists so a wrong-but-honest visitor sees a clean 404 instead of a
+  // portal that 403s on every button. If you ever find yourself relying on THIS
+  // line for safety, the server-side one has been removed and that is the bug.
+  //
+  // ⚠️ Known edge: an identity with NO membership yet never reaches this block —
+  // the `needsBoard` branch above returns onboarding first. Harmless, because an
+  // admin necessarily HAS a membership row; a person without one is not one.
+  if (isAdminRoute) {
+    if (me.role === "admin" && isAdminEmail(me.user.email)) {
+      return (
+        <AdminPage
+          adminName={displayName}
+          adminEmail={me.user.email}
+          onSignOut={() => signOut()}
+        />
+      );
+    }
+    return <NotFound onSignOut={() => signOut()} />;
+  }
+
+  // The other half of "only door": an admin who lands anywhere else is sent to
+  // it. Without this an admin-only identity would fall through to the student
+  // shell below and meet a dashboard with no student data behind it.
+  //
+  // `replace`, not `assign`: this is a correction, not a navigation, and it must
+  // not put a broken back-button step in their history. It cannot loop — at
+  // `/admin` the branch above returns first.
+  //
+  // 🔴 GUARDED ON THE EMAIL TOO. Sending an OFF-LIST admin here would strand
+  // them: they would be redirected to `/admin` and served the not-found page,
+  // with `/` bouncing them back every time they tried to leave. An off-list
+  // admin instead falls through to the shell below, and the not-found page
+  // carries a sign-out for the case where they typed the URL themselves.
+  if (me.role === "admin" && isAdminEmail(me.user.email)) {
+    window.location.replace(ADMIN_PATH);
+    return <Gate>Taking you to the admin portal…</Gate>;
+  }
+
   // 🔑 THE WAITING ROOM (founder, this session) — BEFORE the role routes below,
   // and that order is the whole guarantee.
   //
@@ -326,17 +426,15 @@ export function App() {
     return <ParentPage parentName={displayName} onSignOut={() => signOut()} />;
   }
 
-  // Slice QA3-b — admins get the topics.md ingest tool (D-QA3-6), routed
-  // separately from the student/tutor/parent shells.
-  if (me.role === "admin") {
-    return (
-      <AdminPage
-        adminName={displayName}
-        adminEmail={me.user.email}
-        onSignOut={() => signOut()}
-      />
-    );
-  }
+  // 🔴 S124 — THE ADMIN AUTO-ROUTE THAT USED TO SIT HERE IS GONE, DELIBERATELY.
+  // Slice QA3-b routed `me.role === "admin"` straight to <AdminPage> from `/`,
+  // which made the portal reachable without ever naming it. The founder's call
+  // is that `/admin` is the only door, so the render moved to the isAdminRoute
+  // branch above and the redirect replaced this block. Reinstating a role-only
+  // route here would quietly re-open the portal at `/` and bypass the email
+  // whitelist on the way — the FE half of the gate is that branch, not this one.
+  //
+  // Anything falling through to here is a student.
 
   const studentName = displayName;
 
@@ -481,5 +579,38 @@ function Gate({ children }: { children: ReactNode }) {
     <div className="gate graph-paper">
       <div className="gate-card">{children}</div>
     </div>
+  );
+}
+
+/**
+ * S124 — what everyone who is not an admin sees at `/admin`.
+ *
+ * Says nothing about what lives here or why they were refused: a page that
+ * distinguishes "no such route" from "you may not enter" tells whoever is
+ * probing that there IS something to enter. A student who mistypes and an
+ * off-list visitor get the identical page.
+ *
+ * 🔴 IT CARRIES A SIGN-OUT, and that is not decoration. The only people who
+ * reach it are signed in, and for an off-list admin this is a page with no
+ * onward link at all — without a way out they would be stuck looking at it.
+ * (The same dead-end reasoning as the signboard's `heldRoles` escape.)
+ */
+function NotFound({ onSignOut }: { onSignOut: () => void }) {
+  return (
+    <Gate>
+      {/* `h2` and `.gate-sub` are what gate.css already styles — the card has
+          no h1 rule, so inventing one here would render unstyled. */}
+      <h2>Nothing here</h2>
+      <p className="gate-sub">That page doesn’t exist.</p>
+      <p>
+        <a className="gate-link" href="/">
+          Back to Olórin
+        </a>
+        {" · "}
+        <button className="gate-link" onClick={onSignOut}>
+          Sign out
+        </button>
+      </p>
+    </Gate>
   );
 }

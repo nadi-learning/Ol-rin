@@ -4,7 +4,7 @@ import { withBoard } from "../db/with-board";
 import { NoMembershipError, requireMembership } from "../services/membership";
 import { assertTutor, TutorOnlyError } from "../services/tutor";
 import { assertParent, ParentOnlyError } from "../services/parent";
-import { assertAdmin, AdminOnlyError } from "../services/admin_ingest";
+import { assertAdminAccess, AdminOnlyError } from "../services/admin_ingest";
 import type { Context } from "./context";
 
 const t = initTRPC.context<Context>().create({ transformer: superjson });
@@ -142,17 +142,32 @@ export const parentProcedure = protectedProcedure.use(async ({ ctx, next }) => {
 });
 
 /**
- * Authed + board + membership + ADMIN-ROLE-required procedure (Slice QA3-b). The
- * admin sibling of tutor/parentProcedure: asserts the membership role is 'admin' —
- * the CHECK side of the role gate (M11). The SET side is the real
- * `grantRole(…, role: 'admin')` flow (seed_admin / the probe / admin.setRole
- * drive it). Use for the admin ingest + state surfaces (admin.extractTopicsMd, …).
+ * Authed + board + membership + ADMIN-ROLE + ADMIN-EMAIL procedure (Slice QA3-b,
+ * re-gated S124). The admin sibling of tutor/parentProcedure — but unlike them it
+ * takes TWO locks, and the difference is deliberate.
  *
- *  - non-admin membership → FORBIDDEN (message NOT_AN_ADMIN)
+ * Role is the CHECK side of the role gate (M11); the SET side is the real
+ * `grantRole(…, role: 'admin')` flow (seed_admin / the probe / admin.setRole).
+ * Email is `ADMIN_EMAILS` in the kernel — a hardcoded list, changeable only by a
+ * deploy. The role is data and can be written by anything that can write rows;
+ * the list is code. An admin needs both.
+ *
+ * Use for the admin ingest + state surfaces (admin.extractTopicsMd, …).
+ *
+ *  - non-admin membership       → FORBIDDEN (message NOT_AN_ADMIN)
+ *  - admin membership, off-list → FORBIDDEN (message NOT_AN_ADMIN, same code by
+ *    design — see assertAdminAccess for why the two are indistinguishable)
  */
 export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   try {
-    assertAdmin(ctx.membership.role);
+    // S124 — ROLE **AND** EMAIL. `assertAdminAccess` replaced the bare
+    // `assertAdmin` here; the role alone is no longer enough to reach any admin
+    // resolver. This is the ONLY enforcement point that matters — the FE
+    // `/admin` route checks the same list, but a FE check is a courtesy, not a
+    // gate (S122: "the UI was never the gate"). Every admin.* procedure hangs
+    // off this middleware, so ingest, people, setRole and linking are all
+    // covered without touching any of them individually.
+    assertAdminAccess(ctx.membership.role, ctx.realUser.email);
   } catch (e) {
     if (e instanceof AdminOnlyError) {
       throw new TRPCError({ code: "FORBIDDEN", message: e.code });

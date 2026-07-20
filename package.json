@@ -36,6 +36,7 @@
     "probe:bundle": "bun scripts/probe_bundle_serve.ts",
     "probe:ingest": "bun scripts/probe_ingest.ts",
     "probe:adminpeople": "bun scripts/probe_admin_people.ts",
+    "probe:admingate": "bun scripts/probe_admin_gate.ts",
     "probe:boardpick": "bun scripts/probe_board_pick.ts",
     "probe:questions": "bun scripts/probe_revision_questions.ts",
     "probe:mcq": "bun scripts/probe_mcq_evidence.ts",

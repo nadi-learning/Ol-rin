@@ -39,6 +39,7 @@ import {
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
+import { isAdminEmail } from "@b2c/kernel/contracts";
 import { geminiJson } from "./ai/gemini";
 
 type Tx = PgTransaction<any, any, any>;
@@ -88,6 +89,26 @@ export class AdminOnlyError extends Error {
 }
 export function assertAdmin(role: string): void {
   if (role !== "admin") throw new AdminOnlyError(role);
+}
+
+/**
+ * THE FULL ADMIN GATE (S124) — role AND email. `adminProcedure` calls this and
+ * nothing else; `assertAdmin` above is now only half the rule and must never be
+ * the last word on its own.
+ *
+ * 🔴 A NON-WHITELISTED ADMIN IS REPORTED AS `NOT_AN_ADMIN`, DELIBERATELY —
+ * the SAME code an ordinary student gets. The two failures are indistinguishable
+ * from outside on purpose: a distinct code (`EMAIL_NOT_ALLOWED`) would confirm
+ * to whoever is probing that they hold a real admin row and only the address is
+ * missing, which tells them exactly what to attack next. The cost is that a
+ * genuinely misconfigured admin sees a generic refusal — accepted, because the
+ * fix for that lives in ADMIN_EMAILS where a human can read it.
+ *
+ * Order matters only for clarity, not safety: both must pass.
+ */
+export function assertAdminAccess(role: string, email: string | null | undefined): void {
+  assertAdmin(role);
+  if (!isAdminEmail(email)) throw new AdminOnlyError(role);
 }
 
 /** The target chapter isn't visible under the caller's board (RLS) — or absent. */

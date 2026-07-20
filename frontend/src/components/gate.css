@@ -61,6 +61,24 @@
   background: var(--surface-sunk);
 }
 
+/* S124 — the not-found card's two onward links. A <button> and an <a> sit side
+   by side here, so the button is reset to look like the link rather than the
+   link dressed as a button: the sign-out is not the page's primary action, it
+   is the second of two equal ways out. */
+.gate-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.gate-link:hover {
+  color: var(--primary-hover);
+}
+
 /* dev login bypass */
 .dev-login {
   margin-top: 24px;

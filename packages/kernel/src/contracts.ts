@@ -50,6 +50,50 @@ export function isRole(role: string | null | undefined): role is Role {
   return Boolean(role) && (ROLES as readonly string[]).includes(role!);
 }
 
+/**
+ * THE ADMIN EMAIL WHITELIST (founder, S124) — the SECOND lock on the admin
+ * surface. Holding an `admin` membership row is no longer sufficient; the
+ * identity must ALSO be one of these addresses.
+ *
+ * 🔑 WHY TWO LOCKS AND NOT ONE. The role is data — `admin.setRole` writes it,
+ * and anything that can write a row can hand out the role that writes rows.
+ * This list is CODE: changing it takes a commit, a build and a deploy, which is
+ * a deliberately slower path than an UPDATE. The role answers "is this person
+ * an admin"; this answers "is this person one of US". Both must say yes.
+ *
+ * 🔴 THE LIST IS THE WHOLE GATE, SO IT IS DELIBERATELY NOT CONFIGURABLE.
+ * There is no env override on purpose: an env var is exactly how a gate gets
+ * opened by accident on one box and stays open (this repo spent a whole session
+ * closing `NODE_ENV`-gated dev login for that reason). If you need another
+ * admin, add them here and deploy.
+ *
+ * ⚠️ Probes do NOT get a bypass either — they authenticate as these addresses
+ * and carry a negative control proving a non-whitelisted admin is refused. A
+ * test that reaches the surface through a back door is not testing the gate.
+ */
+export const ADMIN_EMAILS = [
+  "xxxx51263@gmail.com",
+  "spranav.iitkgp@gmail.com",
+] as const;
+
+/**
+ * True when an email may reach the admin surface.
+ *
+ * 🔴 BOTH SIDES ARE NORMALISED, and that is not cosmetic. This function's
+ * trigger is the ABSENCE of a match, and "absent" has more causes than "not on
+ * the list" — a capitalised address from the identity provider, or a stray
+ * space, would silently 404 a real admin out of their own portal (the M82
+ * family: an empty result is not a fact until you know why it is empty).
+ * Lower-casing both sides removes the two causes we can actually control.
+ *
+ * Fails CLOSED on null/undefined: no email is not an admin.
+ */
+export function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const normalised = email.trim().toLowerCase();
+  return (ADMIN_EMAILS as readonly string[]).some((e) => e.toLowerCase() === normalised);
+}
+
 export const Axis = z.enum(["conceptual", "procedural"]);
 export type Axis = z.infer<typeof Axis>;
 

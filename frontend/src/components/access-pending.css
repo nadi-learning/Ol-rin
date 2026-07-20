@@ -233,6 +233,41 @@
   color: var(--ink-muted, #6b5844);
 }
 
+/* S124 — the stale-claim escape. Set BELOW the phone number in weight and size
+   on purpose: the number is still the page. This is a footnote for the small
+   group who arrived here by a remembered click, not a competing call to
+   action, so it reads as an aside and never as the thing to do. */
+.shire-switch {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border, #d9cbb6);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-muted, #6b5844);
+}
+.shire-switch-lead {
+  color: var(--ink-muted, #6b5844);
+}
+/* Several alternatives is the rare case (a person holding two other profiles),
+   but they must not run together when it happens. */
+.shire-switch-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-right: 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--primary, #1f6f4a);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.shire-switch-btn:last-child {
+  margin-right: 0;
+}
+.shire-switch-btn:hover {
+  color: var(--primary-hover, #17573a);
+}
+
 @media (max-width: 480px) {
   .shire-signs {
     padding-bottom: 58px;
