@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "../trpc";
 import { useTypewriter } from "../lib/useTypewriter";
+import { BoardSettingUp } from "./BoardSettingUp";
 import { pickLanding } from "./revision-landing.copy";
 import type { LandingChip } from "./revision-landing.copy";
 import "./revision-landing.css";
@@ -151,10 +152,19 @@ export function RevisionLanding({
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Find a chapter"
         />
-        {nav && nav.length === 0 && (
-          <p className="revision-muted">No lessons published for your class yet.</p>
+        {/* 🔴 Slice M — THREE cases, where there used to be two, and the middle
+            one was being told the wrong thing.
+            `nav.length === 0` is a board with no spine at all (igcse).
+            `chapters.length === 0` used to mean "your search found nothing" —
+            but `chapters` is filtered by BOTH the query AND `slideCount > 0`,
+            so a board with 24 spine chapters and 0 published ones landed there
+            with an EMPTY query and read `Nothing matches ""`. Splitting on
+            whether the student actually typed something is what tells the two
+            apart, so a real search still gets a real search answer. */}
+        {nav && (nav.length === 0 || (chapters.length === 0 && query.trim() === "")) && (
+          <BoardSettingUp />
         )}
-        {nav && nav.length > 0 && chapters.length === 0 && (
+        {nav && nav.length > 0 && chapters.length === 0 && query.trim() !== "" && (
           <p className="revision-muted">Nothing matches "{query}".</p>
         )}
         <div className="rev-landing-grid">

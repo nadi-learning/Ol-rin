@@ -11,15 +11,45 @@
 
 .crew-head {
   margin: 0 0 6px;
-  font-size: 21px;
+  /* Slice M — bigger, because it is now the thing that ANIMATES on arrival and
+     a 21px line typing itself reads as a glitch rather than as a flourish.
+     `min-height` reserves the line so the columns below don't jump up as the
+     first character lands. */
+  font-family: var(--font-display);
+  font-size: 28px;
   font-weight: 700;
+  min-height: 1.2em;
   color: var(--ink);
+}
+/* The writing caret. Dies when `done` flips — a caret that blinks forever on a
+   finished line reads as an editable field. */
+.crew-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--primary);
+  animation: crew-blink 900ms step-end infinite;
+}
+@keyframes crew-blink {
+  50% {
+    opacity: 0;
+  }
 }
 .crew-sub {
   margin: 0;
   font-size: 14px;
   line-height: 1.5;
   color: var(--ink-muted);
+  /* Held back until the title finishes writing, so the student reads one line
+     at a time instead of watching a title type itself above a sentence that was
+     already sitting there. */
+  opacity: 0;
+  transition: opacity 420ms ease;
+}
+.crew-sub.is-in {
+  opacity: 1;
 }
 
 /* ── the two columns ────────────────────────────────────────────────────── */
@@ -60,24 +90,34 @@
 
 /* ── the character, and the button that opens them ──────────────────────── */
 
+/* 🔑 Slice M (founder) — NO CARD BEHIND THE CHARACTER. The plate, its shadow
+   and its radius are gone; the drawing stands on the page itself.
+   ⚠️ The card was also the hover affordance, so removing it removes the signal
+   that this is pressable. The replacement is on the ART (a lift + a brighter
+   sway) rather than a re-introduced background, and the focus ring stays — a
+   keyboard user never had the hover to begin with. */
 .crew-pick {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 20px 16px 16px;
-  background: var(--surface);
+  padding: 8px 8px 4px;
+  background: none;
   border: none;
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   cursor: pointer;
   text-align: center;
-  /* The whole column header is the target — a 12px chevron in the corner is a
-     worse affordance than a card that is obviously pressable. */
   width: 100%;
-}
-.crew-pick:hover {
-  background: var(--primary-soft);
+  /* 🔑 The hero's art is deliberately taller than the pet's, and with the card
+     gone there was nothing left to align the two columns to — so the names and
+     the capability cards sat at two different heights and the page read as
+     broken rather than as asymmetric. Reserving the tallest art's slot and
+     pushing content to the BOTTOM of it puts both names on one baseline while
+     keeping the size difference the founder asked for.
+     ⚠️ Must stay ≥ the tallest `.crew-art` height below (420px + the name and
+     role beneath it), and it is re-based for phone in the media query. */
+  min-height: 486px;
+  justify-content: flex-end;
 }
 .crew-pick:focus-visible {
   outline: 2px solid var(--primary);
@@ -90,46 +130,68 @@
    double the size of a wide one. Same rule and same reason as `.jrnl-front`,
    `.prac-soon-pet` and `.dash-tour-pet`. */
 .crew-art {
-  height: 190px;
+  /* Slice M (founder) — "full page sticker, bigger one". 190px → 340px, and the
+     hero gets more again below. Still HEIGHT-driven per M63. */
+  height: 340px;
   width: auto;
   max-width: 100%;
   object-fit: contain;
   object-position: bottom center;
-  /* The onboarding scans are opaque JPEGs on toned paper (S101/S102). */
-  mix-blend-mode: multiply;
-  /* 🔑 BOTH HALVES, per S117. `multiply` alone kills the plate only for scans
-     with a near-white ground; S102 measured the grounds at 156-255, so most
-     heroes are full-bleed toned drawings whose tone lands on the card as a hard
-     rectangle. Harry looked perfect and iron_man looked pasted-on under
-     IDENTICAL CSS. Feather every edge and the drawing dissolves whatever its
-     ground.
 
-     D-K5 is the OTHER guard on the same failure, and CSS could not have
-     supplied it: only the curated bust ever reaches this slot now, because two
-     of a hero's three scans are page scenes that no amount of feathering
-     rescues at 190px. Both guards are needed — this one for the ground, that
-     one for the framing. */
+  /* 🔴🔴 M60, THE THIRD VISIT — AND THIS TIME THE TRANSFORM WINS ON PURPOSE.
+     `mix-blend-mode: multiply` USED TO BE HERE and is deliberately GONE.
+     The founder asked for the art to revolve on its vertical axis. That is a
+     PERMANENT `rotateY`, and a retained transform creates a stacking context
+     which silently switches `mix-blend-mode` OFF — the exact failure M60 was
+     logged for, and the reason the old rule shipped `backwards` and never
+     `both`. So the two are not tunable against each other: you can have the
+     revolve or you can have the multiply, never both on one element.
+     Wrapping does not rescue it either — a transformed ANCESTOR forms the
+     stacking context, so the blend would composite against the wrapper's
+     transparent background instead of the page, which is the same as no blend.
+     Keeping `multiply` in the file alongside the animation would therefore be
+     DEAD CSS that reads as a live guard — the most expensive kind here.
+
+     What carries the load instead is the mask below, which is unaffected by
+     stacking contexts, plus the fact that the plate multiply was hiding is far
+     less visible now: there is no white card edge for a toned ground to sit
+     against, only the page. ⚠️ This is an ART judgement and only a screenshot
+     settles it (M75, S117, S118 — twice a green walk said this was fine and
+     twice it was not). If a hero ever reads as a rectangle here, the fix is a
+     cut-out asset with real transparency, NOT re-adding multiply. */
+  /* The feather, per S117 — and it is now the WHOLE composite rather than half
+     of it. S102 measured the scans' paper grounds at 156-255, so most heroes are
+     full-bleed toned drawings; feathering every edge is what dissolves that
+     ground into the page. Stronger than the 8% the card-era rule used, because
+     it no longer has multiply helping it. */
   mask-image:
-    linear-gradient(to right, transparent 0, black 8%, black 92%, transparent 100%),
-    linear-gradient(to bottom, transparent 0, black 8%, black 92%, transparent 100%);
+    linear-gradient(to right, transparent 0, black 12%, black 88%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 6%, black 90%, transparent 100%);
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
   pointer-events: none;
   user-select: none;
-  /* 🔑 M60 — `backwards`, NEVER `both`. `both` retains the animation's final
-     transform forever, and a retained transform creates a stacking context that
-     silently switches OFF `mix-blend-mode` on this element. That is exactly how
-     the onboarding scans grew opaque plates in ONB-6, on art that had been
-     composited correctly for two sessions. `backwards` covers the delay, plays,
-     then releases the transform. */
-  animation: crew-rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+
+  /* 🔑 THE REVOLVE (founder). Two animations on one element: the entrance plays
+     once, the sway runs forever.
+
+     ⚠️ IT SWAYS, IT DOES NOT SPIN. A full 360° rotateY on a FLAT drawing shows
+     its mirror image for half of every cycle — the hero turns inside-out, the
+     lighting flips, and any text in the scan reverses. These are 2D scans, not
+     3D objects; there is no back of them to show. A bounded ±16° oscillation is
+     what "revolving on the vertical axis" can actually mean for a flat sketch,
+     and it reads as the drawing turning toward you and away.
+     `perspective` is what makes it read as depth rather than as a horizontal
+     squash — without it, rotateY is just a scaleX. */
+  transform-style: preserve-3d;
+  animation:
+    crew-rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards,
+    crew-revolve 7s ease-in-out 420ms infinite;
 }
 
-/* "Vertically rotating" — the cards arrive from below, so the cycle reads as a
-   column turning rather than as a crossfade. The art wears the same entrance on
-   mount (it never remounts after that, per D-K5), which is what keeps the two
-   halves of a column feeling like one object rather than a still image with
-   something animating next to it. */
+/* The entrance. `backwards` (never `both`) is now belt-and-braces rather than
+   load-bearing — the sway holds a transform permanently anyway, which is the
+   whole reason multiply had to go. */
 @keyframes crew-rise {
   from {
     opacity: 0;
@@ -139,6 +201,35 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Bounded sway. The two halves are asymmetric in TIME, not angle, so it doesn't
+   tick like a metronome. */
+@keyframes crew-revolve {
+  0% {
+    transform: perspective(900px) rotateY(-16deg);
+  }
+  50% {
+    transform: perspective(900px) rotateY(16deg);
+  }
+  100% {
+    transform: perspective(900px) rotateY(-16deg);
+  }
+}
+
+/* The hero is the "full page sticker" — bigger again than the pet, and the two
+   are offset in TIME so they don't sway in lockstep like a pair of wipers. */
+.crew-col--hero-art .crew-art {
+  height: 420px;
+  animation-delay: 0ms, 0ms;
+}
+.crew-col--pet-art .crew-art {
+  animation-delay: 0ms, 1600ms;
+}
+
+/* The affordance the deleted card used to carry. */
+.crew-pick:hover .crew-art {
+  filter: brightness(1.04) contrast(1.03);
 }
 
 .crew-name {
@@ -186,8 +277,18 @@
 .crew-col--small .crew-cap {
   padding: 12px 13px;
 }
+/* The minimised column. Re-based for Slice M's larger art (was 132px against a
+   190px default; 240 against 340 keeps the same proportion).
+   ⚠️ Specificity note: this is two classes, exactly like `.crew-col--hero-art
+   .crew-art` above, and it sits LATER in the file — so it wins for a minimised
+   hero, which is the intent. Moving either block breaks that silently. */
 .crew-col--small .crew-art {
-  height: 132px;
+  height: 240px;
+}
+/* The reserved slot shrinks with the art it was reserving — otherwise a
+   minimised column keeps 486px of empty space above its name. */
+.crew-col--small .crew-pick {
+  min-height: 300px;
 }
 
 /* ── the soon panel — once per page, never per row ──────────────────────── */
@@ -220,9 +321,23 @@
    the ENTRANCE, which would still play on every open/close press. Belt and
    braces, and the CSS half is the one that covers the width transition too. */
 @media (prefers-reduced-motion: reduce) {
+  /* 🔴 This now switches off the SWAY too, which is the one piece of motion on
+     this page that never stops on its own. An infinite animation is exactly
+     what this setting exists to silence, so `.crew-art` must keep resolving to
+     `animation: none` — do not split the entrance and the revolve into separate
+     properties without re-covering both here. The caret goes for the same
+     reason: it is the only other thing that repeats forever. */
   .crew-art,
-  .crew-cap {
+  .crew-cap,
+  .crew-caret {
     animation: none;
+  }
+  .crew-caret {
+    display: none;
+  }
+  .crew-sub {
+    opacity: 1;
+    transition: none;
   }
   .crew-cols {
     transition: none;
@@ -249,9 +364,24 @@
   .crew-col:only-child {
     max-width: none;
   }
+  /* Slice M — the desktop sizes (340/420) are taller than a 390px phone
+     viewport is wide, so they are re-based here rather than scaled down by
+     max-width, which would have capped the WIDTH and left M63's height rule
+     doing nothing. The hero keeps its edge over the pet, just smaller. */
   .crew-art,
-  .crew-col--small .crew-art {
-    height: 150px;
+  .crew-col--small .crew-art,
+  .crew-col--pet-art .crew-art {
+    height: 200px;
+  }
+  .crew-col--hero-art .crew-art {
+    height: 250px;
+  }
+  /* Re-based with the art above — 250px hero + name/role. */
+  .crew-pick {
+    min-height: 310px;
+  }
+  .crew-head {
+    font-size: 23px;
   }
   .crew-soon {
     padding: 16px 18px;

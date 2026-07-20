@@ -71,31 +71,41 @@ export function nextStep(step: OnboardingStep): OnboardingStep {
 }
 
 /**
- * The grade chips (D-ONB-2) — the DISTINCT grades this board's catalogue really
- * has. RLS scopes `subject` to the active board, so this is board-correct
- * without a board_id predicate.
+ * 🔑 Slice M (founder) — THE GRADES WE SUPPORT, NOT THE GRADES THE CATALOGUE
+ * HAPPENS TO HOLD. This **supersedes D-ONB-2**, which derived the chips from
+ * `selectDistinct(subject.grade)`.
  *
- * Sorted in JS, NOT by SQL `order by grade`: the column is TEXT, so Postgres
- * sorts it lexicographically and cbse's real values (9, 10) come back as
- * "10", "9" — a child would read chips counting backwards. A plain numeric sort
- * is not the fix either: grade is not always numeric (cambridge uses "IGCSE").
- * So: numeric grades first, in numeric order; anything else alphabetical after.
+ * Why the derivation had to go, and it is not cosmetic. The founder's call is
+ * that the product offers Class 9 and Class 10. Filtering the derived list to
+ * those two would have been the small change — and it would have TRAPPED
+ * students. Grade is required to finish onboarding on BOTH sides (the CTA at
+ * `OnboardingPage.tsx:730` and `saveAboutYou` below, which validates against
+ * this very function), and cambridge's catalogue grades are `IGCSE`/`Grade8`.
+ * So a filtered derivation returns [] for cambridge, the row renders
+ * "— no classes set up yet —", the button never enables, and that student can
+ * never enter the app at all — not even to be told we are still setting it up.
+ *
+ * A constant set has no empty case, so no board can strand anyone. A board with
+ * nothing published now behaves the way the founder asked for it to: the
+ * student finishes onboarding, gets in, and meets the "still setting this up"
+ * screen (`revision-landing.copy.ts`), which is a product state rather than a
+ * dead control.
+ *
+ * ⚠️ THE VALUES ARE "9"/"10", NOT "Class 9". They are written to
+ * `student_onboarding.grade` and read back against `subject.grade`, where
+ * cbse's real rows already say "9"/"10". Prettifying the stored value would
+ * silently unjoin every existing cbse student from their own subjects. The
+ * label the child reads is the ROW's ("I'm in class"), so the chip only ever
+ * has to carry the number.
+ *
+ * ⚠️ Pre-existing cambridge students hold `IGCSE` in that column. Nothing
+ * re-validates a stored grade — the check below runs on WRITE only — so they
+ * are unaffected until they re-answer the beat, at which point they re-pick.
  */
-export async function listGradeOptions(tx: Tx): Promise<string[]> {
-  const rows = await tx.selectDistinct({ grade: subject.grade }).from(subject);
-  return rows
-    .map((r) => r.grade)
-    .filter((g): g is string => Boolean(g))
-    .sort((a, b) => {
-      const na = Number(a);
-      const nb = Number(b);
-      const aNum = a.trim() !== "" && Number.isFinite(na);
-      const bNum = b.trim() !== "" && Number.isFinite(nb);
-      if (aNum && bNum) return na - nb;
-      if (aNum) return -1;
-      if (bNum) return 1;
-      return a.localeCompare(b);
-    });
+export const SUPPORTED_GRADES: readonly string[] = ["9", "10"];
+
+export async function listGradeOptions(_tx: Tx): Promise<string[]> {
+  return [...SUPPORTED_GRADES];
 }
 
 /**

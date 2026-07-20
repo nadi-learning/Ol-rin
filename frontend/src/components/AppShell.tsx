@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { heroImg, heroLabel } from "./onboarding.copy";
 
 // The shared TAITOR app shell — a floating white left nav rail beside a
 // graph-paper canvas (the tutor-canvas layout from the reference). For the
@@ -23,9 +24,23 @@ type Props = {
   onNavigate: (view: AppView) => void;
   /** Break the content out of the 920px reading cap (e.g. the Revision slide). */
   wide?: boolean;
+  /**
+   * Slice M — the student's hero answer, for the Crew rail item's hover reveal
+   * ONLY. Optional and nullable on purpose: a student who skipped the hero beat
+   * (or holds a pre-S96 free-text row) resolves to no art, and that rail item
+   * simply falls back to its text tooltip. Nothing else in the shell reads it.
+   */
+  hero?: string | null;
 };
 
-export function AppShell({ children, userName, view, onNavigate, wide = false }: Props) {
+export function AppShell({
+  children,
+  userName,
+  view,
+  onNavigate,
+  wide = false,
+  hero = null,
+}: Props) {
   const initials = userName.trim().slice(0, 1).toUpperCase() || "?";
 
   return (
@@ -70,9 +85,18 @@ export function AppShell({ children, userName, view, onNavigate, wide = false }:
 
               No `soon`, for the same reason Journal dropped it in Slice J: the
               page opens, and the coming-soon lives once, on the page. */}
+          {/* 🔑 Slice M (founder) — the Crew item is a SPARKLE, and hovering it
+              shows the student their own hero.
+              The label stays "Crew" and stays the `aria-label`: the icon is
+              decorative and a sparkle names nothing on its own, so removing the
+              word would leave a screen-reader user with an unnamed button.
+              What the founder asked to change is what the EYE gets, and that is
+              the icon plus the hover art. */}
           <RailItem
             label="Crew"
-            icon={<CrewIcon />}
+            icon={<SparkleIcon />}
+            hoverArt={heroImg(hero)}
+            hoverArtAlt={heroLabel(hero) ?? "Your hero"}
             active={view === "crew"}
             onClick={() => onNavigate("crew")}
           />
@@ -143,6 +167,8 @@ function RailItem({
   icon,
   active = false,
   badge = false,
+  hoverArt,
+  hoverArtAlt,
   onClick,
 }: {
   label: string;
@@ -150,6 +176,14 @@ function RailItem({
   active?: boolean;
   /** Red dot — draws the eye to a rail slot worth noticing. */
   badge?: boolean;
+  /**
+   * Slice M — art shown INSIDE the hover tooltip, above the label. Undefined
+   * (the default, and every item but Crew) renders the plain text tip exactly
+   * as before, so this is additive rather than a new tooltip variant everyone
+   * has to opt out of.
+   */
+  hoverArt?: string;
+  hoverArtAlt?: string;
   onClick: () => void;
 }) {
   return (
@@ -161,9 +195,27 @@ function RailItem({
     >
       {icon}
       {badge && <span className="nav-dot" aria-hidden />}
-      <span className="nav-tip">
-        {label}
-        {badge && <em className="nav-tip-new">new</em>}
+      <span className={`nav-tip${hoverArt ? " nav-tip--art" : ""}`}>
+        {/* aria-hidden + empty alt: the button's aria-label already names this
+            item, and announcing the hero here would name it twice. The art is
+            a delight, not information. */}
+        {hoverArt && (
+          <img className="nav-tip-art" src={hoverArt} alt="" aria-hidden="true" draggable={false} />
+        )}
+        {/* When the art is showing, the HERO'S NAME replaces the item label
+            rather than sitting above it: the tip was rendering "Harry Potter"
+            and "Crew" as two stacked lines, which reads as a two-line caption
+            on a 120px card and wrapped to three. The button's `aria-label` is
+            still "Crew", so nothing is lost to a screen reader — this only
+            changes what the eye gets, which is the founder's ask. */}
+        {hoverArt ? (
+          <em className="nav-tip-who">{hoverArtAlt ?? label}</em>
+        ) : (
+          <>
+            {label}
+            {badge && <em className="nav-tip-new">new</em>}
+          </>
+        )}
       </span>
     </button>
   );
@@ -225,7 +277,32 @@ function BookIcon() {
     </svg>
   );
 }
-function CrewIcon() {
+/**
+ * Slice M (founder) — the Crew mark is a SPARKLE.
+ *
+ * A four-point star (the tall/short axis pair is what makes it read as a
+ * sparkle rather than as a plus sign or a compass rose) plus one small
+ * companion spark, which is what stops it reading as a "new"/AI badge — the
+ * one meaning a lone four-point star has picked up everywhere else.
+ *
+ * FILLED, like the Journal butterfly and unlike the 1.7-stroke siblings: a
+ * stroked star at 22px is four thin outlines with a hole in the middle and
+ * loses its silhouette entirely at rail size.
+ */
+function SparkleIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M13 2.2c.2 3.1.7 5.2 1.9 6.5 1.2 1.2 3.3 1.8 6.4 2-3.1.2-5.2.8-6.4 2-1.2 1.3-1.7 3.4-1.9 6.5-.2-3.1-.7-5.2-1.9-6.5-1.2-1.2-3.3-1.8-6.4-2 3.1-.2 5.2-.8 6.4-2C12.3 7.4 12.8 5.3 13 2.2z" />
+      <path d="M5.6 15.4c.1 1.5.3 2.5.9 3.1.6.6 1.6.8 3.1.9-1.5.1-2.5.3-3.1.9-.6.6-.8 1.6-.9 3.1-.1-1.5-.3-2.5-.9-3.1-.6-.6-1.6-.8-3.1-.9 1.5-.1 2.5-.3 3.1-.9.6-.6.8-1.6.9-3.1z" />
+    </svg>
+  );
+}
+
+// Slice M — CrewIcon is RETIRED, not deleted, and has no call sites. It is kept
+// because the sparkle is a founder aesthetic call on a rail that has been
+// re-cut twice; if the two-figure mark is ever wanted back, this is it.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _CrewIcon() {
   // Two figures, one slightly behind the other — the crew, not a single user.
   // Stroked at the shared 1.7 like every sibling except the Journal butterfly,
   // which is filled for a reason particular to that mark.

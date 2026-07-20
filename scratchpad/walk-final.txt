@@ -1,0 +1,94 @@
+   [console.error] Failed to load resource: the server responded with a status of 404 (Not Found)
+
+── landing → persona → dev-login as mwalk-1784544834635@example.com ──
+  ✅ student persona column found and clicked
+  ✅ persona really is STUDENT
+  ✅ dev email field found
+  ✅ the field holds OUR email, not the persona default
+  ✅ left the landing page (dev login worked)
+  ✅ did NOT navigate off-origin (no OAuth detour)
+
+── onboarding ──
+   boards offered: ["CBSE","IGCSE","Cambridge"]
+  ✅ CBSE offered
+  ✅ IGCSE offered
+  ✅ Cambridge offered
+   grades offered: ["9","10"]
+  ✅ exactly two grades
+  ✅ grade 9 offered
+  ✅ grade 10 offered
+  ✅ no IGCSE/Grade8 in grades
+   stickers: [{"w":104,"h":146,"top":640,"text":"","imgAlt":"he","imgW":736,"imgH":1104},{"w":104,"h":146,"top":640,"text":"","imgAlt":"she","imgW":736,"imgH":1472}]
+  ✅ two stickers
+  ✅ both sticker images DECODED
+  ✅ art is PORTRAIT (the real sketches, not the placeholders)
+  ✅ NO he/she text printed
+  ✅ stickers side by side, not stacked
+  ✅ stickers are SMALLER than the old 128px basis
+  ✅ alt carries the accessible name
+   advance[0] → picked
+   advance[5] → none
+   advance[10] → cta:Send
+   advance[15] → none
+   advance[20] → none
+  ✅ onboarding completed — reached the app shell
+
+── crew ──
+  ✅ Crew rail item reachable
+  ✅ crew page rendered (.crew-head present)
+  ✅ title typed to completion
+  ✅ title has an accessible name
+   art: [
+ {
+  "h": 436,
+  "w": 227,
+  "natW": 506,
+  "natH": 900,
+  "blend": "normal",
+  "anim": "crew-rise, crew-revolve",
+  "mask": true,
+  "src": "hero-harry_potter.jpg"
+ },
+ {
+  "h": 343,
+  "w": 157,
+  "natW": 167,
+  "natH": 360,
+  "blend": "normal",
+  "anim": "crew-rise, crew-revolve",
+  "mask": true,
+  "src": "owl.png"
+ }
+]
+  ✅ crew art present
+  ✅ crew art DECODED
+  ✅ crew art is BIGGER than the old 190px
+  ✅ mix-blend-mode is OFF (M60 — the revolve holds a transform)
+  ✅ the feather mask is doing the edge work instead
+  ✅ the revolve animation is attached
+  ✅ both columns' names share a baseline
+  ✅ no background card behind the character
+  ✅ no card shadow either
+  ✅ Crew rail item still has an accessible name
+  ✅ rail item renders an icon
+  ✅ rail item carries hover art
+  ✅ hover hero art present
+  ✅ hover hero art DECODED
+  ✅ hover tip is visible on hover
+
+── 390 phone ──
+  ✅ art re-based for phone (fits the viewport)
+
+── igcse: an empty board must still let a student IN ──
+  ✅ IGCSE is pickable
+  ✅ no BOARD_NOT_FOUND error on picking IGCSE
+  ✅ grades still offered on a contentless board (no trap)
+  ✅ an IGCSE student can FINISH onboarding and reach the app
+  ✅ the 'Olórin is still setting this up' panel is shown
+  ✅ it does NOT say 'Nothing matches'
+  ✅ revision landing shows the setting-up panel too
+  ✅ revision landing does NOT show the empty-query search lie
+
+49 passed, 0 failed
+shots → scratchpad/slice-m-shots/
+EXIT=0

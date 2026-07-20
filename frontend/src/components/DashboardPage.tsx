@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { trpc } from "../trpc";
+import { BoardSettingUp } from "./BoardSettingUp";
 import { firstName, loaderPetAlt, loaderPetImg } from "./onboarding.copy";
 import { useTypewriter } from "../lib/useTypewriter";
 import type { AppView } from "./AppShell";
@@ -199,9 +200,12 @@ export function DashboardPage({
       <section className="dash-list" aria-label="Lessons">
         {error && <p className="dash-error">{error}</p>}
         {!error && !nav && <p className="dash-muted">Loading your lessons…</p>}
-        {!error && lessons && lessons.length === 0 && (
-          <p className="dash-muted">No lessons published for your class yet.</p>
-        )}
+        {/* Slice M — was a flat grey line ("No lessons published for your class
+            yet"), which reads as a fault report. With igcse offered as a real
+            board this is a first-run screen a student can land on with nothing
+            else on the page, so it says who is doing something about it. Same
+            panel as the revision landing's, deliberately. */}
+        {!error && lessons && lessons.length === 0 && <BoardSettingUp />}
         {lessons?.map((ch, i) => {
           const isOpen = expanded.has(ch.id);
           const start = firstSubTopic(ch);

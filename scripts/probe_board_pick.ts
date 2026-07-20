@@ -233,18 +233,38 @@ async function main() {
   const wOld = await whoami(emailO);
   check("preferred is the OLDEST membership, not the first board listed", wOld.preferred === boardZ.slug);
 
-  // ── 7. listBoards offers only boards with something to LEARN.
-  // 🔴 Z HAS GRADES AND NO PUBLISHED SLIDES. That combination is the one the
-  // browser walk caught in the wild: testing `subject` offered a child 46
-  // boards, most of them probe litter ("Fig P", "Probe Q"). Both legs below are
-  // needed — the first alone passes under the weak rule too.
+  // ── 7. listBoards offers the SUPPORTED boards — an allow-list, not a query.
+  //
+  // 🔑 INVERTED in Slice M. This section used to assert the published-slides
+  // rule: board A (published) offered, board Z (grades, nothing published)
+  // hidden. The founder's call replaced the derivation with a fixed set —
+  // cbse, igcse, cambridge — so a board is offered because we intend to serve
+  // it, not because content happens to exist behind it today.
+  //
+  // 🔴 THE OLD SECTION'S REAL WIN IS NOW STRONGER, AND THAT IS WHY THIS IS AN
+  // INVERSION AND NOT A DELETION. Its purpose was never "published slides" for
+  // its own sake — it was that a `subject`-based test offered a child 46 boards
+  // of probe litter ("Fig P", "Probe Q"). Under an allow-list that CANNOT
+  // happen for any reason: boardA here has published slides and is still not
+  // offered, which no content-based rule could guarantee.
   const offered = await listBoards();
   const slugs = offered.map((b) => b.slug);
-  check("listBoards offers the board with PUBLISHED slides", slugs.includes(boardA.slug));
+  check(
+    "🔴 a probe board with PUBLISHED slides is still NOT offered (allow-list, not content)",
+    !slugs.includes(boardA.slug),
+  );
   check(
     "🔴 listBoards HIDES a board that has grades but nothing published",
     !slugs.includes(boardZ.slug),
   );
+  check(
+    "the three supported boards ARE offered, in order",
+    JSON.stringify(slugs) === JSON.stringify(["cbse", "igcse", "cambridge"]),
+  );
+  // igcse is the board that exists with NOTHING behind it — the population the
+  // "still setting this up" screen was built for. If this ever drops out, that
+  // screen has no way to be reached and the seed has silently not run.
+  check("igcse is offered despite having no content at all", slugs.includes("igcse"));
   // and the real answer stays sane — the picker a student actually sees is the
   // two real boards, not every row in the table.
   check("listBoards stays small against the real DB (< 5 boards)", offered.length < 5);

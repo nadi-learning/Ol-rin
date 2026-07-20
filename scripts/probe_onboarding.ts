@@ -92,9 +92,9 @@ async function main() {
   // Real catalogue grades on board A — the chips must come from THESE.
   await withBoard(boardA!.id, async (tx) => {
     await tx.insert(subject).values([
-      { boardId: boardA!.id, slug: `phys-${tag}`, name: "Physics", grade: "Class_10" },
-      { boardId: boardA!.id, slug: `chem-${tag}`, name: "Chemistry", grade: "Class_10" },
-      { boardId: boardA!.id, slug: `bio-${tag}`, name: "Biology", grade: "Class_9" },
+      { boardId: boardA!.id, slug: `phys-${tag}`, name: "Physics", grade: "10" },
+      { boardId: boardA!.id, slug: `chem-${tag}`, name: "Chemistry", grade: "10" },
+      { boardId: boardA!.id, slug: `bio-${tag}`, name: "Biology", grade: "9" },
     ]);
   });
 
@@ -114,15 +114,39 @@ async function main() {
     .where(eq(onboarding.userId, student!.id));
   check("getState really wrote nothing (a query must not write)", preRows.length === 0);
 
-  // ── 2. grade chips come from the board's REAL subjects (D-ONB-2) ────────
+  // ── 2. grade chips are the SUPPORTED grades, not the catalogue's ────────
+  //
+  // 🔑 INVERTED in Slice M, and the inversion is the point. These two legs used
+  // to assert D-ONB-2: that the chips were `selectDistinct(subject.grade)` and
+  // that RLS scoped them per board (board B, with no subjects, returned []).
+  // Both claims are now FALSE BY DESIGN — the founder's call is that the product
+  // offers Class 9 and Class 10, and the empty-list case those legs protected is
+  // exactly the trap that made a constant necessary: grade is required to finish
+  // onboarding, so a board whose catalogue yields [] strands its students
+  // forever. See the doc comment on `listGradeOptions`.
+  //
+  // Kept as legs rather than deleted, because "the list does NOT vary by board"
+  // is now a guarantee worth failing on: the moment someone re-derives it, a
+  // contentless board silently becomes a dead end again.
   console.log("\n2. grade chips");
   await withBoard(boardA!.id, async (tx) => {
     const opts = await listGradeOptions(tx);
-    check("distinct + sorted from subject.grade", JSON.stringify(opts) === JSON.stringify(["Class_10", "Class_9"]), JSON.stringify(opts));
+    check(
+      "the supported grades, in order",
+      JSON.stringify(opts) === JSON.stringify(["9", "10"]),
+      JSON.stringify(opts),
+    );
   });
   await withBoard(boardB!.id, async (tx) => {
     const opts = await listGradeOptions(tx);
-    check("control: board B has none of A's grades (RLS scopes the chips)", opts.length === 0, JSON.stringify(opts));
+    // 🔴 THE ANTI-TRAP LEG. Board B has NO subjects at all — the population
+    // igcse now ships as. It must still offer both grades, or its students
+    // cannot answer the beat and cannot enter the app.
+    check(
+      "a board with NO subjects still offers both grades (the anti-trap)",
+      JSON.stringify(opts) === JSON.stringify(["9", "10"]),
+      JSON.stringify(opts),
+    );
   });
 
   // ── 3. persists + advances (S92: the duo beat) ──────────────────────────
@@ -130,8 +154,8 @@ async function main() {
   await withBoard(boardA!.id, async (tx) => {
     const st = await saveStep(tx, { ...S, step: "greet", value: null });
     check("talk-only beat advances greet → about_you", st.currentStep === "about_you", st.currentStep);
-    const st2 = await saveAboutYou(tx, { ...S, grade: "Class_10", pronoun: "she" });
-    check("grade persisted", st2.answers.grade === "Class_10", String(st2.answers.grade));
+    const st2 = await saveAboutYou(tx, { ...S, grade: "10", pronoun: "she" });
+    check("grade persisted", st2.answers.grade === "10", String(st2.answers.grade));
     check("pronoun persisted in the SAME write", st2.answers.pronoun === "she", String(st2.answers.pronoun));
     check("advanced about_you → fav_character", st2.currentStep === "fav_character", st2.currentStep);
   });
@@ -141,7 +165,7 @@ async function main() {
   await withBoard(boardA!.id, async (tx) => {
     const st = await getState(tx, S);
     check("a fresh read resumes at the stored beat", st.currentStep === "fav_character", st.currentStep);
-    check("and still knows the earlier answer", st.answers.grade === "Class_10");
+    check("and still knows the earlier answer", st.answers.grade === "10");
     check("still needs onboarding (not complete)", st.needsOnboarding === true);
   });
 
@@ -159,9 +183,9 @@ async function main() {
 
     // S92 — pronoun is closed-set + required. 'name' (use my name) is the
     // dignified way through, so there is no reason to allow a null.
-    const eP = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "Class_10", pronoun: null }));
+    const eP = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: null }));
     check("pronoun cannot be skipped ('name' is the opt-out)", eP instanceof OnboardingValidationError);
-    const eP2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "Class_10", pronoun: "male" }));
+    const eP2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "male" }));
     check(
       "pronoun rejects a value outside the contract",
       eP2 instanceof OnboardingValidationError,
@@ -171,7 +195,7 @@ async function main() {
     // The multi-answer beat must NOT be reachable through the single-answer
     // path — that would write one column and silently drop the other.
     const eDuo = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "about_you", value: "Class_10" }),
+      saveStep(tx, { ...S, step: "about_you", value: "10" }),
     );
     check(
       "saveStep('about_you') is rejected — it writes two columns",
@@ -350,14 +374,14 @@ async function main() {
   // ── 7. idempotent ───────────────────────────────────────────────────────
   console.log("\n7. idempotent");
   await withBoard(boardA!.id, async (tx) => {
-    await saveAboutYou(tx, { ...S, grade: "Class_9", pronoun: "name" });
-    await saveAboutYou(tx, { ...S, grade: "Class_9", pronoun: "name" });
+    await saveAboutYou(tx, { ...S, grade: "9", pronoun: "name" });
+    await saveAboutYou(tx, { ...S, grade: "9", pronoun: "name" });
     const rows = await tx
       .select()
       .from(onboarding)
       .where(and(eq(onboarding.userId, student!.id), eq(onboarding.boardId, boardA!.id)));
     check("re-saving overwrites, never forks a second row", rows.length === 1, `${rows.length} rows`);
-    check("the overwrite took", rows[0]!.grade === "Class_9");
+    check("the overwrite took", rows[0]!.grade === "9");
   });
 
   // ── 8. RLS cross-board ──────────────────────────────────────────────────
@@ -389,7 +413,7 @@ async function main() {
     check("complete flips the flag", st.needsOnboarding === false);
     check("status is completed", st.status === "completed");
     check("current_step lands on 'done'", st.currentStep === "done", st.currentStep);
-    check("answers survive completion", st.answers.grade === "Class_9");
+    check("answers survive completion", st.answers.grade === "9");
     const [row] = await tx
       .select()
       .from(onboarding)

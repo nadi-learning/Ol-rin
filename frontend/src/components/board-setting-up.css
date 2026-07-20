@@ -1,0 +1,33 @@
+/* Slice M — the "your board has nothing yet" panel. All `.bsu-` scoped, per the
+   revision-shell.css global-leak discipline. Shape is deliberately the same as
+   `.crew-soon`: a single centred card carrying one promise for the whole page. */
+.bsu {
+  max-width: 520px;
+  margin: 32px auto;
+  padding: 24px 28px;
+  text-align: center;
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
+.bsu-head {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--ink);
+}
+
+.bsu-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 640px) {
+  .bsu {
+    margin: 24px auto;
+    padding: 20px 18px;
+  }
+}

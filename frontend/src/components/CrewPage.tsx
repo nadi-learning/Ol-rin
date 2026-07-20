@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { useTypewriter } from "../lib/useTypewriter";
 import {
   ROTATE_MS,
-  heroCompositeImg,
+  heroImg,
   heroLabel,
   loaderPetImg,
   loaderPetAlt,
@@ -52,12 +53,22 @@ type Column = {
   /** One line under the name saying what they ARE to the student. */
   role: string;
   /**
-   * 🔑 D-K5 — ONE image, never a cycle. A hero has three scans and a pet has
-   * one, but only ONE of the hero's three is composite-grade: the other two are
-   * full-bleed page scenes that render as plates beside a card, which is why
-   * `throneImg` was curated at all. Cycling them re-admitted the exact defect
-   * S117 closed. So both members are in the same position, and the column holds
-   * its one good image while the CARDS carry the motion.
+   * 🔑 D-K5 STANDS — ONE image, never a cycle. Cycling a hero's three scans is
+   * the defect S117 closed and S118 re-opened (M75); nothing below reinstates
+   * it. The CARDS carry the motion, the art does not change.
+   *
+   * 🔑 Slice M (founder) — but the image is now `heroImg`, the HEADLINE art,
+   * where D-K5 took `heroCompositeImg` (the curated `throneImg` bust). That is
+   * a reversal and it needs its reason on the record: `throneImg` was curated
+   * because the headline scans are full-bleed page SCENES, and a page scene
+   * shrunk into a 190px slot beside a card reads as a plate. The founder's call
+   * removes both halves of that condition — the card is gone and the art is now
+   * the largest thing on the page — so the framing that failed small is the
+   * framing that works big. The bust is the right answer for a thumbnail; this
+   * is no longer a thumbnail.
+   *
+   * ⚠️ This is the third visit to this asset, so: the ONLY proof that it reads
+   * correctly is a screenshot (M75). A green walk has twice said otherwise.
    */
   art: string;
   alt: string;
@@ -83,7 +94,7 @@ type Column = {
 function columnsFor(hero: string | null, pet: string | null): Column[] {
   const cols: Column[] = [];
 
-  const heroArt = heroCompositeImg(hero);
+  const heroArt = heroImg(hero);
   if (heroArt) {
     cols.push({
       key: "hero",
@@ -110,6 +121,14 @@ function columnsFor(hero: string | null, pet: string | null): Column[] {
 
   return cols;
 }
+
+/**
+ * Slice M (founder) — "a catchy title, written in". It names what the page is
+ * FOR rather than what it contains ("Your crew" was a label on a list), and it
+ * is one line because the typewriter makes length a duration the student waits
+ * through.
+ */
+const CREW_TITLE = "The ones who walk with you.";
 
 export function CrewPage({ hero, pet }: { hero: string | null; pet: string | null }) {
   const cols = columnsFor(hero, pet);
@@ -138,13 +157,27 @@ export function CrewPage({ hero, pet }: { hero: string | null; pet: string | nul
     return () => clearInterval(t);
   }, [reducedMotion]);
 
+  // The title types itself in on arrival. Under reduced motion the hook is
+  // handed `false` and returns the finished string immediately — the same
+  // contract RevisionLanding relies on, so nobody sits watching a caret they
+  // asked the OS not to show them.
+  const { visible: typed, done: titleDone } = useTypewriter(CREW_TITLE, !reducedMotion, 45);
+
   return (
     <section className="crew" aria-labelledby="crew-head">
       <header className="crew-say">
-        <h1 className="crew-head" id="crew-head">
-          Your crew
+        {/* 🔑 Slice M (founder) — the title WRITES ITSELF on arrival.
+            `aria-label` carries the finished string and the typed span is
+            aria-hidden, so a screen reader is read the whole title once
+            instead of being re-announced on every character (the h1 is the
+            page's accessible name — a live-typing name is unusable). Same
+            useTypewriter the onboarding and the revision landing use. */}
+        <h1 className="crew-head" id="crew-head" aria-label={CREW_TITLE}>
+          <span aria-hidden="true">{typed}</span>
+          {/* The caret is only alive while the writing is. */}
+          {!titleDone && <span className="crew-caret" aria-hidden="true" />}
         </h1>
-        <p className="crew-sub">
+        <p className={`crew-sub${titleDone ? " is-in" : ""}`}>
           You picked them. Here's what each of them is going to do.
         </p>
       </header>
@@ -161,7 +194,15 @@ export function CrewPage({ hero, pet }: { hero: string | null; pet: string | nul
           return (
             <section
               key={col.key}
-              className={`crew-col crew-col--${isOpen ? "open" : open ? "small" : "even"}`}
+              className={
+                `crew-col crew-col--${isOpen ? "open" : open ? "small" : "even"}` +
+                // Slice M — the art sizes and the sway offsets differ per member
+                // (the hero is the "full page" one), so the column carries its
+                // own identity as a class rather than the CSS guessing from
+                // position. A hero-less student's pet column is still `--pet-art`
+                // and still correct, which position-based rules would not be.
+                ` crew-col--${col.key}-art`
+              }
             >
               <button
                 className="crew-pick"

@@ -678,15 +678,25 @@ export function OnboardingPage({
                                 )
                               }
                             >
-                              {/* The art is decoration for a labelled control —
-                                  the label below it is the accessible name, so
-                                  an empty alt is correct, not an omission. */}
-                              {row.style === "sticker" && o.img && (
-                                <img src={o.img} alt="" className="onb-choice-img" />
+                              {/* 🔑 Slice M (founder) — the sticker row is
+                                  PICTURE-ONLY. The printed "he"/"she" under the
+                                  card was the last of the form-control look this
+                                  row was converted to escape.
+                                  🔴 With the word gone the ART carries the
+                                  accessible name, so `alt` is now LOAD-BEARING
+                                  and must never go back to "". The previous
+                                  comment here said an empty alt was correct
+                                  BECAUSE a visible label followed it; that
+                                  premise is deleted, so the alt changed with it. */}
+                              {row.style === "sticker" && o.img ? (
+                                <img
+                                  src={o.img}
+                                  alt={o.label.replace("{name}", name)}
+                                  className="onb-choice-img"
+                                />
+                              ) : (
+                                <span>{o.label.replace("{name}", name)}</span>
                               )}
-                              <span className={row.style === "sticker" ? "onb-choice-label" : undefined}>
-                                {o.label.replace("{name}", name)}
-                              </span>
                             </button>
                           ))
                         )}

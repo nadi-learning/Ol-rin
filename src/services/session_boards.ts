@@ -19,9 +19,12 @@
  * would be a permanent tenant-isolation weakness bought to save one query.
  * DO NOT "optimise" this into a board-less read or a policy carve-out.
  */
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+// `isNotNull`/`isNull`/`sql` + `contentUnit` went with the published-slides
+// count in listBoards (Slice M) — the offered set is now an allow-list, so this
+// file no longer reads content at all.
+import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board as boardTable, contentUnit, membership } from "@b2c/kernel/schema";
+import { appUser, board as boardTable, membership } from "@b2c/kernel/schema";
 import { db } from "../db/client";
 import { withBoard } from "../db/with-board";
 import { resolveMembership, type ResolvedMembership } from "./membership";
@@ -76,26 +79,49 @@ async function allBoards(): Promise<{ id: string; slug: string; name: string }[]
  *
  * `content_unit` is RLS'd, hence the per-board withBoard (see the file header).
  */
+/**
+ * 🔑 Slice M (founder) — THE OFFERED BOARDS ARE A PRODUCT DECISION, not a query
+ * result. This **supersedes the published-slides rule documented above**, which
+ * is kept verbatim because its reasoning still explains the two failure modes
+ * this list has to keep avoiding.
+ *
+ * What changed and why: the derived rule made the picker downstream of content
+ * publishing (its own ⚠️ said so). The founder wants the three boards we intend
+ * to serve — CBSE, IGCSE, Cambridge — visible now, and a board with nothing
+ * behind it to land the student on the "still setting this up" screen rather
+ * than hide. That is a strictly better dead end than the derived rule's, which
+ * was to make the board VANISH: a child told "we're setting it up" knows the
+ * app works and their board is coming; a child who cannot find their board at
+ * all concludes the product is not for them.
+ *
+ * 🔴 The old rule's real win is preserved. It existed because a `subject`-based
+ * check offered a child "Fig P", "Probe Q" and "Probe T" — 46 boards, mostly
+ * probe litter. An explicit allow-list cannot regress into that no matter what
+ * any probe inserts, which is a stronger guarantee than the content check was.
+ *
+ * 🔴 EVERY SLUG HERE MUST EXIST IN `board`. `chooseBoard` throws BoardNotFound
+ * on a miss, so an unseeded slug is a crash on the student's first tap, not an
+ * empty product. `bun run seed:boards` creates them and is the sibling of this
+ * list — see `scripts/seed_boards.ts`.
+ *
+ * Order is the order the chips render.
+ */
+const SUPPORTED_BOARDS: readonly string[] = ["cbse", "igcse", "cambridge"];
+
 export async function listBoards(): Promise<BoardOption[]> {
   const boards = await allBoards();
-  const out: BoardOption[] = [];
-  for (const b of boards) {
-    const has = await withBoard(b.id, async (tx) => {
-      const [row] = await tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(contentUnit)
-        .where(
-          and(
-            eq(contentUnit.type, "slide_module"),
-            isNull(contentUnit.subTopicId),
-            isNotNull(contentUnit.currentVersionId),
-          ),
-        );
-      return (row?.n ?? 0) > 0;
-    });
-    if (has) out.push({ slug: b.slug, name: b.name });
-  }
-  return out;
+  const bySlug = new Map(boards.map((b) => [b.slug, b]));
+  // Missing rows are SKIPPED rather than fabricated: a chip we cannot resolve
+  // to a real board id is the crash described above, so the picker showing two
+  // boards on an unseeded database is the safe failure, not the silent one.
+  return SUPPORTED_BOARDS.flatMap((slug) => {
+    const b = bySlug.get(slug);
+    if (!b) {
+      console.warn(`[listBoards] offered board '${slug}' has no row — run: bun run seed:boards`);
+      return [];
+    }
+    return [{ slug: b.slug, name: b.name }];
+  });
 }
 
 /**

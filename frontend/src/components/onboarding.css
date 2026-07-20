@@ -653,16 +653,28 @@
    reorders the file; two classes wins on merit. */
 .onb-duo-opts .onb-duo-sticker {
   /* Sized like a pet card, NOT like the base .onb-choice (240px basis, built
-     for full-width choice cards). Two of these sit inside a sentence. */
-  flex: 0 1 128px;
-  max-width: 132px;
+     for full-width choice cards). Two of these sit inside a sentence.
+     🔑 Slice M (founder) — SMALLER, and the label is gone, so the card is now
+     art plus padding and nothing else. Two of these plus the 8px gap is 224px,
+     still comfortably inside the 390px phone viewport, so the `nowrap` above
+     stays honest (that is the S119 measurement this row was stacked by). */
+  flex: 0 1 104px;
+  max-width: 108px;
   gap: 6px;
-  padding: 14px 8px 12px;
+  padding: 10px 6px 8px;
   /* Paper + ink, matching .onb-chips.is-cards: a solid plate on a pencil
      drawing is a UI element pasted on art (see the note there). */
   background: color-mix(in srgb, var(--surface) 62%, transparent);
   border-color: color-mix(in srgb, var(--ink) 22%, transparent);
   backdrop-filter: blur(1.5px);
+}
+/* 🔑 The real sketches (D-L2 retired — these are the founder's, not placeholders)
+   are FULL-BODY figures, roughly 1:2 portrait, where every other card in the
+   flow holds a bust or a crest. Height-driven + `contain` is kept exactly as
+   M63 requires — this only gives the taller subject the vertical room it needs,
+   scoped so the pet cards, which are not full-body, keep their own 104px. */
+.onb-duo-opts .onb-duo-sticker .onb-choice-img {
+  height: 124px;
 }
 .onb-duo-opts .onb-duo-sticker:hover:not(:disabled) {
   background: color-mix(in srgb, var(--surface) 86%, transparent);

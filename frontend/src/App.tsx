@@ -295,6 +295,8 @@ export function App() {
       view={view}
       onNavigate={navigate}
       wide={view === "revision"}
+      // Slice M — for the Crew rail item's hover reveal only.
+      hero={hero}
     >
       {view === "dashboard" ? (
         <DashboardPage

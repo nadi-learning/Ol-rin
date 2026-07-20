@@ -1179,9 +1179,20 @@ check(
   "Slice K (D-K5): the column art is a single image, not a list to index into",
   /art: string;/.test(crewPage) && !/art\[/.test(crewPage),
 );
+// 🔑 INVERTED in Slice M. D-K5's "no cycling" half is UNCHANGED and still
+// asserted above — that is the part S117 found and S118 re-broke. What flipped
+// is WHICH single image: the founder removed the card and made the art the
+// largest thing on the page, and `throneImg` was curated for the opposite
+// condition (a 190px slot beside a white card, where a full-bleed page scene
+// reads as a plate). At full size with no card, the headline art is the right
+// framing and the bust is the wrong one.
+//
+// ⚠️ The leg is kept — not deleted — because "exactly one resolver, called
+// once" is the property that stops the cycle coming back a third time. Only the
+// name changed, and the negation now guards the OTHER direction.
 check(
-  "Slice K (D-K5): the art comes from the COMPOSITE resolver",
-  /heroCompositeImg\(hero\)/.test(crewPage) && !/heroImg\(/.test(crewPage),
+  "Slice M: the column art comes from the headline resolver, once",
+  /heroImg\(hero\)/.test(crewPage) && !/heroCompositeImg\(/.test(crewPage),
 );
 // Only the CARDS may be indexed by the clock. If a frame index ever reappears
 // here, the art is cycling again.
@@ -1209,11 +1220,28 @@ check(
 // and this is the worst case yet: eleven heroes at three scans EACH plus seven
 // pet stickers through one selector.
 {
-  const r = rule(crewCss, "crew-art");
+  // 🔴 COMMENTS STRIPPED — AND THIS ONE CAUGHT A LIVE FALSE GREEN.
+  //
+  // Slice M deleted `mix-blend-mode: multiply` from `.crew-art` (the revolve
+  // holds a permanent transform, which would switch the blend off anyway — see
+  // the M60 block below). The leg asserting multiply STAYED GREEN, because the
+  // comment explaining the deletion contains the literal string
+  // `mix-blend-mode: multiply` while saying it is gone.
+  //
+  // That is worse than the M74 false-RED this file already knows about: prose
+  // stood in for a property that no longer exists, so a probe reported a
+  // composite guarantee the CSS had stopped making. Every grep over source in
+  // this block reads CODE now, never commentary.
+  const r = rule(crewCss, "crew-art").replace(/\/\*[\s\S]*?\*\//g, "");
   check("Slice K art: sized on HEIGHT, not width (M63)", /height:\s*\d+px/.test(r), r);
   check("Slice K art: width follows the art", /width:\s*auto/.test(r), r);
   check("Slice K art: object-fit contain, so no aspect is cropped", /object-fit:\s*contain/.test(r), r);
-  check("Slice K art: composites with multiply", /mix-blend-mode:\s*multiply/.test(r), r);
+  // 🔑 INVERTED in Slice M — multiply is deliberately ABSENT here, and asserting
+  // its absence is what stops someone "restoring" it as a fix. It cannot work on
+  // this element: the revolve holds a permanent rotateY, and a transformed
+  // element forms a stacking context that switches blending off. Re-adding it
+  // would be dead CSS wearing the costume of a live guard.
+  check("Slice M art: NO multiply — it cannot survive the revolve (M60)", !/mix-blend-mode/.test(r), r);
   // 🔑 BOTH halves of the composite (S117). This column cycles through art of
   // both kinds — line-art on white AND full-bleed toned scans — so a missing
   // mask would show up and vanish on a timer, which is the worst version of
@@ -1235,9 +1263,38 @@ check(
     r,
   );
 }
+// 🔴 M60, RESTATED FOR A PAGE THAT NOW HOLDS A TRANSFORM ON PURPOSE.
+//
+// The old leg banned a retained transform outright (`animation-fill-mode: both`)
+// because a retained transform creates a stacking context that silently kills
+// `mix-blend-mode`. Slice M's revolve is an INFINITE rotateY — a permanent
+// transform by design, and no fill-mode keyword is involved — so the old form
+// of the rule could not express the risk any more.
+//
+// The INVARIANT is what actually mattered, and it is unchanged: a transformed
+// element and `mix-blend-mode` cannot both work. So the leg now asserts the
+// pairing directly — if the art holds a transform, it must NOT declare a blend.
+// Re-adding `multiply` here would look like a fix and would be dead CSS.
+//
+// ⚠️ COMMENTS ARE STRIPPED FIRST (M74, third appearance). The previous form
+// tested raw source, and this session's own explanatory comment — which uses
+// the words "animation:" and "both" in prose — reddened the rule it was
+// describing. A guard that its own documentation can break is a guard nobody
+// can safely comment.
+const crewCssCode = crewCss.replace(/\/\*[\s\S]*?\*\//g, "");
 check(
-  "Slice K: no animation anywhere in the page retains its final transform (M60)",
-  !/animation:[^;]*\bboth\b/.test(crewCss),
+  "Slice M (M60): the revolving art declares NO mix-blend-mode",
+  /crew-revolve/.test(crewCssCode) && !/mix-blend-mode/.test(crewCssCode),
+);
+check(
+  "Slice M (M60): no animation retains its final transform via fill-mode",
+  !/animation:[^;]*\bboth\b/.test(crewCssCode),
+);
+// The mask is now the ONLY thing dissolving the scan's paper edge, so its
+// absence is no longer cosmetic — it is the whole composite.
+check(
+  "Slice M: the feather mask survives the loss of multiply",
+  /mask-composite:\s*intersect/.test(crewCssCode),
 );
 
 // ── §Slice L — the pronoun stickers, and the closing of the last free set ──

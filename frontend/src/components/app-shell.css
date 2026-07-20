@@ -133,6 +133,55 @@
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
+/* 🔑 Slice M (founder) — "on hovering it should display hero". The Crew tip is
+   the one tip that carries ART, so it stops being a label-shaped pill and
+   becomes a small portrait card.
+   ⚠️ The base `.nav-tip` is `white-space: nowrap` + a horizontal inline-flex,
+   both of which have to be undone here rather than loosened above: every OTHER
+   tip is a single word and depends on them. */
+.nav-tip--art {
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 7px;
+  /* Wide enough that a two-word hero name ("Harry Potter", "Jon Snow") sits on
+     ONE line — at the first cut the card was art-width and the name wrapped to
+     three. `nowrap` would overflow the longest names instead, so this is a
+     min-width plus normal wrapping as the safety valve. */
+  min-width: 132px;
+  white-space: normal;
+  line-height: 1.25;
+  border-radius: 12px;
+}
+.nav-tip-art {
+  /* Height-driven + `contain`, per M63 — this slot takes ELEVEN heroes and they
+     share no aspect ratio. `multiply` is deliberately absent: the tip's ground
+     is near-black, and multiply against it would render the drawing as a black
+     rectangle. The mask does the edge work on its own here. */
+  height: 92px;
+  width: auto;
+  max-width: 120px;
+  object-fit: contain;
+  object-position: bottom center;
+  border-radius: 8px;
+  mask-image:
+    linear-gradient(to right, transparent 0, black 10%, black 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 5%, black 92%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.nav-tip-who {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: #fff;
+}
+/* The tip is a column now, so the arrow must track the ART, not the box's
+   vertical centre — otherwise it points at the hero's knees. */
+.nav-tip--art::before {
+  top: 50%;
+}
+
 /* Slice K — the two blocks are merged. They were split because the shared pill
    shape was worn by BOTH tags and only the colour differed; with `soon` gone
    there is one tag, so a base rule immediately overridden by its own selector
