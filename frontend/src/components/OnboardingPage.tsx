@@ -720,26 +720,11 @@ export function OnboardingPage({
                           ))
                         )}
                       </div>
-                      {/* D-L1 — the opt-out that still answers. Under the row and
-                          quieter, because it is not another item IN the row; it
-                          commits the same key and shows the same picked state. */}
-                      {row.aside && (
-                        <div className="onb-duo-aside-row">
-                          <button
-                            className={
-                              "onb-other onb-duo-aside" +
-                              (duo[row.key] === row.aside.value ? " is-picked" : "")
-                            }
-                            disabled={saving}
-                            aria-pressed={duo[row.key] === row.aside.value}
-                            onClick={() =>
-                              setDuo((d) => ({ ...d, [row.key]: row.aside!.value }))
-                            }
-                          >
-                            {row.aside.label.replace("{name}", name)}
-                          </button>
-                        </div>
-                      )}
+                      {/* S123 — the `aside` block (D-L1's "just {name}" opt-out)
+                          was deleted here with the option itself. `DuoRow` no
+                          longer carries an `aside` field at all, so this is a
+                          removal at the type level too, not just a hidden
+                          branch waiting to be re-enabled. */}
                     </div>
                   );
                 })}

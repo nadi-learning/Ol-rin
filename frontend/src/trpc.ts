@@ -52,17 +52,26 @@ export function clearBoard(): void {
  * which the founder made load-bearing this session (it used to only prefill a
  * dev-login email).
  *
- * Kept client-side between the persona click and the membership mint, because
- * those are two different pages with a sign-in round trip in between and there
- * is nowhere on the server to hang it until a membership exists.
+ * 🔴 S123 PROMOTED THIS FROM A ONE-SHOT CLAIM INTO THE ACTIVE PROFILE. It used
+ * to live only between the persona click and the membership mint, and was
+ * CLEARED once spent. It now persists for the session and rides every request
+ * as `x-profile`, because one email can hold several profiles and the server
+ * cannot infer which one this browser means. "Whatever session is logged in a
+ * browser should resume, and the profile the user clicked should route to the
+ * respective session" (founder) — this value is that routing.
  *
- * 🔴 UNTRUSTED, by construction. It is a claim typed into a browser, and the
- * server treats it as one: `chooseBoard` accepts only the self-assignable set,
- * and a non-student claim mints a DISABLED membership. Nothing here grants
- * anything — the worst a tampered value can do is put someone in a waiting room
- * they could have reached by clicking a card.
+ * 🔴 STILL UNTRUSTED, and now more obviously so. It SELECTS a membership; it
+ * never creates or grants one. Since S123 there is no self-promote path at all:
+ * `resolveMembership` refuses to mint anything but a student, so a tampered
+ * `x-profile: admin` asks for a row that does not exist and gets
+ * NoMembershipError. The worst a forged value does is show someone the waiting
+ * room they could have reached by clicking a card.
  *
- * Cleared once spent, so it cannot re-apply on a later login.
+ * ⚠️ Its persistence is also its hazard, and this exact file has caused two
+ * production bugs (M78, M79) by latching a stale value out of localStorage.
+ * The rule that keeps it honest: it is VALIDATED against real memberships on
+ * every boot (App.tsx) and never treated as the role itself. Read the role off
+ * the server's answer, never off this.
  */
 const PERSONA_KEY = "b2c.persona";
 
@@ -101,9 +110,18 @@ export const trpc = createTRPCClient<AppRouter>({
       // Read per-request, NOT captured once: the board changes mid-session when
       // a student picks one, and a captured value would keep sending the old
       // (or absent) board until a reload.
+      // S123: `x-profile` rides alongside `x-board` and for the same reason —
+      // one email can now hold a student, tutor and parent profile on ONE
+      // board, so the board alone no longer identifies the membership. Both are
+      // read per-request rather than captured: the profile is chosen on the
+      // landing page after this client is constructed.
       headers: () => {
         const b = getBoard();
-        return b ? { "x-board": b } : {};
+        const p = getPersona();
+        return {
+          ...(b ? { "x-board": b } : {}),
+          ...(p ? { "x-profile": p } : {}),
+        };
       },
       fetch: (url, opts) => fetch(url, { ...opts, credentials: "include" }),
     }),

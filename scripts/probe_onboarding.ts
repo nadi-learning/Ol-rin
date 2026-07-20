@@ -181,10 +181,18 @@ async function main() {
     const e2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: null, pronoun: "he" }));
     check("grade cannot be skipped (it is the one field with a consumer)", e2 instanceof OnboardingValidationError);
 
-    // S92 — pronoun is closed-set + required. 'name' (use my name) is the
-    // dignified way through, so there is no reason to allow a null.
+    // S92 — pronoun is closed-set + required. S123 removed the 'name' opt-out
+    // (founder), so the closed set is now exactly he|she and there is no
+    // third way through: the two stickers are the answer.
     const eP = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: null }));
-    check("pronoun cannot be skipped ('name' is the opt-out)", eP instanceof OnboardingValidationError);
+    check("pronoun cannot be skipped", eP instanceof OnboardingValidationError);
+    // S123: the REMOVED value must now be refused like any other unknown. This
+    // is the leg that would catch 'name' quietly surviving in the contract.
+    const eP3 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "name" }));
+    check(
+      "S123: the removed 'just {name}' opt-out is now REJECTED",
+      eP3 instanceof OnboardingValidationError,
+    );
     const eP2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "male" }));
     check(
       "pronoun rejects a value outside the contract",
@@ -405,8 +413,12 @@ async function main() {
   // ── 7. idempotent ───────────────────────────────────────────────────────
   console.log("\n7. idempotent");
   await withBoard(boardA!.id, async (tx) => {
-    await saveAboutYou(tx, { ...S, grade: "9", pronoun: "name" });
-    await saveAboutYou(tx, { ...S, grade: "9", pronoun: "name" });
+    // S123: was `pronoun: "name"` — the removed "just {name}" opt-out. Left in
+    // place it did NOT fail this leg, it THREW out of the whole probe at 59/72
+    // and took ~13 downstream legs with it, reporting a shape that looks like a
+    // small red. Exactly S119's miss, in the same file.
+    await saveAboutYou(tx, { ...S, grade: "9", pronoun: "he" });
+    await saveAboutYou(tx, { ...S, grade: "9", pronoun: "he" });
     const rows = await tx
       .select()
       .from(onboarding)

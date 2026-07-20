@@ -84,6 +84,11 @@ export const protectedProcedure = authedProcedure.use(async ({ ctx, next }) => {
     const m = await requireMembership(ctx.tx, {
       email: ctx.realUser.email,
       board: ctx.board,
+      // S123: WHICH profile this request is for. Without it a person holding
+      // both a student and a tutor row on this board would get whichever row
+      // the planner returned first — the nondeterminism the widened unique
+      // introduces and this header removes.
+      profile: ctx.profile,
     });
     return next({ ctx: { ...ctx, membership: m } });
   } catch (e) {

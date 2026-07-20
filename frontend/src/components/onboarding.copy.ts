@@ -36,7 +36,11 @@ import heroHiccup3 from "../assets/scenes/hero-hiccup-3.jpg";
 import heroThor from "../assets/scenes/hero-thor.jpg";
 import heroThor2 from "../assets/scenes/hero-thor-2.jpg";
 import heroThor3 from "../assets/scenes/hero-thor-3.jpg";
-import heroIronMan from "../assets/scenes/hero-iron_man.jpg";
+// S123 — `hero-iron_man.jpg` (the da Vinci codex page) is no longer imported;
+// the founder replaced it with the figure sketch below. The FILE is kept on
+// disk deliberately: it is the founder's own art and a future full-bleed scene
+// beat may want it. Nothing renders it today.
+import heroIronManFigure from "../assets/scenes/hero-iron_man-figure.jpg";
 import heroIronMan2 from "../assets/scenes/hero-iron_man-2.jpg";
 import heroIronMan3 from "../assets/scenes/hero-iron_man-3.jpg";
 import heroBatman from "../assets/scenes/hero-batman.jpg";
@@ -174,21 +178,18 @@ export type DuoRow = {
    *   boards — the exam boards that have a catalogue (Slice E)
    */
   chips: ChipOption[] | { source: "grades" | "boards" };
-  /**
-   * Slice L (D-L1) — one option that sits UNDER the row as a quiet control
-   * rather than beside the others. It is a full answer and commits the same
-   * `key`; it is only weighted differently.
-   *
-   * 🔴 It exists because the pronoun row's third option is "just {name}", and
-   * the two shapes it could otherwise take are both wrong. A third STICKER
-   * would need a drawing of "no pronoun" and would read as a third gender —
-   * which is the exact thing this row's comment says it is not. A leftover
-   * PILL beside two cards is the layout accident the pet hatch already made
-   * once (see OnboardingPage's note on why the hatch is not a pet card).
-   * Quieter, on its own line, still first-class: the opt-out that answers.
-   */
-  aside?: ChipOption;
 };
+
+// S123 — `aside` (Slice L / D-L1) is DELETED along with its only user, the
+// pronoun row's "just {name}" opt-out (founder). Deleted rather than left as
+// unused machinery, the same call Slice L made about `OtherOption` below (M59).
+//
+// Worth keeping the reason it existed, because it is a real layout constraint
+// and the next third option will hit it again: a third STICKER would have
+// needed a drawing of "no pronoun" and would have read as a third gender, and a
+// leftover PILL beside two cards is the accident the pet hatch already made
+// once. An aside — quieter, on its own line, still a full answer — was the
+// shape that fit. There is simply no longer anything to fit.
 
 // Slice L — `OtherOption` (the "something else" escape hatch on a chip beat,
 // S91) is DELETED along with its only user, the custom pet. Deleted rather
@@ -398,7 +399,22 @@ export const HEROES: Record<string, HeroCopy> = {
   },
   iron_man: {
     label: "Iron Man",
-    img: heroIronMan,
+    // 🔑 S123 — the founder's replacement sketch. `img` was `heroIronMan`, the
+    // da Vinci CODEX PAGE: a dark, full-bleed, ink-on-parchment scene that read
+    // as a black rectangle wherever it was shrunk, and the single asset behind
+    // the composite defect this journal logged twice (S117 D-K5, S118 M75).
+    // The new figure is graphite on light ground like every other hero's art,
+    // so it composes instead of blotting.
+    //
+    // ⚠️ HEADLINE ART ONLY. It is a FULL-BODY model sheet, and a full body in
+    // the 190px composite slot is precisely the smudge S117/S118 shipped twice.
+    // `throneImg` stays the helmet BUST for that reason — do not "simplify"
+    // these two into one asset.
+    //
+    // ⚠️ NOT the flying pose the founder asked for; no flying scan exists in the
+    // repo. This is the closest of what we hold, taken as the interim on their
+    // "or something similar i might already shared with you". Still owed.
+    img: heroIronManFigure,
     pages: [heroIronMan2, heroIronMan3],
     throneImg: heroIronManThrone,
     reaction: "A genius who builds his way out of trouble. We're going to get along.",
@@ -481,8 +497,10 @@ export const HERO_CHIPS: ChipOption[] = FAV_CHARACTERS.map((id) => ({
  * the pile, not what she is allowed to like — a list that refused would be the
  * app telling a child who they are, which is the opposite of this beat's job.
  *
- * `name` (the "just my name" opt-out) gets a MIX — that path has to answer too,
- * and it is the one student we know nothing about.
+ * `any` gets a MIX — the fallback when the pronoun is null or unrecognised, and
+ * the one student we know nothing about. (It was keyed `name` until S123, for
+ * the "just my name" opt-out the founder has since removed; the roster outlived
+ * the option because a null pronoun still has to be answered.)
  */
 // ⚠️ v0 IMBALANCE, known and accepted (founder: "the girl heroes are missing,
 // which is Hermione and all... let's do that in v1 and consider this as v0").
@@ -491,7 +509,15 @@ export const HERO_CHIPS: ChipOption[] = FAV_CHARACTERS.map((id) => ({
 export const HEROES_BY_PRONOUN: Record<string, readonly string[]> = {
   he: ["harry_potter", "jon_snow", "hiccup", "thor", "iron_man", "batman", "naruto"],
   she: ["arya_stark", "daenerys", "mulan", "wonder_woman"],
-  name: ["harry_potter", "arya_stark", "naruto", "daenerys", "iron_man", "mulan"],
+  // 🔴 S123 RENAMED THIS KEY FROM 'name' TO 'any', AND THE RENAME IS THE POINT.
+  // The founder removed the "just {name}" option, so 'name' is no longer a
+  // pronoun anyone can hold — but this key was doing a SECOND, unrelated job:
+  // it is the fallback roster for a NULL or unrecognised pronoun (see below).
+  // Deleting it with the option would have left `heroesFor(null)` returning an
+  // empty list, i.e. an onboarding step offering zero heroes and no way past.
+  // A mixed roster is exactly right for "we don't know", so the list stays and
+  // only the name changes to say what it is actually for.
+  any: ["harry_potter", "arya_stark", "naruto", "daenerys", "iron_man", "mulan"],
 };
 
 /** The heroes to show first for a pronoun; everything else hides behind "more heroes". */
@@ -499,7 +525,7 @@ export function heroesFor(pronoun: string | null): {
   primary: ChipOption[];
   rest: ChipOption[];
 } {
-  const ids = HEROES_BY_PRONOUN[pronoun ?? "name"] ?? HEROES_BY_PRONOUN.name!;
+  const ids = HEROES_BY_PRONOUN[pronoun ?? "any"] ?? HEROES_BY_PRONOUN.any!;
   const primary = ids.filter((id) => id in HEROES).map((id) => ({ value: id, label: HEROES[id]!.label, img: HEROES[id]!.img }));
   const rest = FAV_CHARACTERS.filter((id) => !ids.includes(id)).map((id) => ({
     value: id,
@@ -691,10 +717,10 @@ export const ABOUT_ROWS: DuoRow[] = [
       { value: "he", label: "he", img: pronounHe },
       { value: "she", label: "she", img: pronounShe },
     ],
-    // The opt-out that still answers. Filled with their real first name at
-    // render time, so it reads as a choice rather than a refusal — and it is
-    // an `aside` rather than a third sticker for the reason on DuoRow.aside.
-    aside: { value: "name", label: "just {name}" },
+    // 🔴 S123 DELETED THE `aside` HERE — the "just {name}" opt-out (founder).
+    // It was the last row in the flow offering a third, quieter way out, and
+    // with it goes the only `aside` any row ever used. The `aside` support on
+    // DuoRow went with it rather than being left as unused machinery (M59).
   },
 ];
 

@@ -85,14 +85,27 @@ export const membership = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     createdAt: createdAt(),
   },
-  // ONE role per (user, board) — S109. The unique used to include `role`, so a
-  // user could hold several roles on one board and `requireMembership` picked
-  // whichever row came back first (no ORDER BY). Nothing hit it only because
-  // whitelist's own unique(board,email) accidentally prevented duplicates; with
-  // the whitelist gone that guard goes too, so the invariant moves here where it
-  // belongs. Role is text + CHECK (house style, M23: no pg enums).
+  // ONE row per (user, board, ROLE) — S123, the founder's multi-profile call:
+  // "email X user_id X user_type should be unique … same email can login to all
+  // profiles but content visible will be different".
+  //
+  // 🔴 THIS RE-WIDENS THE S109 UNIQUE, AND S109'S REASON FOR NARROWING IT WAS
+  // REAL. Its comment (kept here because it is the hazard, not history): a user
+  // holding several roles on one board meant `requireMembership` "picked
+  // whichever row came back first (no ORDER BY)". That is still how the query
+  // reads — so widening this ALONE would make a person's role nondeterministic,
+  // flickering between their student and tutor rows at the planner's whim.
+  //
+  // What makes it safe is that role is no longer INFERRED. The active profile
+  // travels with the request (`x-profile`, the sibling of `x-board`), and every
+  // membership read now filters on it. S109 was right that a one-row-per-board
+  // answer must be unambiguous; it got there by forbidding the second row, and
+  // we get there by asking which one you mean. Removing the role filter from
+  // any of those three queries re-opens the exact bug S109 closed.
+  //
+  // Role is text + CHECK (house style, M23: no pg enums).
   (t) => [
-    unique().on(t.userId, t.boardId),
+    unique().on(t.userId, t.boardId, t.role),
     check("membership_role_check", sql`${t.role} IN ('student','tutor','parent','admin')`),
   ],
 );

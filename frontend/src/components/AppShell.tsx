@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { heroImg, heroLabel } from "./onboarding.copy";
+import sceneSentinel from "../assets/scenes/sentinel.jpg";
 
 // The shared TAITOR app shell — a floating white left nav rail beside a
 // graph-paper canvas (the tutor-canvas layout from the reference). For the
@@ -158,6 +159,30 @@ export function AppShell({
       <main className="canvas graph-paper">
         <div className="canvas-accent canvas-accent--tl" />
         <div className="canvas-accent canvas-accent--br" />
+
+        {/* 🔑 S123 — THE ARGONATH, LIFTED OUT OF THE DASHBOARD (founder: "these
+            statues should be there on every screen, in the bg").
+            They lived in `DashboardPage` anchored to `.dash`, so seven of the
+            eight views never had them. Moved here they are shell furniture, and
+            every view inherits them.
+            Anchored to `.canvas` (z-index 0) rather than to the reading column,
+            which is the change that makes "in the bg" literally true: the
+            column paints ABOVE them (`.canvas-inner` is z-index 1), so they may
+            pass behind the cards instead of having to fit in a gutter wide
+            enough to clear them. That is what lets them show on a 1440 laptop
+            at all — see the breakpoint note in app-shell.css. */}
+        <img
+          className="shell-sentinel shell-sentinel--left"
+          src={sceneSentinel}
+          alt=""
+          aria-hidden="true"
+        />
+        <img
+          className="shell-sentinel shell-sentinel--right"
+          src={sceneSentinel}
+          alt=""
+          aria-hidden="true"
+        />
         <div className={`canvas-inner${wide ? " canvas-inner--wide" : ""}`}>
           {children}
         </div>

@@ -52,6 +52,7 @@ import {
   resolveMembership,
   requireMembership,
   grantRole,
+  NoMembershipError,
 } from "../src/services/membership";
 import { env } from "../src/config/env";
 
@@ -196,25 +197,69 @@ async function main() {
     asTutor.length === 1 && asTutor[0]?.role === "tutor",
   );
 
-  // THE invariant this slice exists for. The old unique was
-  // (user, board, ROLE), so this second call would have ADDED a row and left
-  // requireMembership picking between them with no ORDER BY — a coin-flip
-  // between tutor and parent on every request.
+  // 🔴 S123 INVERTED THIS LEG, and the inversion IS the slice. It used to assert
+  // the S109 single-role invariant: a second grant REPLACED the first, leaving
+  // exactly one row. The founder's multi-profile call ("email X user_id X
+  // user_type should be unique … same email can login to all profiles") makes
+  // the second grant ADD a profile beside the first instead.
+  //
+  // S109's stated fear was real and is answered elsewhere, not here: with two
+  // rows, `requireMembership` used to pick between them with no ORDER BY — a
+  // coin-flip between tutor and parent on every request. What makes two rows
+  // safe now is that the caller NAMES the profile (`x-profile` → the role
+  // filter), and `profileOrder` makes even the unnamed case deterministic. The
+  // two legs below pin exactly that, so this probe still fails if the coin-flip
+  // ever comes back.
   await withBoard(boardA.id, (tx) =>
     grantRole(tx, { email: emailR, name: "Probe R", board: boardA, role: "parent" }),
   );
-  const asParent = await rolesOf(emailR, boardA.id);
+  const bothRoles = await rolesOf(emailR, boardA.id);
   check(
-    "single-role invariant: re-grant REPLACES, still exactly 1 row",
-    asParent.length === 1 && asParent[0]?.role === "parent",
+    "S123 multi-profile: a second grant ADDS a profile (2 rows, tutor + parent)",
+    bothRoles.length === 2 &&
+      new Set(bothRoles.map((r) => r.role)).size === 2 &&
+      bothRoles.every((r) => r.role === "tutor" || r.role === "parent"),
   );
 
-  // The role a promotion resolves to must be the one the CHECK side reads —
-  // otherwise a tutor could be promoted and still be authorized as a parent.
-  const seen = await withBoard(boardA.id, (tx) =>
+  // 🔴 THE COIN-FLIP GUARD. With two profiles on one board, asking for one by
+  // name must return THAT one — not "one of them". Both directions are checked
+  // because a filter that silently ignored its argument would still pass a
+  // single-direction test half the time, which is the failure S109 described.
+  const asTutorNamed = await withBoard(boardA.id, (tx) =>
+    requireMembership(tx, { email: emailR, board: boardA, profile: "tutor" }),
+  );
+  check("S123: x-profile=tutor selects the TUTOR row", asTutorNamed.role === "tutor");
+  const asParentNamed = await withBoard(boardA.id, (tx) =>
+    requireMembership(tx, { email: emailR, board: boardA, profile: "parent" }),
+  );
+  check("S123: x-profile=parent selects the PARENT row", asParentNamed.role === "parent");
+
+  // Asking for a profile they do NOT hold is a MISS, never a substitution. This
+  // is the founder's actual bug report in probe form: clicking Tutor while
+  // holding only a student row must not quietly hand back the student surface.
+  let missed = false;
+  try {
+    await withBoard(boardA.id, (tx) =>
+      requireMembership(tx, { email: emailR, board: boardA, profile: "student" }),
+    );
+  } catch (e) {
+    missed = e instanceof NoMembershipError;
+  }
+  check("S123: an unheld profile is a MISS, not a fallback to another role", missed);
+
+  // Unnamed must still be DETERMINISTIC (profileOrder), not arbitrary. Run twice
+  // — a coin-flip passes a single call 50% of the time, so one call proves
+  // nothing about the property being asserted.
+  const unnamed1 = await withBoard(boardA.id, (tx) =>
     requireMembership(tx, { email: emailR, board: boardA }),
   );
-  check("requireMembership reads back the granted role", seen.role === "parent");
+  const unnamed2 = await withBoard(boardA.id, (tx) =>
+    requireMembership(tx, { email: emailR, board: boardA }),
+  );
+  check(
+    "S123: no x-profile → deterministic pick (parent before tutor, twice)",
+    unnamed1.role === "parent" && unnamed2.role === "parent",
+  );
 
   // ── 8. The SELF-SIGNUP rules are GONE, and this leg is what keeps them gone.
   // Slice SELF-SIGNUP (S108) opened one narrow door: cbse + a GOOGLE identity.

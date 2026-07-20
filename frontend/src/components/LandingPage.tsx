@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { signIn } from "../lib/auth";
+// `devLogin` is imported unconditionally but referenced ONLY inside an
+// `import.meta.env.DEV` branch, so Vite drops both the call and the import from
+// production builds (verified by bundle grep, S123).
+import { signIn, devLogin } from "../lib/auth";
 import { setPersona } from "../trpc";
 import "./landing.css";
 
@@ -102,9 +105,47 @@ export function LandingPage() {
     signIn.social({ provider: "google", callbackURL: window.location.origin });
   };
 
-  // S122 — `onDevSignIn` deleted with the form it drove. `devLogin` itself
-  // still exists in lib/auth.ts and is still used by the local probes/walks,
-  // which run against a dev backend where the route is live.
+  // ── S123 — DEV LOGIN, RESTORED FOR LOCAL ONLY ─────────────────────────────
+  //
+  // 🔴 THE ENTIRE SAFETY OF THIS RESTS ON `import.meta.env.DEV`, AND NOT ON
+  // ANYONE REMEMBERING ANYTHING. S122 deleted this form as half of closing the
+  // production bypass; putting it back unguarded would re-open that bypass on
+  // the very next deploy, silently, months after the decision that closed it.
+  //
+  // `import.meta.env.DEV` is replaced by the literal `false` at BUILD time, so
+  // Vite's dead-code elimination removes the branch, the handler and the
+  // imports from the production bundle outright. This is a compile-time
+  // guarantee, not a runtime check that could be flipped by an env var or a
+  // misread NODE_ENV — the bundle physically does not contain the form.
+  // Verified by grepping the built bundle (see build-state S123).
+  //
+  // ⚠️ THE UI WAS NEVER THE GATE, and this comment must keep saying so. The
+  // real lock is the backend's `NODE_ENV !== "production"` check in auth.ts,
+  // which is what makes `POST /api/auth/sign-in/email` 400 on the box. This
+  // form is a convenience on top of a route that is already open locally; it
+  // grants nothing that curl could not.
+  // ⚠️ The seed goes through the SAME `import.meta.env.DEV` fold. The hook
+  // itself lives outside the dev branch (hooks cannot be conditional), so a
+  // bare `useState("one@example.com")` left that literal sitting in the
+  // production bundle — caught by the bundle grep, which flagged it while every
+  // other dev-login string was correctly gone. Nothing was exploitable about a
+  // stray email, but a prod artefact containing a test account is exactly the
+  // kind of residue that makes a later reader think the form is still there.
+  const [devEmail, setDevEmail] = useState(import.meta.env.DEV ? "one@example.com" : "");
+  const [devBusy, setDevBusy] = useState(false);
+  const onDevSignIn = async () => {
+    setErr(null);
+    setDevBusy(true);
+    try {
+      await devLogin(devEmail.trim());
+      // No explicit navigation: `useSession` picks the new session up and App
+      // re-routes on it, the same path Google sign-in takes.
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setDevBusy(false);
+    }
+  };
 
   // Splash intro sequence + the per-lane generative canvas flow. Ported ~verbatim
   // from the artifact; scoped to the component root and fully torn down on unmount
@@ -317,6 +358,38 @@ export function LandingPage() {
                 that leg is inverted in this same edit — a probe whose subject
                 you delete must change direction with it, or it silently guards
                 nothing (M77). */}
+            {/* S123 — dev sign-in, LOCAL BUILDS ONLY. See `onDevSignIn` above
+                for why this is `import.meta.env.DEV` and not a runtime flag:
+                the branch is compiled OUT of the production bundle entirely.
+                Labelled loudly on purpose — if this ever appears on a deployed
+                site, that is the bug, and it should be unmistakable. */}
+            {import.meta.env.DEV && (
+              <div className="or-dev">
+                {/* `.or-dev-label` / `.or-dev-row`, NOT invented class names —
+                    S122 deleted this markup but left its stylesheet intact, so
+                    the restored form reuses the rules that were already there
+                    rather than adding a second set beside them. */}
+                <p className="or-dev-label">local dev only — not in production builds</p>
+                <div className="or-dev-row">
+                  <input
+                    className="or-dev-input"
+                    type="email"
+                    value={devEmail}
+                    onChange={(e) => setDevEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    aria-label="Dev sign-in email"
+                  />
+                  <button
+                    className="or-dev-btn"
+                    type="button"
+                    onClick={onDevSignIn}
+                    disabled={devBusy || !devEmail.trim()}
+                  >
+                    {devBusy ? "Signing in…" : "Dev sign in"}
+                  </button>
+                </div>
+              </div>
+            )}
             {err && <p className="or-err">{err}</p>}
             <button className="or-back" type="button" onClick={() => setChosen(null)}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 6l-6 6 6 6" /></svg> Choose a different role

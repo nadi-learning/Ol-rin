@@ -305,6 +305,73 @@
   opacity: 0.4;
 }
 
+/* ── S123: THE ARGONATH, as shell background on EVERY view ──────────────────
+   Two scans of the same statue flank the reading column — the student goes
+   BETWEEN them, they are not ornament in a corner.
+
+   🔴 WHY THE BREAKPOINT MOVED 1600 → 1280. The dashboard version required the
+   statue to fit ENTIRELY in the gutter beside a 920px column, which needs a
+   ~1450px canvas — so on a 1440px MacBook (a laptop, and the founder's stated
+   launch device) the gutter is ~120px and they were hidden outright. That is
+   the whole reason the founder saw them and another user did not: a viewport
+   check reading as a per-user bug.
+   Anchoring to `.canvas` at z-index 0 instead of to the column removes the
+   constraint — the column paints over them, so they no longer have to FIT
+   beside it, only to sit behind it. 1280 is now simply where there is enough
+   canvas for them to read as flanking rather than as clutter.
+
+   They stay decorative: aria-hidden, pointer-events off, nothing depends on
+   them being visible. */
+.shell-sentinel {
+  position: absolute;
+  top: 24px;
+  width: 240px;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+  display: none;
+
+  /* Same treatment as the welcome-card cast (S108): grey it out, drop it to a
+     watermark, and multiply so the scan's paper melts into the canvas instead
+     of printing a white block on it.
+     ⚠️ `multiply` means these VANISH on a dark canvas. Correct here — the
+     canvas is light — but it is why they cannot simply be reused on a dark
+     surface later. */
+  filter: grayscale(1) contrast(1.04);
+  opacity: 0.22;
+  mix-blend-mode: multiply;
+
+  /* Both axes must reach transparent or the scan's edge prints a hard
+     rectangle — the standing edge rule for every scene scan (S102). */
+  mask-image:
+    linear-gradient(to right, transparent 0, black 26%, black 74%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 18%, black 66%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.shell-sentinel--left {
+  left: 8px;
+}
+/* Mirrored so the pair faces inward across the column, like the real gate. */
+.shell-sentinel--right {
+  right: 8px;
+  transform: scaleX(-1);
+}
+
+@media (min-width: 1280px) {
+  .shell-sentinel {
+    display: block;
+  }
+}
+
+/* Wider canvases can afford the full-size scan and a bit more presence. */
+@media (min-width: 1600px) {
+  .shell-sentinel {
+    width: 300px;
+    opacity: 0.26;
+  }
+}
+
 .canvas-inner {
   position: relative;
   z-index: 1;

@@ -9,60 +9,12 @@
   max-width: 1040px;
 }
 
-/* --- DASH-GUARD: the gutter sentinels ---
-   The reading column is capped, so wide screens leave dead space either side.
-   Two scans of the same statue flank it — the Argonath read: the student goes
-   BETWEEN them, they are not ornament in a corner. Anchored off `.dash` and
-   pushed out past its edge (`right: 100%` / `left: 100%`), so they track the
-   column wherever it centres instead of guessing at viewport maths.
+/* S123 — every `.dash-sentinel` rule DELETED. The Argonath moved to the shell
+   (`.shell-sentinel` in app-shell.css) so it stands behind all eight views
+   rather than the dashboard alone, and the 1600px gate that hid it from every
+   1440px laptop went with it. Deleted rather than left dormant (M59): the
+   markup that wore these classes is gone from DashboardPage. */
 
-   Hidden below 1600px: the gutter is (canvasW - 920)/2 - 32 wide, so 1600 is
-   the first viewport where 240px + its 24px margin clears the column without
-   colliding with the canvas edge. Under that the gutter is too narrow and
-   they would either clip or press on the cards. This is a wide-screen grace
-   note, not layout — nothing below it depends on them being visible. */
-.dash-sentinel {
-  position: absolute;
-  top: 12px;
-  width: 240px;
-  pointer-events: none;
-  user-select: none;
-  z-index: 0;
-  display: none;
-
-  /* Same treatment as the welcome-card cast (S108): grey it out, drop it to a
-     watermark, and multiply so the scan's paper melts into the canvas instead
-     of printing a white block on it. */
-  filter: grayscale(1) contrast(1.04);
-  opacity: 0.26;
-  mix-blend-mode: multiply;
-
-  /* Both axes must reach transparent or the scan's edge prints a hard
-     rectangle — the standing edge rule for every scene scan (S102). The right
-     edge fades hardest on the left statue (and vice-versa via the mirror), so
-     the sketch dissolves as it approaches the text rather than stopping at it. */
-  mask-image:
-    linear-gradient(to right, transparent 0, black 26%, black 74%, transparent 100%),
-    linear-gradient(to bottom, transparent 0, black 18%, black 66%, transparent 100%);
-  -webkit-mask-composite: source-in;
-  mask-composite: intersect;
-}
-.dash-sentinel--left {
-  right: 100%;
-  margin-right: 24px;
-}
-/* Mirrored so the pair faces inward across the column, like the real gate. */
-.dash-sentinel--right {
-  left: 100%;
-  margin-left: 24px;
-  transform: scaleX(-1);
-}
-
-@media (min-width: 1600px) {
-  .dash-sentinel {
-    display: block;
-  }
-}
 
 /* --- heading --- */
 .dash-head {

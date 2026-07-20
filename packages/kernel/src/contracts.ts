@@ -36,6 +36,20 @@ export function isSelfAssignableRole(role: string | null | undefined): role is R
   return Boolean(role) && (SELF_ASSIGNABLE_ROLES as readonly string[]).includes(role!);
 }
 
+/**
+ * True when a string is one of the four roles at all — a SHAPE check, unrelated
+ * to permission. Used on the `x-profile` header (trpc/context.ts) to decide
+ * whether a request names a real role before asking the database for it.
+ *
+ * ⚠️ Deliberately admits `admin`, unlike `isSelfAssignableRole`. This gates
+ * which membership row gets SELECTED, never which one may be created, so an
+ * admin who really is one must be able to name their own profile. Nothing is
+ * granted by passing this — the row still has to exist.
+ */
+export function isRole(role: string | null | undefined): role is Role {
+  return Boolean(role) && (ROLES as readonly string[]).includes(role!);
+}
+
 export const Axis = z.enum(["conceptual", "procedural"]);
 export type Axis = z.infer<typeof Axis>;
 
@@ -178,15 +192,21 @@ export function resolveOnboardingStep(stored: string): OnboardingStep {
 }
 
 // S92 — how Olórin refers to the student when he talks ABOUT them (to a tutor,
-// in a report). Deliberately NOT a gender field:
-//  - it has a consumer the moment tutor/parent copy needs a pronoun, whereas
-//    "gender" would be stored and never read — the exact shape of `school`,
-//    which S90 cut for being askable rather than needed;
-//  - "just use my name" is a real answer, not a refusal, so a child who does
-//    not want to answer has a dignified way through that still returns
-//    something usable.
-// 'name' means: use their first name instead of a pronoun.
-export const PRONOUNS = ["he", "she", "name"] as const;
+// in a report). Deliberately NOT a gender field: it has a consumer the moment
+// tutor/parent copy needs a pronoun, whereas "gender" would be stored and never
+// read — the exact shape of `school`, which S90 cut for being askable rather
+// than needed.
+//
+// 🔴 S123 REMOVED 'name' (founder: remove the "just {name}" option). It was the
+// opt-out — "use my first name instead of a pronoun" — offered as a quiet aside
+// under the two stickers.
+//
+// ⚠️ The column is free TEXT with no DB enum, so nothing stopped rows written
+// before this from holding 'name', and the service's closed-set check REJECTS
+// unknown values on save. A student carrying the old value can still read fine
+// (nothing branches on it any more) but would be blocked the moment they re-saw
+// the step. S123 checked the live rows before shipping — see build-state.
+export const PRONOUNS = ["he", "she"] as const;
 export const Pronoun = z.enum(PRONOUNS);
 export type Pronoun = z.infer<typeof Pronoun>;
 

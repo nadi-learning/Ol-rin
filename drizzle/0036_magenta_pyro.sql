@@ -1,0 +1,2 @@
+ALTER TABLE "membership" DROP CONSTRAINT "membership_user_id_board_id_unique";--> statement-breakpoint
+ALTER TABLE "membership" ADD CONSTRAINT "membership_user_id_board_id_role_unique" UNIQUE("user_id","board_id","role");

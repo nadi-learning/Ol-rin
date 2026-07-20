@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSession, signOut } from "./lib/auth";
 import { trpc, clearBoard, setBoard, getPersona } from "./trpc";
 import { AppShell, type AppView } from "./components/AppShell";
@@ -14,7 +14,6 @@ import { ProfilePage } from "./components/ProfilePage";
 import { TutorPage } from "./components/TutorPage";
 import { ParentPage } from "./components/ParentPage";
 import { AccessPending } from "./components/AccessPending";
-import { ClaimMint } from "./components/ClaimMint";
 import { AdminPage } from "./components/AdminPage";
 import { OnboardingPage } from "./components/OnboardingPage";
 import "./theme/tokens.css";
@@ -46,6 +45,11 @@ export function App() {
   // a board, so `me` and the onboarding state have to be fetched for the first
   // time. The session object is unchanged, so it cannot be the trigger.
   const [bootNonce, setBootNonce] = useState(0);
+  // S123 — the profile this browser asked for, which this identity does NOT
+  // hold. Non-null means "show the signboard for this role": they clicked
+  // Tutor, they are not a tutor, and the honest answer is the waiting room
+  // rather than silently handing them whatever profile they DO have.
+  const [missingProfile, setMissingProfile] = useState<string | null>(null);
   // Deep-link target for "Continue lesson" — the sub_topic the dashboard wants
   // Revision to open at. Cleared (null) means Revision opens at its default.
   const [revisionTarget, setRevisionTarget] = useState<string | null>(null);
@@ -55,40 +59,27 @@ export function App() {
     setView("revision");
   };
 
-  // The landing persona — LATCHED, not sampled.
+  // The landing persona — SAMPLED, and as of S123 that is finally safe.
   //
-  // Two failure modes, and the latch is the only shape that dodges both:
+  // 🔑 THE LATCH IS GONE, AND ITS REASON WITH IT. Two sessions running, this was
+  // a `useRef` latch, and it caused a production bug in BOTH directions:
+  //   - first-non-null (M78) let a stale abandoned "tutor" claim outrank the
+  //     card actually clicked, and locked the founder out of their own app.
+  //   - latest-non-null (M79) fixed that, and was still a latch — it existed
+  //     only because `ClaimMint` cleared the persona mid-flight, so a plain
+  //     read could flip to null underneath its own request.
   //
-  //  - read once at mount and it is always null. App mounts on the LANDING
-  //    page, before any persona is clicked, and it never remounts on sign-in
-  //    (the session changes, the component does not). That bug shipped a
-  //    version of this that silently sent every claimed tutor into student
-  //    onboarding — exactly what it was written to prevent.
-  //  - read fresh every render and it flips to null mid-flight, because
-  //    `ClaimMint` clears the persona on success and the reboot has not landed
-  //    yet — swapping the component out from under its own request.
+  // S123 deleted ClaimMint (a click no longer mints anything), and nothing else
+  // has ever called `clearPersona`. The persona is now written once on the
+  // landing page and simply persists as the active profile. There is no
+  // mid-flight null to dodge, so there is nothing left for a latch to protect —
+  // and a latch with no live hazard is just stale state waiting to lie.
   //
-  // So: sample every render, keep the LATEST non-null answer.
-  //
-  // 🔴 S122 — it used to keep the FIRST non-null answer, and that was a third
-  // failure mode, worse than either above because it fired on the happy path.
-  // `b2c.persona` survives in localStorage until a mint SUCCEEDS, so anyone who
-  // ever clicked Tutor and did not complete carries that claim into their next
-  // visit. App mounts, reads it, and latches "tutor" BEFORE a single card is
-  // clicked. Picking Student then updates localStorage but can never update the
-  // latch — `!claimRef.current` is already false — so the stale claim outranks
-  // the choice actually made, and ClaimMint mints a DISABLED TUTOR membership.
-  // The founder hit exactly this: signed in as a student, got the tutor
-  // signboard, and was locked out of the app by a role they never picked.
-  //
-  // Latest-non-null keeps both original guarantees — null never overwrites, so
-  // ClaimMint's clearPersona still cannot swap the component out mid-request —
-  // while letting a genuine re-pick win, which is the entire point of the
-  // "Choose a different role" button sitting next to it.
-  const claimRef = useRef<string | null>(null);
-  const livePersona = getPersona();
-  if (livePersona && livePersona !== claimRef.current) claimRef.current = livePersona;
-  const claimedRole = claimRef.current;
+  // 🔴 The rule that replaces it: this value is VALIDATED against real
+  // memberships in `boot` before it routes anything. A latch tried to make a
+  // localStorage string trustworthy by freezing it; checking it against the
+  // database is the thing that actually works.
+  const claimedRole = getPersona();
   const isPendingRoleClaim = claimedRole === "parent" || claimedRole === "tutor";
 
   useEffect(() => {
@@ -113,6 +104,36 @@ export function App() {
       const who = await trpc.session.whoami.query();
       if (cancelled) return;
 
+      // 🔑 S123 — THE BUG THIS SLICE EXISTS FOR. Validate the claimed profile
+      // against the profiles this identity ACTUALLY holds, before `me` is
+      // called. The founder's report: signing in through the Tutor card with an
+      // email that already had a student membership silently landed on the
+      // student app. It happened because the claim was only ever consulted when
+      // memberships was EMPTY — hold any membership and the persona was dead
+      // code, and `me` answered with whatever single row existed.
+      //
+      // Done here rather than by letting `me` throw NO_MEMBERSHIP, because that
+      // error is indistinguishable from the stale-board case the retry below
+      // heals — it would clear a perfectly good board and then show an error
+      // page instead of the signboard that explains the situation.
+      // 🔴 GATED ON `length > 0`, AND THAT GUARD IS LOAD-BEARING. A brand-new
+      // student holds NO memberships yet — their student row is minted by
+      // onboarding, further down. Without this guard their perfectly valid
+      // "student" claim matches nothing, and EVERY new signup lands in the
+      // waiting room instead of onboarding. Zero memberships is "not yet",
+      // never "denied"; the branches below already handle it correctly.
+      const heldProfiles = new Set(who.memberships.map((m) => m.role));
+      const claimUnheld =
+        who.memberships.length > 0 && !!claimedRole && !heldProfiles.has(claimedRole);
+      if (cancelled) return;
+      setMissingProfile(claimUnheld ? claimedRole : null);
+      if (claimUnheld) {
+        setNeedsBoard(false);
+        setMe(null);
+        setError(null);
+        return;
+      }
+
       if (who.memberships.length === 0) {
         // Belongs nowhere: no board header to send, so `me` and
         // `onboarding.getState` cannot be called at all. Onboarding runs
@@ -125,7 +146,15 @@ export function App() {
         return;
       }
 
-      setBoard(who.preferred!);
+      // S123: enter on a board where the ACTIVE PROFILE exists. `preferred` is
+      // the oldest membership regardless of role, so a tutor on igcse whose
+      // oldest row is a cbse student membership would otherwise be sent to cbse
+      // carrying `x-profile: tutor` — a pair that matches nothing, turning a
+      // valid tutor into a NO_MEMBERSHIP error. Board and profile have to agree.
+      const boardForProfile = claimedRole
+        ? (who.memberships.find((m) => m.role === claimedRole)?.slug ?? who.preferred!)
+        : who.preferred!;
+      setBoard(boardForProfile);
       setNeedsBoard(false);
       try {
         const r = await trpc.me.query();
@@ -160,7 +189,11 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [session, bootNonce]);
+    // `claimedRole` joins the deps: boot now branches on it (the S123 profile
+    // check), so a re-pick that changes the persona must re-run boot. Leaving it
+    // out would validate the OLD claim against the new membership set — a stale
+    // read of exactly the kind that caused M78/M79 in this file.
+  }, [session, bootNonce, claimedRole]);
 
   if (isPending) return <Gate>Checking…</Gate>;
 
@@ -176,6 +209,25 @@ export function App() {
   // the alternative is flashing a board picker at a student who already has one.
   if (needsBoard === undefined) {
     return <Gate>{error ? <p className="gate-error">{error}</p> : "Loading…"}</Gate>;
+  }
+
+  // 🔑 S123 — THE FOUNDER'S REPORT, ANSWERED. They hold memberships, but not the
+  // one they asked for: signed in through the Tutor card holding only a student
+  // profile. Before this branch existed the claim was ignored and they landed
+  // on the student app, which reads as "the login is broken" because from the
+  // outside it is.
+  //
+  // 🔴 THIS MUST SIT ABOVE the `me`-based routing below, and above the loading
+  // gate for `me`. `me` is deliberately never fetched in this state (boot
+  // returns early), so falling through would render "Loading…" forever.
+  if (missingProfile) {
+    return (
+      <AccessPending
+        name={session.user.name ?? session.user.email.split("@")[0] ?? "there"}
+        role={missingProfile}
+        onSignOut={() => signOut()}
+      />
+    );
   }
 
   // Slice E — belongs to no board yet. Onboarding runs PRE-BOARD: its
@@ -196,11 +248,23 @@ export function App() {
   // Tutor cards: the persona was cosmetic, so every Google signup became a
   // student regardless of which card was clicked.
   //
-  // They mint directly and land in the waiting room. See `ClaimMint` for why a
-  // claim buys a waiting room rather than a capability.
+  // 🔴 S123 — THE CLAIM NO LONGER MINTS ANYTHING. This branch used to render
+  // <ClaimMint>, which WROTE a disabled tutor/parent membership from a card
+  // click. The founder's call killed that ("there is no construct like self
+  // promote"), and the reason is in the journal: a FE latch bug minted a real
+  // disabled tutor row and locked the founder out of their own app. A click can
+  // no longer create a profile, so it can no longer create that mess.
+  //
+  // A claimed parent/tutor with no board at all is someone we have never heard
+  // of asking for a role only an admin can give. That is the waiting room, and
+  // now it is JUST the waiting room — nothing is written on the way in.
   if (needsBoard && isPendingRoleClaim) {
     return (
-      <ClaimMint claimedRole={claimedRole!} onDone={() => setBootNonce((n) => n + 1)} />
+      <AccessPending
+        name={session.user.name ?? session.user.email.split("@")[0] ?? "there"}
+        role={claimedRole!}
+        onSignOut={() => signOut()}
+      />
     );
   }
 

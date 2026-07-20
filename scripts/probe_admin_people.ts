@@ -211,7 +211,11 @@ async function main() {
     renamed.name === "Spine Name",
   );
 
-  // grant a SECOND role to the same person → must overwrite, not accumulate
+  // 🔴 S123 INVERTED THIS LEG. Granting a SECOND role now ACCUMULATES rather
+  // than overwriting — the founder's multi-profile construct, where one email
+  // holds a student/tutor/parent profile side by side and the active one is
+  // named per request (`x-profile`). Before S123 this asserted the opposite
+  // (exactly one row, overwritten), which is why it went red on the migration.
   await withBoard(A.id, (tx) =>
     setRole(tx, { board: A, actorUserId: adminM.user.id, email: tutorEmail, role: "parent" }),
   );
@@ -222,15 +226,41 @@ async function main() {
       .innerJoin(appUser, eq(appUser.id, membership.userId))
       .where(eq(appUser.email, tutorEmail)),
   );
-  // M54: assert the ROLE, not just the row count — a bad overwrite keeps ONE row.
+  // M54 still applies: assert the ROLES, not just the count. A count-only check
+  // would pass on two rows that both said 'parent' — i.e. on a broken grant.
   check(
-    `single-role invariant: exactly ONE row (got ${tutorRows.length}) and it reads 'parent'`,
-    tutorRows.length === 1 && tutorRows[0]?.role === "parent",
+    `S123 multi-profile: setRole ADDS a second profile (got ${tutorRows.length}: ${tutorRows
+      .map((r) => r.role)
+      .sort()
+      .join("+")})`,
+    tutorRows.length === 2 &&
+      new Set(tutorRows.map((r) => r.role)).size === 2 &&
+      tutorRows.every((r) => r.role === "tutor" || r.role === "parent"),
   );
-  // put them back to tutor for the link legs
-  await withBoard(A.id, (tx) =>
-    setRole(tx, { board: A, actorUserId: adminM.user.id, email: tutorEmail, role: "tutor" }),
-  );
+
+  // 🔴 RESTORE BY DELETING, NOT BY RE-GRANTING. The link legs below expect this
+  // person to be a tutor and nothing else. Pre-S123 a `setRole(…, "tutor")` put
+  // them back because a grant overwrote; now it would simply no-op against the
+  // tutor row they still hold and leave the parent profile standing, so the
+  // legs would run against a two-profile person and silently mean something
+  // different. Removing a profile is a delete — that is the whole point of the
+  // new unique.
+  await withBoard(A.id, async (tx) => {
+    const [u] = await tx
+      .select({ id: appUser.id })
+      .from(appUser)
+      .where(eq(appUser.email, tutorEmail))
+      .limit(1);
+    await tx
+      .delete(membership)
+      .where(
+        and(
+          eq(membership.userId, u!.id),
+          eq(membership.boardId, A.id),
+          eq(membership.role, "parent"),
+        ),
+      );
+  });
   await withBoard(A.id, (tx) =>
     setRole(tx, { board: A, actorUserId: adminM.user.id, email: parentEmail, role: "parent" }),
   );

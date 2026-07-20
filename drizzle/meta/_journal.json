@@ -253,6 +253,13 @@
       "when": 1784548020638,
       "tag": "0035_regular_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784567369404,
+      "tag": "0036_magenta_pyro",
+      "breakpoints": true
     }
   ]
 }

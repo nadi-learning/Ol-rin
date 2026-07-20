@@ -4,7 +4,6 @@ import { BoardSettingUp } from "./BoardSettingUp";
 import { firstName, loaderPetAlt, loaderPetImg } from "./onboarding.copy";
 import { useTypewriter } from "../lib/useTypewriter";
 import type { AppView } from "./AppShell";
-import sceneSentinel from "../assets/scenes/sentinel.jpg";
 import "./dashboard.css";
 
 // Slice DASH — the student home/landing surface, the "Home" view in the left-rail
@@ -109,26 +108,19 @@ export function DashboardPage({
 
   return (
     <div className="dash">
-      {/* DASH-GUARD — the canvas is capped at a readable column, so on a wide
-          screen the gutters either side of it are dead space. They become the
-          Argonath: two sentinels the student reads BETWEEN. Decoration only —
-          aria-hidden, pointer-events off, and hidden entirely below the width
-          where the gutters actually exist (else they crowd the content). */}
-      <img
-        className="dash-sentinel dash-sentinel--left"
-        src={sceneSentinel}
-        alt=""
-        aria-hidden="true"
-      />
-      <img
-        className="dash-sentinel dash-sentinel--right"
-        src={sceneSentinel}
-        alt=""
-        aria-hidden="true"
-      />
-
+      {/* S123 — the Argonath sentinels MOVED to AppShell (`.shell-sentinel`),
+          so they now stand behind every view instead of only this one. Removed
+          here rather than left in place: two copies would have stacked a second
+          pair over the shell's at a different opacity on the dashboard alone. */}
       <header className="dash-head">
-        <p className="dash-hello">Hi {studentName} 👋</p>
+        {/* 🔴 S123 — `firstName`, not the raw name. Google hands back whatever
+            the student typed into their own profile, so this rendered "Hi R.K
+            LAXMAN 👋" — a bank letter, which is exactly what the comment on
+            FirstRunTour's greeting already warned about. The helper existed and
+            the first-run line used it; this line simply never did.
+            No title-casing: "R.K LAXMAN" → "R.k Laxman" is worse than leaving
+            a name the way its owner writes it. */}
+        <p className="dash-hello">Hi {firstName(studentName)} 👋</p>
         <h1 className="dash-title">My Lessons</h1>
       </header>
 

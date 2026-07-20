@@ -142,16 +142,21 @@ export async function whoami(email: string): Promise<Whoami> {
   const found: (MembershipSummary & { at: Date })[] = [];
 
   for (const b of boards) {
-    const row = await withBoard(b.id, async (tx) => {
-      const [m] = await tx
+    // 🔴 S123: ALL rows for this board, not `.limit(1)`. One email may now hold
+    // a student AND a tutor AND a parent profile on the same board, and this is
+    // the function that tells the FE which profiles exist — taking one row would
+    // hide the others, which is precisely how a tutor's landing click ended up
+    // resolving to their student surface.
+    const rows = await withBoard(b.id, async (tx) =>
+      await tx
         .select({ role: membership.role, at: membership.createdAt })
         .from(membership)
         .innerJoin(appUser, eq(appUser.id, membership.userId))
-        .where(and(eq(appUser.email, email), eq(membership.boardId, b.id)))
-        .limit(1);
-      return m ?? null;
-    });
-    if (row) found.push({ slug: b.slug, name: b.name, role: row.role, at: row.at });
+        .where(and(eq(appUser.email, email), eq(membership.boardId, b.id))),
+    );
+    for (const row of rows) {
+      found.push({ slug: b.slug, name: b.name, role: row.role, at: row.at });
+    }
   }
 
   // Stable sort: `found` is already in board-name order, and Array.sort is

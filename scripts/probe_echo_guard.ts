@@ -1393,40 +1393,50 @@ check(
   "Slice L: both stickers carry art — a sticker row with no picture is just pills",
   Array.isArray(pronounRow.chips) && pronounRow.chips.every((c) => Boolean(c.img)),
 );
-// 🔑 The claim that actually protects the student. PRONOUNS is the server's
-// closed set; the UI must offer ALL of it. Two stickers plus an aside is three
-// options, and if the aside were ever dropped the opt-out would vanish while
-// every other gate stayed green — a child who would rather not say would be
-// forced to pick he or she. Asserted against the CONTRACT, not a literal 3.
-const offeredPronouns = [
-  ...(Array.isArray(pronounRow.chips) ? pronounRow.chips.map((c) => c.value) : []),
-  ...(pronounRow.aside ? [pronounRow.aside.value] : []),
-];
+// 🔑 The claim that actually protects the student, and it SURVIVES S123 intact
+// because it was written against the CONTRACT rather than a literal count.
+// PRONOUNS is the server's closed set; the UI must offer all of it and nothing
+// beyond it. Before S123 that was two stickers + an aside; it is now two
+// stickers, and this leg needed no edit to say so — which is the whole reason
+// it was written this way.
+//
+// The `nothing beyond it` half is new and load-bearing: a sticker still
+// offering the removed 'name' would be an option the server now REJECTS, i.e. a
+// student who picks it is told their own answer is invalid.
+const offeredPronouns = Array.isArray(pronounRow.chips)
+  ? pronounRow.chips.map((c) => c.value)
+  : [];
 check(
   "Slice L (D-L1): every pronoun the SERVER accepts is reachable in the UI",
   PRONOUNS.every((p) => offeredPronouns.includes(p)) && offeredPronouns.length === PRONOUNS.length,
   JSON.stringify({ offered: offeredPronouns, contract: PRONOUNS }),
 );
+// 🔴 S123 INVERTED THESE. They asserted the "just {name}" aside EXISTED, said
+// the student's own name, and was not one of the stickers. The founder removed
+// the option, so the same three claims now run the other way.
 check(
-  "Slice L (D-L1): the opt-out is the ASIDE, not one of the stickers",
-  pronounRow.aside?.value === "name",
+  "S123: the 'just {name}' aside is GONE from the pronoun row",
+  // 🔴 Read through a cast, deliberately. `aside` no longer exists on `DuoRow`,
+  // so `pronounRow.aside` is a TYPE ERROR — and the probe still has to be able
+  // to look for it at RUNTIME, because the regression this guards against is
+  // someone putting the field back. Written the typed way, tsc fails and the
+  // check cannot exist; written this way it fails loudly the moment an aside
+  // reappears in the data, whatever the type says.
+  (pronounRow as Record<string, unknown>).aside === undefined,
+  JSON.stringify((pronounRow as Record<string, unknown>).aside ?? null),
 );
-// ⚠️ Optional-chained, NOT `!`. Caught by this slice's own negative control:
-// with the aside removed, a `!` here threw a TypeError and killed the run
-// BEFORE the tally printed — so the regression surfaced as a crash with no
-// "N failed" line, which is the S118 false-green shape (a probe that dies is
-// easily read as a probe that passed). A leg must survive the failure of the
-// leg above it.
 check(
-  "Slice L: the opt-out still says the student's own name",
-  pronounRow.aside?.label.includes("{name}") === true,
-  String(pronounRow.aside?.label),
+  "S123: no pronoun option offers the removed 'name' value",
+  !offeredPronouns.includes("name"),
+  JSON.stringify(offeredPronouns),
 );
 // The other two rows must NOT have quietly become sticker rows — there is no
-// art for a class or a board, so the branch would render empty cards.
+// art for a class or a board, so the branch would render empty cards. Widened
+// from "every row but pronoun" to ALL rows now that no row may carry an aside.
 check(
-  "Slice L: the board and grade rows are untouched",
-  ABOUT_ROWS.filter((r) => r.key !== "pronoun").every((r) => r.style === "board" && !r.aside),
+  "S123: no row anywhere carries an aside, and board/grade stay board rows",
+  ABOUT_ROWS.every((r) => (r as Record<string, unknown>).aside === undefined) &&
+    ABOUT_ROWS.filter((r) => r.key !== "pronoun").every((r) => r.style === "board"),
 );
 
 // 2. The component renders both parts. The aside is a real committing control:
@@ -1434,11 +1444,20 @@ check(
 // nothing — the exact silent no-op D-J4/Slice K designed out of the rail.
 check("Slice L: the sticker branch exists in the duo row", /onb-choice onb-duo-sticker/.test(onbPageL));
 check("Slice L: it reuses the pet beat's art class, not a second one", /row\.style === "sticker" && o\.img/.test(onbPageL));
-check("Slice L: the aside renders", /onb-duo-aside/.test(onbPageL));
-check("Slice L: and the aside COMMITS — it is not a decorative label", /row\.aside!\.value/.test(onbPageL));
+// 🔴 S123 INVERTED: the aside's markup must be GONE from the component, not
+// merely unreachable. A hidden branch left behind is the thing that comes back.
+//
+// ⚠️ THESE THREE ARE NEGATIVE GREPS, and a negative grep passes against an
+// empty file, a renamed file, or a typo'd path — it is the single easiest false
+// green in this probe (S122 logged the same trap on the dev-login greps). The
+// positive control below is what proves `onbPageL` actually holds the
+// component's source, so these three mean something.
+check("S123: the aside markup is gone from the component", !/onb-duo-aside/.test(onbPageL));
+check("S123: …and so is its commit handler", !/row\.aside/.test(onbPageL));
 check(
-  "Slice L: the aside shows a picked state, so the CTA's gate is legible",
-  /duo\[row\.key\] === row\.aside\.value/.test(onbPageL),
+  "S123 POSITIVE CONTROL: onbPageL really is OnboardingPage's source",
+  /onb-choice onb-duo-sticker/.test(onbPageL) && onbPageL.length > 5000,
+  `len=${onbPageL.length}`,
 );
 // M63/S114 — the axis that binds. The real art is not in the repo yet (D-L2),
 // so this asserts the slot is aspect-INDEPENDENT rather than asserting anything
@@ -1461,9 +1480,23 @@ check("Slice L: and its 'back to the list' escape went with it", !/back to the l
 // a declaration or an identifier that prose would not contain; `.onb-other` is
 // the exception, because it SURVIVES (the aside reuses it) and only the
 // hatch-specific styling should be gone.
+// 🔴 M77, CAUGHT LIVE IN S123 AND ON THIS EXACT LINE. This leg used to assert
+// `/\.onb-duo-aside/.test(onbCssL)` — a BARE IDENTIFIER. When S123 deleted those
+// rules it stayed GREEN, because the comment left in their place explains the
+// deletion and necessarily names the class. Prose stood in for a rule that no
+// longer existed: the probe was reading my apology as a stylesheet.
+//
+// Both halves are now anchored on a DECLARATION (`\s*\{`), which prose does not
+// contain — the same fix M77 forced on `mix-blend-mode: multiply`. And the two
+// halves now point OPPOSITE ways, which is the real guard:
+//   `.onb-other`     MUST survive — "Show me everyone" still wears it, and the
+//                    aside's removal made it LOOK orphaned when it is not.
+//   `.onb-duo-aside` MUST be gone — its only user was deleted.
+// A single-direction check would have passed on a stylesheet where both were
+// deleted, taking a live control's styling with it and telling me it was fine.
 check(
-  "Slice L: the quiet-control CSS survives — the aside reuses it (not orphaned, not deleted)",
-  /\.onb-other\s*\{/.test(onbCssL) && /\.onb-duo-aside/.test(onbCssL),
+  "S123: .onb-other SURVIVES (still used by 'Show me everyone'), .onb-duo-aside is GONE",
+  /\.onb-other\s*\{/.test(onbCssL) && !/\.onb-duo-aside[\s.,:]*\{/.test(onbCssL),
 );
 
 // 4. The server. The FE closing the set is a convenience; THIS is the rule.

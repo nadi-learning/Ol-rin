@@ -688,18 +688,11 @@
   box-shadow: 0 0 0 2px var(--primary-soft);
 }
 
-/* The opt-out. It reuses .onb-other — the quiet dashed control the pet hatch
-   and "Show me everyone" already use — because it is the same KIND of thing: a
-   real choice that is deliberately not competing with the row above it. */
-.onb-duo-aside-row {
-  text-align: center;
-}
-.onb-duo-aside.is-picked {
-  border-style: solid;
-  border-color: var(--primary);
-  color: var(--primary);
-  background: var(--primary-soft);
-}
+/* S123 — `.onb-duo-aside-row` / `.onb-duo-aside` deleted with the "just {name}"
+   opt-out they styled (founder).
+   ⚠️ `.onb-other` itself STAYS. It looked orphaned by this removal and is not:
+   "Show me everyone" on the hero beat still wears it (OnboardingPage.tsx:803).
+   Deleting it would have taken a live control's styling with it. */
 
 /* ── the class board (S92, founder: "a small rectangle board with 9 and 10") ──
    A little classroom slate, not a pill: chalk-white numerals on dark green with
