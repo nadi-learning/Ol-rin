@@ -54,9 +54,13 @@ export function AccessPending({
             <h1 className="shire-head" id="shire-head">
               Not quite open yet
             </h1>
+            {/* Role-specific, because one sentence cannot serve both without
+                going vague. A parent is linked to a child; a tutor is given
+                students. Saying "children" to a tutor reads as a mistake. */}
             <p className="shire-body">
-              We set {role === "tutor" ? "tutor" : "parent"} accounts up by hand, so
-              that the right children end up on the right side of it.
+              {role === "tutor"
+                ? "We set tutor accounts up by hand, so you're matched with the right students before you start."
+                : "We set parent accounts up by hand, so you're linked to your own child and nobody else's."}
             </p>
 
             {/* The number is the page. A tel: link so a phone dials it, and

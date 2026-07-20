@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSession, signOut } from "./lib/auth";
-import { trpc, clearBoard, setBoard } from "./trpc";
+import { trpc, clearBoard, setBoard, getPersona } from "./trpc";
 import { AppShell, type AppView } from "./components/AppShell";
 import { LandingPage } from "./components/LandingPage";
 import { DashboardPage } from "./components/DashboardPage";
@@ -14,6 +14,7 @@ import { ProfilePage } from "./components/ProfilePage";
 import { TutorPage } from "./components/TutorPage";
 import { ParentPage } from "./components/ParentPage";
 import { AccessPending } from "./components/AccessPending";
+import { ClaimMint } from "./components/ClaimMint";
 import { AdminPage } from "./components/AdminPage";
 import { OnboardingPage } from "./components/OnboardingPage";
 import "./theme/tokens.css";
@@ -53,6 +54,26 @@ export function App() {
     setRevisionTarget(subTopicId);
     setView("revision");
   };
+
+  // The landing persona — LATCHED, not sampled.
+  //
+  // Two failure modes, and the latch is the only shape that dodges both:
+  //
+  //  - read once at mount and it is always null. App mounts on the LANDING
+  //    page, before any persona is clicked, and it never remounts on sign-in
+  //    (the session changes, the component does not). That bug shipped a
+  //    version of this that silently sent every claimed tutor into student
+  //    onboarding — exactly what it was written to prevent.
+  //  - read fresh every render and it flips to null mid-flight, because
+  //    `ClaimMint` clears the persona on success and the reboot has not landed
+  //    yet — swapping the component out from under its own request.
+  //
+  // So: sample every render, keep the first non-null answer forever.
+  const claimRef = useRef<string | null>(null);
+  const livePersona = getPersona();
+  if (livePersona && !claimRef.current) claimRef.current = livePersona;
+  const claimedRole = claimRef.current;
+  const isPendingRoleClaim = claimedRole === "parent" || claimedRole === "tutor";
 
   useEffect(() => {
     if (!session) {
@@ -149,19 +170,24 @@ export function App() {
   // The name comes from the auth session, not `me` — there is no spine identity
   // to read yet, which is precisely the state being handled.
   //
-  // ⚠️ PARKED (founder, mid-session): a branch stood here that sent a claimed
-  // parent/tutor straight to the waiting room instead of through student
-  // onboarding. It called a `ClaimMint` component that was never written, so
-  // the tree did not compile. The branch is removed rather than stubbed — a
-  // stub would route real people into a half-built flow.
+  // 🔑 A CLAIMED PARENT/TUTOR NEVER SEES STUDENT ONBOARDING — and this branch
+  // must sit BEFORE the student one below, which is the whole guarantee.
   //
-  // What REMAINS committed and is deliberately inert: `membership.enabled`
-  // (migration 0035), `AccessPending`, the persona written at the landing page,
-  // and `chooseBoard`'s `intendedRole` input. Nothing passes `intendedRole`
-  // today, so every signup still mints a student and `enabled` is always true —
-  // the parked feature grants nothing and blocks nothing. Resuming it means
-  // writing the mint step and passing the persona through; see the session
-  // notes before doing so.
+  // Onboarding is what mints the membership (`chooseBoard`, in the about_you
+  // beat), so without this a self-declared parent is asked their class, their
+  // pronoun, a hero and a pet before the app can discover they are not a
+  // student. That is the bug the founder hit signing in through the Parent and
+  // Tutor cards: the persona was cosmetic, so every Google signup became a
+  // student regardless of which card was clicked.
+  //
+  // They mint directly and land in the waiting room. See `ClaimMint` for why a
+  // claim buys a waiting room rather than a capability.
+  if (needsBoard && isPendingRoleClaim) {
+    return (
+      <ClaimMint claimedRole={claimedRole!} onDone={() => setBootNonce((n) => n + 1)} />
+    );
+  }
+
   if (needsBoard) {
     return (
       <OnboardingPage

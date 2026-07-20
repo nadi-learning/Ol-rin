@@ -30,6 +30,33 @@ const COLS: { p: Persona; eyebrow: string; title: string; pitch: string }[] = [
   { p: "tutor", eyebrow: "For tutors", title: "Teach & assess", pitch: "Author questions, certify two-axis mastery, and guide every student." },
 ];
 
+/**
+ * Has this browser already been welcomed?
+ *
+ * localStorage, not sessionStorage: the founder's ask is "only once when the
+ * user opens the url", and sessionStorage would replay the whole intro in every
+ * new tab. Wrapped in try/catch for private mode and blocked storage — the same
+ * discipline as `getBoard` in trpc.ts, and the failure mode is the OLD
+ * behaviour (splash every load), never a crash on the login page.
+ */
+const SPLASH_KEY = "b2c.splashSeen";
+
+function splashSeen(): boolean {
+  try {
+    return localStorage.getItem(SPLASH_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markSplashSeen(): void {
+  try {
+    localStorage.setItem(SPLASH_KEY, "1");
+  } catch {
+    /* see splashSeen */
+  }
+}
+
 const EnterArrow = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M5 12h14M13 6l6 6-6 6" />
@@ -39,8 +66,12 @@ const EnterArrow = () => (
 export function LandingPage() {
   const rootRef = useRef<HTMLDivElement>(null);
   const wordRef = useRef<HTMLDivElement>(null);
-  const doneRef = useRef(false);
-  const [revealed, setRevealed] = useState(false);
+  // Seeded from storage: a returning visitor has already met the splash, so
+  // `doneRef` starts true and the intro sequence below bails before its first
+  // flip. Set here rather than in an effect so the splash never paints for one
+  // frame on a return visit.
+  const doneRef = useRef(splashSeen());
+  const [revealed, setRevealed] = useState(splashSeen);
   const [chosen, setChosen] = useState<Persona | null>(null);
   const [email, setEmail] = useState(ROLE_EMAIL.student);
   const [busy, setBusy] = useState(false);
@@ -48,6 +79,13 @@ export function LandingPage() {
 
   const reveal = useCallback(() => {
     doneRef.current = true;
+    // Founder: the splash is a WELCOME, not a loading screen — it belongs on
+    // the first visit and nowhere else. It used to replay on every page load,
+    // which during testing (or for a student who refreshes) reads as an intro
+    // that will not stop. Marked here rather than at the end of the sequence so
+    // that skipping it also counts as having seen it: someone who clicks past
+    // it has made the same decision, more emphatically.
+    markSplashSeen();
     setRevealed(true);
   }, []);
 
@@ -197,6 +235,10 @@ export function LandingPage() {
         }, 340));
       });
     (async () => {
+      // Already welcomed — skip the whole sequence. Without this the loop still
+      // idles through its 1150ms lead-in before finding `doneRef` set, which is
+      // harmless but leaves a timer pending on a screen that is already live.
+      if (doneRef.current) return;
       if (reduced) { await wait(500); if (!doneRef.current) reveal(); return; }
       await wait(1150);
       for (const s of SEQ) {
