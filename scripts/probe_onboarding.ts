@@ -243,9 +243,9 @@ async function main() {
   // half-done student.
   console.log("\n5c. the beat order");
   check(
-    "ONBOARDING_STEPS is the S96 flow (pikachu is GONE — D-ONB-16)",
+    "ONBOARDING_STEPS is the ONB-7 flow (pikachu AND lore are GONE)",
     JSON.stringify(ONBOARDING_STEPS) ===
-      JSON.stringify(["greet", "about_you", "fav_character", "pet", "phone", "lore", "done"]),
+      JSON.stringify(["greet", "about_you", "fav_character", "pet", "phone", "done"]),
     JSON.stringify(ONBOARDING_STEPS),
   );
   check("the roster is the S96 eleven", FAV_CHARACTERS.length === 11, String(FAV_CHARACTERS.length));
@@ -264,7 +264,11 @@ async function main() {
   check("'grade' (S92) → about_you", resolveOnboardingStep("grade") === "about_you");
   check("'school' (S90) → fav_character", resolveOnboardingStep("school") === "fav_character");
   check("'fun_fact_about' (S91) → pet", resolveOnboardingStep("fun_fact_about") === "pet");
-  check("a LIVE step resolves to itself", resolveOnboardingStep("lore") === "lore");
+  check("a LIVE step resolves to itself", resolveOnboardingStep("pet") === "pet");
+  // ONB-7: the Gandalf reveal left onboarding (introduced in-product later,
+  // when the student is stuck). A row parked on it closes out, replaying
+  // nothing — mapping to `done` is what makes cutting the LAST beat safe.
+  check("a stored 'lore' row resumes at done (ONB-7)", resolveOnboardingStep("lore") === "done", resolveOnboardingStep("lore"));
   check("total: every retired step lands on a real, live step", Object.values(RETIRED_ONBOARDING_STEPS).every((s) => (ONBOARDING_STEPS as readonly string[]).includes(s)));
   // Junk must not trap a student mid-flow; greet is the only safe restart.
   check("garbage falls back to greet, never undefined", resolveOnboardingStep("nonsense") === "greet");
@@ -309,20 +313,38 @@ async function main() {
     check("a `he`-list hero is accepted for a `she` student (D-ONB-13)", crossed.answers.favCharacter === "batman", String(crossed.answers.favCharacter));
     await saveStep(tx, { ...S, step: "fav_character", value: "iron_man" });
 
-    // The pet: a known id, then the free-text hatch overwriting it.
+    // The pet: a known id. Slice L CLOSED this set.
     const known = await saveStep(tx, { ...S, step: "pet", value: "owl" });
     check("a known pet persists", known.answers.pet === "owl", String(known.answers.pet));
     check("advanced pet → phone", known.currentStep === "phone", known.currentStep);
     check("isKnownPet('owl') → it arrives now", isKnownPet(known.answers.pet) === true);
 
-    const custom = await saveStep(tx, { ...S, step: "pet", value: "llama" });
-    check("a CUSTOM pet is allowed (the 'something else' hatch)", custom.answers.pet === "llama", String(custom.answers.pet));
-    check("isKnownPet('llama') → false, so it gets the 2-3 dayssss line", isKnownPet(custom.answers.pet) === false);
+    // 🔑 Slice L — INVERTED. This leg used to assert "a CUSTOM pet is allowed
+    // (the 'something else' hatch)". The hatch is deleted and saveStep now
+    // validates against PETS, so the claim flips: an off-list pet is REFUSED.
+    // Inverted rather than deleted, for the same reason as probe_echo_guard
+    // §7/§8 — the rule is what the slice is, and an unwritten rule grows back.
+    let rejected = false;
+    try {
+      await saveStep(tx, { ...S, step: "pet", value: "llama" });
+    } catch (e) {
+      rejected = e instanceof OnboardingValidationError;
+    }
+    check("🔴 a CUSTOM pet is REFUSED — the set is closed (Slice L)", rejected);
+    // …and the refusal must not have half-written. A validation that throws
+    // AFTER the upsert would leave the student holding a pet nobody can render.
+    const after = await getState(tx, S);
+    check("the refused write left the known pet intact", after.answers.pet === "owl", String(after.answers.pet));
+
+    // isKnownPet still has a job: PRE-Slice-L rows hold free text and are read
+    // on every resume. This is the read-path claim, asserted without writing
+    // one (the write path is now closed, which is the point).
+    check("isKnownPet('llama') → false, so a legacy row takes the stand-in owl", isKnownPet("llama") === false);
 
     const skipped = await saveStep(tx, { ...S, step: "phone", value: null });
     check("optional phone skips with no answer", skipped.answers.phone === null);
-    check("and still advances phone → lore", skipped.currentStep === "lore", skipped.currentStep);
-    check("the pet survives the skip", skipped.answers.pet === "llama");
+    check("and still advances phone → done (lore is gone, ONB-7)", skipped.currentStep === "done", skipped.currentStep);
+    check("the pet survives the skip", skipped.answers.pet === "owl", String(skipped.answers.pet));
   });
 
   // ── 7. idempotent ───────────────────────────────────────────────────────

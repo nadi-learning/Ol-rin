@@ -3,9 +3,9 @@
  * ingest tool has a login to eyeball.
  *
  * Creates (idempotent):
- *  - whitelist(cbse, admin@example.com, role='admin') — the SET side of the role
- *    gate (M11). The membership itself is created the REAL way, by driving
- *    resolveMembership (whitelist → app_user → membership), never a direct insert.
+ *  - membership(cbse, admin@example.com, role='admin') via `grantRole` — the SET
+ *    side of the role gate (M11). Made the REAL way, by driving the same helper
+ *    `admin.setRole` drives (app_user → membership), never a direct insert.
  *
  * Emails are lowercase to match what Better Auth stores at signup (M27).
  *
@@ -17,10 +17,10 @@
  */
 import { eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { board, whitelist } from "@b2c/kernel/schema";
+import { board } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -37,14 +37,11 @@ async function main() {
   }
 
   await withBoard(b.id, async (tx: Tx) => {
-    await tx
-      .insert(whitelist)
-      .values({ boardId: b.id, email: ADMIN_EMAIL, role: "admin" })
-      .onConflictDoNothing({ target: [whitelist.boardId, whitelist.email] });
-    const admin = await resolveMembership(tx, {
+    const admin = await grantRole(tx, {
       email: ADMIN_EMAIL,
       name: ADMIN_NAME,
       board: { id: b.id, slug: b.slug },
+      role: "admin",
     });
     console.log(`[seed:admin] cbse / admin=${ADMIN_EMAIL} (role=${admin.role}, user=${admin.user.id})`);
   });

@@ -63,27 +63,27 @@ export const membership = pgTable(
     boardId: uuid("board_id")
       .notNull()
       .references(() => board.id),
-    role: text("role").notNull(), // 'student'|'tutor'|'parent'|'admin'
+    role: text("role").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.userId, t.boardId, t.role)],
+  // ONE role per (user, board) — S109. The unique used to include `role`, so a
+  // user could hold several roles on one board and `requireMembership` picked
+  // whichever row came back first (no ORDER BY). Nothing hit it only because
+  // whitelist's own unique(board,email) accidentally prevented duplicates; with
+  // the whitelist gone that guard goes too, so the invariant moves here where it
+  // belongs. Role is text + CHECK (house style, M23: no pg enums).
+  (t) => [
+    unique().on(t.userId, t.boardId),
+    check("membership_role_check", sql`${t.role} IN ('student','tutor','parent','admin')`),
+  ],
 );
 
-// Access gate — who may use a board before they have data.
-export const whitelist = pgTable(
-  "whitelist",
-  {
-    id: id(),
-    boardId: uuid("board_id")
-      .notNull()
-      .references(() => board.id),
-    email: text("email").notNull(),
-    role: text("role").notNull(),
-    invitedBy: uuid("invited_by").references(() => appUser.id),
-    createdAt: createdAt(),
-  },
-  (t) => [unique().on(t.boardId, t.email)],
-);
+// `whitelist` (the access gate) lived here until Slice F (S113), which DROPPED
+// the table (migration 0034). Slices A–E removed every reader and writer first:
+// the gate is open, anyone who signs in is a student (services/membership.ts),
+// roles above student are set by `grantRole` from the admin People surface.
+// The table's incidental unique(board,email) is replaced by membership's own
+// unique(user,board) — see the comment on that table.
 
 export const parentChild = pgTable(
   "parent_child",
@@ -100,7 +100,10 @@ export const parentChild = pgTable(
       .references(() => appUser.id),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.parentId, t.studentId)],
+  // boardId is IN the unique (S109) — it was missing, unlike tutor_student's
+  // (board, tutor, student) below, so a parent with the same child on two
+  // boards collided and the second link silently vanished.
+  (t) => [unique().on(t.boardId, t.parentId, t.studentId)],
 );
 
 export const tutorStudent = pgTable(
@@ -1233,10 +1236,10 @@ export const attemptImage = pgTable(
 
 // onboarding — the conversational welcome, Slice ONB-1. Tenant-scoped + RLS.
 //
-// It runs on first LOGIN, not signup: the platform is whitelist-gated, so we
-// already know who they are before they ever arrive (services/membership.ts).
-// This is the FIRST personal data the platform stores about a student — until
-// now it held only email + name from the OAuth identity.
+// It runs on first LOGIN, not signup. Signup is open (Slice C, S110), so the
+// first login is the first moment the platform has an identity to hang answers
+// on (services/membership.ts). This is the FIRST personal data the platform
+// stores about a student — before it, only email + name from the OAuth identity.
 //
 // ONE table, not profile-split-from-stage-machine: nothing outside this flow
 // reads the profile yet, so splitting is premature. Every answer column is
@@ -1396,10 +1399,19 @@ export const aiCallLog = pgTable(
  * upload_token is ALSO intentionally absent — it is a GLOBAL credential read
  * without a board claim (the unauth phone has none); see its comment above.
  * ai_call_log is absent for the same reason — see its comment above.
+ *
+ * ⚠️ This list is hand-maintained in BOTH directions and neither is checked by
+ * the toolchain:
+ *   - ADDING a board_id table without adding it here ships that table with RLS
+ *     OFF and the migration still prints success (M34) — a cross-tenant leak.
+ *   - DROPPING a table without removing it here makes `src/db/migrate.ts`
+ *     hard-fail on `ALTER TABLE <gone>`, which breaks not just that migration
+ *     but every later one (Slice F, S113).
+ * probe_boot's census leg asserts this list against pg_class, so both
+ * directions now fail loudly instead of silently.
  */
 export const TENANT_SCOPED_TABLES = [
   "membership",
-  "whitelist",
   "parent_child",
   "tutor_student",
   "subject",

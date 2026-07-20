@@ -1,18 +1,24 @@
 /**
  * seed_s1 — minimal data so the S1 login flow works in a browser smoke.
  *   - upsert boards: cbse, cambridge (global table)
- *   - whitelist one email on cbse as 'student' (RLS-scoped → withBoard)
+ *   - grant one email a 'student' membership on the target board (RLS-scoped →
+ *     withBoard), via `grantRole` — the M11 SET side, never a direct insert.
+ *
+ * The platform is NOT gated: anyone who signs in becomes a student on their
+ * board automatically. This seed only pre-creates the membership so the row
+ * exists before the first login (handy for a scripted smoke).
  *
  * Usage: bun scripts/seed_s1.ts [email] [board-slug]
  *   email       defaults to the prod admin (CLAUDE.md). Pass YOUR Google email
- *               to smoke the real login (the email Google returns must be
- *               whitelisted, else `me` → FORBIDDEN / "not invited").
+ *               to smoke the real login — the email Google returns is the one
+ *               that gets the membership.
  *   board-slug  defaults to cbse.
  */
-import { and, eq } from "drizzle-orm";
-import { board, whitelist } from "@b2c/kernel/schema";
+import { eq } from "drizzle-orm";
+import { board } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
+import { grantRole } from "../src/services/membership";
 
 const email = process.argv[2] ?? "spranav.iitkgp@gmail.com";
 const boardSlug = process.argv[3] ?? "cbse";
@@ -37,18 +43,15 @@ async function main() {
       ? cbse
       : (await db.select().from(board).where(eq(board.slug, "cambridge")))[0]!;
 
-  await withBoard(targetBoard.id, async (tx) => {
-    const existing = await tx
-      .select()
-      .from(whitelist)
-      .where(and(eq(whitelist.boardId, targetBoard.id), eq(whitelist.email, email)));
-    if (existing.length === 0) {
-      await tx
-        .insert(whitelist)
-        .values({ boardId: targetBoard.id, email, role: "student" });
-    }
-  });
-  console.log(`[seed] whitelisted ${email} on board ${target} as student`);
+  const m = await withBoard(targetBoard.id, (tx) =>
+    grantRole(tx, {
+      email,
+      name: null,
+      board: { id: targetBoard.id, slug: targetBoard.slug },
+      role: "student",
+    }),
+  );
+  console.log(`[seed] ${email} is a student on board ${target} (user=${m.user.id})`);
 
   await queryClient.end();
 }

@@ -16,9 +16,10 @@
  * The lesson LIST on the dashboard is served separately by revision.getChapterNav
  * (already RLS-scoped) — this service is only the numeric summary.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { attempt, practiceSession } from "@b2c/kernel/schema";
+import { attempt, eventLog, practiceSession } from "@b2c/kernel/schema";
+import { REVISION_VISIT_EVENT } from "./revision";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -27,6 +28,18 @@ export type StudentSummary = {
   activeSessions: number;
   totalTimeMs: number;
   answeredAttempts: number;
+  /**
+   * Slice DASH-FR — has this student ever begun ANY practice? The dashboard's
+   * first-run landing (Olórin's welcome, "start here", "Start" instead of
+   * "Continue") hangs off this one flag, and the founder's rule is that the
+   * first-run state lasts "until they start their first lesson".
+   *
+   * Derived HERE rather than in the component so the definition of "started"
+   * lives with the data it is derived from — a client-side
+   * `completed === 0 && active === 0` would silently stop being true the day a
+   * fourth counter is added.
+   */
+  hasStarted: boolean;
 };
 
 export async function getStudentSummary(
@@ -61,10 +74,30 @@ export async function getStudentSummary(
     .from(attempt)
     .where(eq(attempt.appUserId, args.appUserId));
 
+  const answeredAttempts = agg?.answeredAttempts ?? 0;
+
+  // 🔑 OPENING a lesson writes NO practice row — a practice_session is only
+  // created once the student begins the question pass. So the practice tables
+  // alone answer "has PRACTISED", not "has started a lesson", and a student who
+  // had read three chapters would still have been told "Start here". The
+  // revision-visit event is the signal that actually fires on open; verified by
+  // clicking through the real flow, not assumed.
+  const [visits] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(eventLog)
+    .where(and(eq(eventLog.studentId, args.appUserId), eq(eventLog.eventType, REVISION_VISIT_EVENT)));
+
   return {
     completedSessions,
     activeSessions,
     totalTimeMs: agg?.totalTimeMs ?? 0,
-    answeredAttempts: agg?.answeredAttempts ?? 0,
+    answeredAttempts,
+    // Deliberately generous — leaving the welcome up for someone who has
+    // already begun is a worse failure than retiring it one visit early.
+    hasStarted:
+      completedSessions > 0 ||
+      activeSessions > 0 ||
+      answeredAttempts > 0 ||
+      (visits?.n ?? 0) > 0,
   };
 }

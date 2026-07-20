@@ -1,0 +1,259 @@
+/* Slice K — the Crew surface. All `.crew-`-scoped (the revision-shell.css
+   global-leak discipline: no bare element selectors, no shared class names). */
+
+.crew {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* ── the heading ────────────────────────────────────────────────────────── */
+
+.crew-head {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.crew-sub {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+/* ── the two columns ────────────────────────────────────────────────────── */
+
+.crew-cols {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+  /* The three states are one property. Transitioning `grid-template-columns`
+     animates the split itself, so opening a column pushes the other aside
+     rather than both of them jumping to new widths. */
+  grid-template-columns: 1fr 1fr;
+  transition: grid-template-columns 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Column ORDER is fixed by the DOM (hero first), so these two rules are about
+   which side widens, not about which column is which. A hero-less student gets
+   a single column and the 1fr/1fr default already handles it: one child in a
+   two-track grid simply occupies the first track... which would leave the pet
+   hugging the left half of the page. `:only-child` is the fix. */
+.crew-col:only-child {
+  grid-column: 1 / -1;
+  max-width: 460px;
+  margin: 0 auto;
+}
+.crew-cols--hero {
+  grid-template-columns: 1.85fr 1fr;
+}
+.crew-cols--pet {
+  grid-template-columns: 1fr 1.85fr;
+}
+
+.crew-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* ── the character, and the button that opens them ──────────────────────── */
+
+.crew-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 16px 16px;
+  background: var(--surface);
+  border: none;
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  text-align: center;
+  /* The whole column header is the target — a 12px chevron in the corner is a
+     worse affordance than a card that is obviously pressable. */
+  width: 100%;
+}
+.crew-pick:hover {
+  background: var(--primary-soft);
+}
+.crew-pick:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* M63 — sized on HEIGHT, the axis that binds. This slot takes ELEVEN heroes at
+   three scans each PLUS seven pet stickers, and none of them share an aspect
+   ratio; a fixed `width` would pin the height too and render a tall portrait at
+   double the size of a wide one. Same rule and same reason as `.jrnl-front`,
+   `.prac-soon-pet` and `.dash-tour-pet`. */
+.crew-art {
+  height: 190px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: bottom center;
+  /* The onboarding scans are opaque JPEGs on toned paper (S101/S102). */
+  mix-blend-mode: multiply;
+  /* 🔑 BOTH HALVES, per S117. `multiply` alone kills the plate only for scans
+     with a near-white ground; S102 measured the grounds at 156-255, so most
+     heroes are full-bleed toned drawings whose tone lands on the card as a hard
+     rectangle. Harry looked perfect and iron_man looked pasted-on under
+     IDENTICAL CSS. Feather every edge and the drawing dissolves whatever its
+     ground.
+
+     D-K5 is the OTHER guard on the same failure, and CSS could not have
+     supplied it: only the curated bust ever reaches this slot now, because two
+     of a hero's three scans are page scenes that no amount of feathering
+     rescues at 190px. Both guards are needed — this one for the ground, that
+     one for the framing. */
+  mask-image:
+    linear-gradient(to right, transparent 0, black 8%, black 92%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 8%, black 92%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  pointer-events: none;
+  user-select: none;
+  /* 🔑 M60 — `backwards`, NEVER `both`. `both` retains the animation's final
+     transform forever, and a retained transform creates a stacking context that
+     silently switches OFF `mix-blend-mode` on this element. That is exactly how
+     the onboarding scans grew opaque plates in ONB-6, on art that had been
+     composited correctly for two sessions. `backwards` covers the delay, plays,
+     then releases the transform. */
+  animation: crew-rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+/* "Vertically rotating" — the cards arrive from below, so the cycle reads as a
+   column turning rather than as a crossfade. The art wears the same entrance on
+   mount (it never remounts after that, per D-K5), which is what keeps the two
+   halves of a column feeling like one object rather than a still image with
+   something animating next to it. */
+@keyframes crew-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.crew-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.crew-role {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+/* ── the capability cards (D-K1 — plain, no per-row soon) ───────────────── */
+
+.crew-caps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.crew-cap {
+  padding: 14px 16px;
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  animation: crew-rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.crew-cap-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.crew-cap-line {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+/* A minimised column keeps cycling, so its single card must not collapse to a
+   sliver when the other column takes the width. */
+.crew-col--small .crew-cap {
+  padding: 12px 13px;
+}
+.crew-col--small .crew-art {
+  height: 132px;
+}
+
+/* ── the soon panel — once per page, never per row ──────────────────────── */
+
+.crew-soon {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 20px 24px;
+  text-align: center;
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+.crew-soon-head {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.crew-soon-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+/* ── reduced motion ─────────────────────────────────────────────────────── */
+
+/* The timer is already off in JS (the tick never advances), so this is about
+   the ENTRANCE, which would still play on every open/close press. Belt and
+   braces, and the CSS half is the one that covers the width transition too. */
+@media (prefers-reduced-motion: reduce) {
+  .crew-art,
+  .crew-cap {
+    animation: none;
+  }
+  .crew-cols {
+    transition: none;
+  }
+}
+
+/* ── phone ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  /* Two columns at 390 gives each ~170px, which is narrower than the art wants
+     and wraps every card title to three lines. They stack.
+
+     Stacking makes the WIDTH half of the interaction meaningless — there is no
+     "aside" to push a column into — so all three width states collapse to one
+     track. Tapping a column still opens it, and opening is still the thing that
+     matters here: it swaps one cycling card for the whole list, which is the
+     part a student on a phone actually wants. Only the split is dropped, not
+     the affordance. */
+  .crew-cols,
+  .crew-cols--hero,
+  .crew-cols--pet {
+    grid-template-columns: 1fr;
+  }
+  .crew-col:only-child {
+    max-width: none;
+  }
+  .crew-art,
+  .crew-col--small .crew-art {
+    height: 150px;
+  }
+  .crew-soon {
+    padding: 16px 18px;
+  }
+}

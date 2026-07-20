@@ -32,11 +32,10 @@ import {
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import {
   getPlan,
   listSubjects,
@@ -105,12 +104,8 @@ async function main() {
   // members: W (caller) + X (bystander).
   const emailW = `pace-w-${tag}@example.com`;
   const emailX = `pace-x-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    for (const email of [emailW, emailX])
-      await tx.insert(whitelist).values({ boardId: P.id, email, role: "student" });
-  });
-  const W = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "W", board: P }));
-  const X = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailX, name: "X", board: P }));
+  const W = await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "W", board: P, role: "student" }));
+  const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: P, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
   // self ChildSummary drives getPlan's plan lookup + the PACE-2 preparedness read.
@@ -309,7 +304,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   for (const email of [emailW, emailX]) await db.delete(appUser).where(eq(appUser.email, email));
   await db.delete(board).where(eq(board.id, P.id));

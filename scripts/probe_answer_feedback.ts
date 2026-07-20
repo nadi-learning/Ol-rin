@@ -46,7 +46,6 @@ import {
   subject,
   topic,
   uploadToken,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -59,7 +58,7 @@ import {
   getAnswerFeedback,
   NotEvaluableError,
 } from "../src/services/answer_feedback";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { env } from "../src/config/env";
 
 type Tx = PgTransaction<any, any, any>;
@@ -156,12 +155,8 @@ async function main() {
   // two members on T: owner W + bystander X (REAL flow, M11)
   const emailW = `t1-w-${tag}@example.com`;
   const emailX = `t1-x-${tag}@example.com`;
-  await withBoard(T.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: T.id, email: emailW, role: "student" });
-    await tx.insert(whitelist).values({ boardId: T.id, email: emailX, role: "student" });
-  });
-  const W = await withBoard(T.id, (tx) => resolveMembership(tx, { email: emailW, name: "W", board: T }));
-  const X = await withBoard(T.id, (tx) => resolveMembership(tx, { email: emailX, name: "X", board: T }));
+  const W = await withBoard(T.id, (tx) => grantRole(tx, { email: emailW, name: "W", board: T, role: "student" }));
+  const X = await withBoard(T.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: T, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
 
@@ -330,7 +325,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, T.id));
     await tx.delete(subject).where(eq(subject.boardId, T.id));
     await tx.delete(membership).where(eq(membership.boardId, T.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, T.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.email, emailX));

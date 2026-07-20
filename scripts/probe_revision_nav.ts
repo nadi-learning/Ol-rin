@@ -26,19 +26,20 @@ import {
   board,
   chapter,
   appUser,
+  contentUnit,
+  contentVersion,
   membership,
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { getChapterNav } from "../src/services/revision";
+import { getChapterNav, getSlide } from "../src/services/revision";
 import {
   NoMembershipError,
+  grantRole,
   requireMembership,
-  resolveMembership,
 } from "../src/services/membership";
 import { env } from "../src/config/env";
 
@@ -111,6 +112,102 @@ async function main() {
   const navQ = await withBoard(Q.id, (tx) => getChapterNav(tx));
   check("RLS: getChapterNav under another board → empty", navQ.length === 0);
 
+  // DASH-FR — `hasContent` says whether getSlide will render or 404. The spine
+  // lists chapters whether or not slides were ever published for them, and this
+  // fixture publishes NOTHING, so the honest answer is false. The dashboard's
+  // first-run CTA aims at the first chapter where this is true; if the flag
+  // silently defaulted to true it would aim straight back into a 404.
+  check(
+    "hasContent === false for a chapter with no published slide module",
+    nav.every((c) => c.hasContent === false),
+  );
+
+  // ── Slice I — per-sub_topic hasContent ────────────────────────────────────
+  //
+  // The fixture that matters: a chapter that DOES have a published slide_module
+  // but whose manifest publishes only ONE of its two sub_topics. Under the old
+  // chapter-level flag this chapter read as "has content" wholesale, and the
+  // dashboard happily rendered BOTH sub_topics as pressable rows — one of which
+  // 404s. This is the exact shape that bug lives in, so it is the shape the
+  // probe pins.
+  //
+  // Uses the REAL path (content_slide_key → manifest.sections[].topics[].id),
+  // not the legacy `manifest.slides` fallback, because real content is the one
+  // that ships.
+  const pub = await withBoard(P.id, async (tx: Tx) => {
+    const [subj2] = await tx
+      .insert(subject)
+      .values({ boardId: P.id, slug: "chem", name: "Chemistry", grade: "IGCSE" })
+      .returning();
+    const [chap2] = await tx
+      .insert(chapter)
+      .values({ boardId: P.id, subjectId: subj2!.id, slug: "ch2", name: "Chapter Two", ordinal: 2 })
+      .returning();
+    const [tp2] = await tx
+      .insert(topic)
+      .values({ boardId: P.id, chapterId: chap2!.id, slug: "pub", name: "Pub", ordinal: 1 })
+      .returning();
+    const [sIn] = await tx
+      .insert(subTopic)
+      .values({ boardId: P.id, topicId: tp2!.id, slug: "s-in", name: "s-in", ordinal: 1, contentSlideKey: "slide-in" })
+      .returning();
+    const [sOut] = await tx
+      .insert(subTopic)
+      .values({ boardId: P.id, topicId: tp2!.id, slug: "s-out", name: "s-out", ordinal: 2, contentSlideKey: "slide-out" })
+      .returning();
+    const [unit] = await tx
+      .insert(contentUnit)
+      .values({ boardId: P.id, type: "slide_module", chapterId: chap2!.id, subTopicId: null, source: "starkhorn" })
+      .returning();
+    const [v1] = await tx
+      .insert(contentVersion)
+      .values({
+        contentUnitId: unit!.id,
+        versionNo: 1,
+        // Only `slide-in` is published. `slide-out` is declared by the spine
+        // and absent from the manifest — the whole point of the fixture.
+        body: { contractVersion: "1", manifest: { sections: [{ topics: [{ id: "slide-in" }] }] }, bundle: "/* v1 */" },
+        publishedAt: new Date(),
+      })
+      .returning();
+    await tx.update(contentUnit).set({ currentVersionId: v1!.id }).where(eq(contentUnit.id, unit!.id));
+    return { sIn: sIn!.id, sOut: sOut!.id, chapterId: chap2!.id };
+  });
+
+  const nav2 = await withBoard(P.id, (tx) => getChapterNav(tx));
+  const ch2 = nav2.find((c) => c.id === pub.chapterId);
+  const ch1 = nav2.find((c) => c.id !== pub.chapterId);
+  const stIn = ch2?.topics[0]?.subTopics.find((s) => s.id === pub.sIn);
+  const stOut = ch2?.topics[0]?.subTopics.find((s) => s.id === pub.sOut);
+
+  check("Slice I: published sub_topic → hasContent true", stIn?.hasContent === true);
+  check("Slice I: UNpublished sub_topic under the SAME chapter → hasContent false", stOut?.hasContent === false);
+  check("Slice I: chapter hasContent is DERIVED (one renderable sub_topic ⇒ true)", ch2?.hasContent === true);
+  check("Slice I: module-less chapter still false", ch1?.hasContent === false);
+
+  // 🔑 THE agreement claim (M64). Everything above tests the nav against my own
+  // reading of the rules. This tests it against the ONLY authority that matters
+  // — what getSlide actually does — for every sub_topic on the board, in BOTH
+  // directions. A nav that hides openable content fails here just as loudly as
+  // one that offers a 404.
+  let agree = true;
+  for (const c of nav2)
+    for (const t of c.topics)
+      for (const s of t.subTopics) {
+        let opens = false;
+        try {
+          await withBoard(P.id, (tx) => getSlide(tx, { subTopicId: s.id }));
+          opens = true;
+        } catch {
+          opens = false;
+        }
+        if (opens !== s.hasContent) {
+          agree = false;
+          console.error(`      ↳ ${c.name}/${s.name}: nav=${s.hasContent} getSlide=${opens}`);
+        }
+      }
+  check("🔑 Slice I: nav.hasContent agrees with real getSlide for EVERY sub_topic", agree);
+
   // 6. membership gate, both sides (M11)
   const emailW = `prn-w-${tag}@example.com`;
   const emailX = `prn-x-${tag}@example.com`;
@@ -122,8 +219,7 @@ async function main() {
   }
   check("gate: non-member → NoMembershipError", noMembership);
 
-  await withBoard(P.id, (tx) => tx.insert(whitelist).values({ boardId: P.id, email: emailW, role: "student" }));
-  await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "Probe W", board: P }));
+  await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "Probe W", board: P, role: "student" }));
   const gateRole = await withBoard(P.id, (tx) => requireMembership(tx, { email: emailW, board: P }));
   check("gate: member (created by real flow) → role 'student'", gateRole.role === "student");
 
@@ -139,12 +235,22 @@ async function main() {
 
   // cleanup
   await withBoard(P.id, async (tx: Tx) => {
+    // Slice I's fixture added a module + version. content_version hangs off
+    // content_unit, so it goes first or the delete trips the FK.
+    const units = await tx
+      .select({ id: contentUnit.id })
+      .from(contentUnit)
+      .where(eq(contentUnit.boardId, P.id));
+    for (const u of units) {
+      await tx.update(contentUnit).set({ currentVersionId: null }).where(eq(contentUnit.id, u.id));
+      await tx.delete(contentVersion).where(eq(contentVersion.contentUnitId, u.id));
+    }
+    await tx.delete(contentUnit).where(eq(contentUnit.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(board).where(eq(board.id, P.id));

@@ -616,6 +616,79 @@
   margin-top: 6px;
 }
 
+/* ── the pronoun stickers (Slice L, D-L1) ──
+   The one row in the sentence that still looked like a form control. Every
+   other pick in the flow is made by its picture; this one was two words on two
+   capsules. It now borrows the pet beat's card wholesale — same `.onb-choice`,
+   same `.onb-choice-img` — so the two never drift apart.
+
+   The row goes COLUMN because it has three parts stacked, not two side by side:
+   the label, the two stickers, and the opt-out beneath them. */
+.onb-duo-row.is-sticker {
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 🔑 MEASURED, not guessed. As a flex ITEM of the now-column row, `.onb-duo-opts`
+   shrink-wraps on its cross axis — it computed to 212px, which is narrower than
+   two 128px cards plus the 8px gap (264px), so `flex-wrap: wrap` stacked them
+   vertically. Every sticker property was applying correctly; the CARDS were
+   never the problem, the CONTAINER was, and the screenshot is what said so.
+   `nowrap` is safe rather than merely convenient: this row holds exactly two
+   fixed-width cards (264px), which fits inside the 390px phone viewport too. */
+.onb-duo-row.is-sticker .onb-duo-opts {
+  width: 100%;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+/* 🔴 SCOPED TO `.onb-duo-opts` DELIBERATELY, and this is not cosmetic. These
+   rules override `.onb-choice`, which is a SINGLE class — so at equal
+   specificity the winner is whichever appears LATER in the file, and this
+   block sits earlier (the duo section precedes the choice-card section). The
+   first version of this rule was unscoped and lost every property to
+   `.onb-choice`: the stickers rendered as 340px full-width cards, stacked
+   vertically, which is what the base card is built to do.
+   Fixing it by MOVING the block would work today and break the day someone
+   reorders the file; two classes wins on merit. */
+.onb-duo-opts .onb-duo-sticker {
+  /* Sized like a pet card, NOT like the base .onb-choice (240px basis, built
+     for full-width choice cards). Two of these sit inside a sentence. */
+  flex: 0 1 128px;
+  max-width: 132px;
+  gap: 6px;
+  padding: 14px 8px 12px;
+  /* Paper + ink, matching .onb-chips.is-cards: a solid plate on a pencil
+     drawing is a UI element pasted on art (see the note there). */
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  backdrop-filter: blur(1.5px);
+}
+.onb-duo-opts .onb-duo-sticker:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+/* Unmissable, for the same reason .onb-board.is-picked is: this is one of the
+   three things the CTA is waiting on, and a student who can't tell what they
+   picked can't tell why the button is dead. */
+.onb-duo-opts .onb-duo-sticker.is-picked {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface) 70%);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+/* The opt-out. It reuses .onb-other — the quiet dashed control the pet hatch
+   and "Show me everyone" already use — because it is the same KIND of thing: a
+   real choice that is deliberately not competing with the row above it. */
+.onb-duo-aside-row {
+  text-align: center;
+}
+.onb-duo-aside.is-picked {
+  border-style: solid;
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
 /* ── the class board (S92, founder: "a small rectangle board with 9 and 10") ──
    A little classroom slate, not a pill: chalk-white numerals on dark green with
    a wooden frame. It says "class" without a word of copy doing the work. */
@@ -1292,6 +1365,179 @@
   white-space: pre-wrap;
 }
 
+/* ── ONB-8: the coronation (the throne close) ──
+   Five stacked layers, entrances staggered back-to-front. ⚠️ Every fade-in
+   starts AFTER .onb-epi's 0.5s entrance releases its transform (M60): a
+   transformed ancestor isolates mix-blend-mode, so a multiply layer that
+   faded in earlier would flash as a washed rectangle, then snap. Same rule
+   .onb-epi-art already obeys (its delay is 0.55s) — keep every delay ≥ that. */
+/* ONB-9 — the founder's ratios. Every figure's height is a % of the SAME stage
+   height, so `hero = 1.25 x throne` and `pet = 0.5 x throne` hold by
+   construction at any viewport instead of being re-tuned per breakpoint:
+     throne 62%  ·  hero 77.5% (= 1.25 x 62)  ·  pet 31% (= 0.5 x 62).
+   The throne dropped from 96% to make room — at 1.25x the hero is now the
+   TALLEST thing on the page, which is what the ratio means. Stage widened so
+   the flanks sit at the edges with air between them and the throne. */
+.onb-throne {
+  position: relative;
+  width: min(94vw, 900px);
+  height: min(60vh, 560px);
+  flex: none;
+  /* THE RATIO BASE. Every figure derives from this one number by calc(), so
+     the founder's ratios are code, not a comment that rots: move --throne-h
+     and the whole composite re-proportions around it, still 1.25x / 0.5x. */
+  --throne-h: 62%;
+}
+.onb-throne img,
+.onb-throne svg {
+  position: absolute;
+  opacity: 0;
+  animation: onb-scene-in 0.9s ease-out forwards;
+}
+
+/* Olórin stands DIRECTLY behind the throne (founder: "gandalf should be right
+   behind the throne, no need to be on the left"). Centred, and taller than the
+   throne so his hat, head and staff clear the sword wall.
+   🔑 The vertical mask is LOAD-BEARING, not decoration: every layer here
+   composites with `multiply`, so nothing is opaque — centred and unmasked, his
+   robes read straight THROUGH the swords and the middle of the frame turns to
+   mud. The gradient dissolves him just below the throne's top edge (the throne
+   crests at 62% of the stage = ~24% down his own box), so what survives is
+   only the part that was never going to overlap. He is presence, not subject. */
+.onb-throne-olorin {
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  bottom: 0;
+  /* Taller than the throne (1.32x) purely so his hat and staff clear it. */
+  height: calc(var(--throne-h) * 1.32);
+  filter: grayscale(1) contrast(1.05);
+  mix-blend-mode: multiply;
+  --scene-opacity: 0.42;
+  animation-delay: 0.75s;
+  /* S102: both axes must REACH transparent — a stop past the edge leaves a
+     hard cut the paper never hides. */
+  mask-image:
+    linear-gradient(to right, transparent 0, black 24%, black 76%, transparent 100%),
+    linear-gradient(to bottom, black 0, black 20%, transparent 52%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* The throne itself — centre, largest, the anchor every other layer hangs off. */
+.onb-throne-seat {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin-inline: auto;
+  /* ONB-9: 96% -> 62%. The throne is now the RATIO BASE, not the biggest
+     thing — hero and pet are sized off this number (1.25x / 0.5x), so moving
+     it moves them. */
+  height: var(--throne-h);
+  filter: grayscale(1) contrast(1.05);
+  mix-blend-mode: multiply;
+  /* 0.62 turned the throne's inked base near-black and the seated figure
+     drowned in it (founder: "not good") — lighter, the figure separates. */
+  --scene-opacity: 0.48;
+  animation-delay: 0.55s;
+  mask-image:
+    linear-gradient(to right, transparent 0, black 14%, black 86%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 12%, black 90%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* The student, seated, seen from the back — head and shoulders above the seat,
+   against the mid-grey sword wall. Pencil-toned + multiply, NOT solid ink: a
+   flat black shape at full opacity read as a broken avatar icon, not a person
+   (first render proved it). The bottom-fade mask is load-bearing — the path's
+   base is a straight line, and unfaded it cuts a hard edge across the seat. */
+.onb-throne-student {
+  left: 0;
+  right: 0;
+  /* Seat height and figure size are both fixed fractions OF THE THRONE — tie
+     them to the same base or the student climbs out of the chair whenever the
+     throne is resized. */
+  bottom: calc(var(--throne-h) * 0.323);
+  margin-inline: auto;
+  /* ONB-9 — sized off the stage HEIGHT, like the throne, so the figure keeps
+     its seat when the two axes scale apart. `xMidYMax meet` letterboxes the
+     4:3 viewBox inside this box: the generous width never binds, height does,
+     and the path lands bottom-anchored + centred. (Width-driven, as it was,
+     the silhouette drifted out of the chair on wide-and-short viewports.) */
+  width: 26%;
+  height: calc(var(--throne-h) * 0.28);
+  /* ONB-9 — lighter again. The S106 tone was tuned against a throne at 96% of
+     the stage; at 62% the same ink multiplies over a DENSER patch of swords
+     and the figure collapsed back into the black blob that tone was chosen to
+     avoid. Lighter fill + less opacity keeps it a person, not a hole. */
+  fill: #565d70;
+  mix-blend-mode: multiply;
+  --scene-opacity: 0.6;
+  animation-delay: 0.95s;
+  mask-image: linear-gradient(to bottom, black 55%, transparent 96%);
+}
+
+/* The hero at the throne's left hand. ONB-9: 48% -> 77.5% = 1.25x the throne's
+   62% (founder: the flanks "not that prominent"). Pushed to the stage edge so
+   growing it buys presence instead of crowding the throne. */
+.onb-throne-hero {
+  left: 0;
+  bottom: 0;
+  /* THE FOUNDER'S NUMBER: hero = 1.25 x throne. */
+  height: calc(var(--throne-h) * 1.25);
+  filter: grayscale(1) contrast(1.05);
+  mix-blend-mode: multiply;
+  /* Bigger AND darker — at 0.55 the scan still read as a ghost beside the
+     throne's ink. */
+  --scene-opacity: 0.68;
+  animation-delay: 1.1s;
+  /* Feather widened (16% -> 22%). The scan's "white" paper is ~250, not 255,
+     so multiply darkens it just enough to print a faint rectangle against the
+     grid — at this size the old feather no longer reached far enough in to
+     hide the plate (S102's edge problem, back at 1.25x scale). */
+  mask-image:
+    linear-gradient(to right, transparent 0, black 22%, black 78%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* The companion at its right hand — a cut-out sticker, so it lands with the
+   handover's spring, not a scan's fade. `both` covers the delay (M60 does not
+   bite here: a retained transform on the sticker isolates only itself). */
+.onb-throne-pet {
+  /* Not flush to the edge: the hero is ~3x the companion's width, so pinning
+     both to their edges left the companion stranded in white space while the
+     hero crowded the throne. Pulling it in balances the two gaps by eye. */
+  right: 5%;
+  bottom: 0;
+  /* THE FOUNDER'S NUMBER: pet = 0.5 x throne. Smaller as a fraction of the
+     stage than before, but the throne shrank further — next to it the
+     companion reads bigger. */
+  height: calc(var(--throne-h) * 0.5);
+  max-width: 32%;
+  object-fit: contain;
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 4px 8px rgba(20, 22, 40, 0.2));
+  opacity: 0;
+  animation: onb-pika-enter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 1.3s both;
+}
+
+/* Olórin's comment under the coronation. Later than every layer above (the
+   pet lands at 1.3s) so the picture assembles first and the line closes it.
+   Placed after the base .onb-bubble rule on purpose — equal specificity, so
+   source order is what lets this delay win over the shorthand's 0.15s. */
+.onb-throne-say-row {
+  margin-top: 14px;
+  /* The bubble's tail hangs 8px below its box and the progress bar sits right
+     under it — without this they collide. */
+  margin-bottom: 10px;
+}
+.onb-throne-say {
+  animation-delay: 1.75s;
+}
+
 /* The epilogue bar FILLS — 0 to 100% over EPILOGUE_TOTAL_MS (duration set
    inline from the same constant, so the bar cannot drift from the clock). The
    base bar's indeterminate shuttle animation is fully overridden. */
@@ -1322,12 +1568,19 @@
   .onb-page-sticker img,
   .onb-bubble,
   .onb-trio-fig,
-  .onb-epi {
+  .onb-epi,
+  /* The coronation sticker springs (a transform); killed, it simply shows. */
+  .onb-throne-pet {
     animation: none;
   }
   /* ⚠️ .onb-cslot / .onb-main-img are NOT in this list on purpose — like every
      other scene image, their entrance animation is what carries them to their
-     resting opacity; killing it would leave them at 0 (invisible), not still. */
+     resting opacity; killing it would leave them at 0 (invisible), not still.
+     The .onb-throne scan/silhouette layers stay off the list for the same
+     reason — their fades are opacity-only. */
+  .onb-throne-pet {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 520px) {
@@ -1354,6 +1607,29 @@
   }
   .onb-epi-art {
     height: 30vh;
+  }
+  /* The coronation on a phone. Olórin still bows out — three figures behind a
+     390px column is a crowd, and the throne wins.
+     ⚠️ The stage is sized by WIDTH here even though every figure is measured in
+     height: at 1.25x the hero is ~0.9 stage-heights WIDE, and hero + throne +
+     pet only fit inside 390px if the stage is short. Walked at 40vh first and
+     the hero covered the throne and the student completely — the coronation
+     stopped being a coronation. 30vh is the largest that still fits all three
+     side by side. */
+  .onb-throne {
+    height: 30vh;
+  }
+  /* Reclaim the desktop inset — every pixel of width is spoken for. */
+  .onb-throne-pet {
+    right: 0;
+  }
+  .onb-throne-olorin {
+    display: none;
+  }
+  /* The bubble's tilt costs horizontal room the phone hasn't got. */
+  .onb-throne-say {
+    max-width: 30ch;
+    transform: none;
   }
   .onb-loader-bar.is-epi {
     width: 200px;

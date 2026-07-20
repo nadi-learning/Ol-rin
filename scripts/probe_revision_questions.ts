@@ -35,7 +35,6 @@ import {
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -47,8 +46,8 @@ import {
 } from "../src/services/revision";
 import {
   NoMembershipError,
+  grantRole,
   requireMembership,
-  resolveMembership,
 } from "../src/services/membership";
 import { env } from "../src/config/env";
 
@@ -231,8 +230,7 @@ async function main() {
   }
   check("gate: non-member → NoMembershipError", noMembership);
 
-  await withBoard(P.id, (tx) => tx.insert(whitelist).values({ boardId: P.id, email: emailW, role: "student" }));
-  await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "Probe W", board: P }));
+  await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "Probe W", board: P, role: "student" }));
   const gateRole = await withBoard(P.id, (tx) => requireMembership(tx, { email: emailW, board: P }));
   check("gate: member (created by real flow) → role 'student'", gateRole.role === "student");
 
@@ -257,7 +255,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.id, student.id));

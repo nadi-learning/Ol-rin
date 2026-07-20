@@ -4,8 +4,17 @@
  */
 import { z } from "zod";
 
-export const Role = z.enum(["student", "tutor", "parent", "admin"]);
+// The four membership roles. `ROLES` is the array form — the DB CHECK on
+// membership.role is generated from this list, and `grantRole` takes a `Role`,
+// so the enum, the constraint and the one write path can no longer drift.
+// Ordered by PRIVILEGE, highest first: migration 0033 uses this order to pick
+// the surviving row when collapsing a user's multiple roles on one board.
+export const ROLES = ["admin", "tutor", "parent", "student"] as const;
+export const Role = z.enum(ROLES);
 export type Role = z.infer<typeof Role>;
+
+/** The role a brand-new member gets. Everyone starts here; admin promotes. */
+export const DEFAULT_ROLE: Role = "student";
 
 export const Axis = z.enum(["conceptual", "procedural"]);
 export type Axis = z.infer<typeof Axis>;
@@ -111,7 +120,6 @@ export const ONBOARDING_STEPS = [
   "fav_character",
   "pet",
   "phone",
-  "lore",
   "done",
 ] as const;
 export const OnboardingStep = z.enum(ONBOARDING_STEPS);
@@ -129,6 +137,10 @@ export type OnboardingStep = z.infer<typeof OnboardingStep>;
  */
 export const RETIRED_ONBOARDING_STEPS: Record<string, OnboardingStep> = {
   pikachu: "pet",
+  // ONB-7 (founder): the Gandalf reveal leaves onboarding — Olórin introduces
+  // himself later in the product, at a moment the student is actually stuck.
+  // A row parked on it resumes at the close.
+  lore: "done",
   // S90/S91 cut these before the step list was the resume key; kept for the
   // same reason — a row that names them must still resolve somewhere real.
   school: "fav_character",
@@ -259,7 +271,16 @@ export const PETS = [
 export const Pet = z.enum(PETS);
 export type Pet = z.infer<typeof Pet>;
 
-/** True when `pet` is one of ours (→ it arrives now) rather than a free-text ask. */
+/**
+ * True when `pet` is one of ours.
+ *
+ * ⚠️ Slice L closed the set — `saveStep` now REJECTS anything off this list, so
+ * no new row can fail this check. It is still load-bearing, and the reason is
+ * the only reason: rows written BEFORE Slice L hold free text (the retired
+ * "something else" hatch), they are read on every dashboard and every resume,
+ * and this is what routes them to the stand-in owl instead of to `undefined`.
+ * A future migration that backfills those rows is what makes this deletable.
+ */
 export function isKnownPet(pet: string | null | undefined): pet is Pet {
   return Boolean(pet) && (PETS as readonly string[]).includes(pet!);
 }

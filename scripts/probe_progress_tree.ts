@@ -39,11 +39,10 @@ import {
   subject,
   topic,
   tutorStudent,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import {
   getProgressTree,
   StudentNotFoundError,
@@ -95,16 +94,10 @@ async function main() {
   const emailS1 = `ppt-s1-${tag}@example.com`;
   const emailS2 = `ppt-s2-${tag}@example.com`;
   const emailSC = `ppt-sc-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailT, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailS1, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailS2, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailSC, role: "student" });
-  });
-  const T = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailT, name: "Tutor", board: P }));
-  const S1 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailS1, name: "Stu One", board: P }));
-  const S2 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailS2, name: "Stu Two", board: P }));
-  const SC = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailSC, name: "Stu Cold", board: P }));
+  const T = await withBoard(P.id, (tx) => grantRole(tx, { email: emailT, name: "Tutor", board: P, role: "tutor" }));
+  const S1 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailS1, name: "Stu One", board: P, role: "student" }));
+  const S2 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailS2, name: "Stu Two", board: P, role: "student" }));
+  const SC = await withBoard(P.id, (tx) => grantRole(tx, { email: emailSC, name: "Stu Cold", board: P, role: "student" }));
   const userT = T.user.id, userS1 = S1.user.id, userS2 = S2.user.id, userSC = SC.user.id;
 
   // link T → S1 and T → SC (S2 deliberately UNLINKED)
@@ -212,7 +205,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   for (const email of [emailT, emailS1, emailS2, emailSC]) {
     await db.delete(appUser).where(eq(appUser.email, email));

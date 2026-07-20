@@ -4,7 +4,7 @@ import {
   ONBOARDING_STEPS,
   type OnboardingStep,
 } from "@b2c/kernel/contracts";
-import { trpc } from "../trpc";
+import { trpc, setBoard } from "../trpc";
 import { useTypewriter } from "../lib/useTypewriter";
 import {
   BEAT_BY_ID,
@@ -18,12 +18,13 @@ import {
   loaderPetAlt,
   loaderPetImg,
   petWink,
+  throneClose,
 } from "./onboarding.copy";
 import type { Beat, BeatCtx, ChipOption, Scene, StoryPage } from "./onboarding.copy";
 import "./onboarding.css";
 
-// Slice ONB-5 (S96) — the STORY onboarding. First LOGIN (not signup; the
-// platform is whitelist-gated, so we already know who this is).
+// Slice ONB-5 (S96) — the STORY onboarding. First LOGIN (not signup; login
+// itself creates the student's membership, so we already know who this is).
 // Slice ONB-6 (S103) — the JOURNEY rework: beats can end in Next-gated STORY
 // PAGES (hero/pet payoff, the three-page reveal), scenes can be collages, the
 // hero/pet speaks one printed line, and the close is a ~45s read-along
@@ -168,8 +169,8 @@ function SceneLayer({
  * ONB-6 — one Next-gated story page. The title lands instantly (it is short),
  * the body TYPES at the same pace as everything else (founder: "i want the
  * user to have enough time to follow along - keep it current typewriter"),
- * the bubble/sticker/trio arrive once the typing settles, and the CTA gates
- * the advance — nothing on this screen can vanish unread.
+ * the bubble arrives once the typing settles, and the CTA gates the advance —
+ * nothing on this screen can vanish unread.
  */
 function StoryPageView({
   page,
@@ -195,31 +196,6 @@ function StoryPageView({
         {!settled && <span className="onb-caret" />}
       </div>
 
-      {page.sticker && settled && (
-        <div className="onb-page-sticker">
-          <img src={page.sticker.img} alt={page.sticker.label} />
-        </div>
-      )}
-
-      {page.trio && settled && (
-        <div className="onb-trio">
-          {page.trio.heroImg && (
-            <figure className="onb-trio-fig">
-              <img src={page.trio.heroImg} alt={page.trio.heroLabel} className="onb-trio-art" />
-              <figcaption>{page.trio.heroLabel}</figcaption>
-            </figure>
-          )}
-          <figure className="onb-trio-fig is-pet">
-            <img src={page.trio.petImg} alt={page.trio.petLabel} className="onb-trio-sticker" />
-            <figcaption>{page.trio.petLabel}</figcaption>
-          </figure>
-          <figure className="onb-trio-fig">
-            <img src={page.trio.olorinImg} alt="Olórin" className="onb-trio-art" />
-            <figcaption>Olórin</figcaption>
-          </figure>
-        </div>
-      )}
-
       {page.bubble && settled && (
         <div className="onb-bubble-row">
           <span className="onb-bubble">
@@ -244,12 +220,25 @@ export function OnboardingPage({
   studentName,
   initialStep,
   initialAnswers,
+  needsBoard = false,
   onDone,
 }: {
   studentName: string;
   initialStep: OnboardingStep;
   initialAnswers: BeatCtx["answers"];
-  onDone: () => void;
+  /**
+   * Slice E — this student has NO membership anywhere yet, so the `about_you`
+   * beat grows its exam-board row and the flow runs pre-board until they pick.
+   * False for anyone resuming: they already belong to a board, and re-asking
+   * would invite a switch that quietly enrols them on a second one.
+   */
+  needsBoard?: boolean;
+  /**
+   * Slice G — the flow hands its ANSWERS back on the way out. The caller lifts
+   * the companion from them, and the alternative (App re-reading getState) is
+   * the re-read this flow must never provoke: see App's onDone comment.
+   */
+  onDone: (answers: BeatCtx["answers"]) => void;
 }) {
   const reducedMotion = useRef(
     typeof window !== "undefined" &&
@@ -264,7 +253,6 @@ export function OnboardingPage({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reaction, setReaction] = useState("");
-  const [otherOpen, setOtherOpen] = useState(false);
   // ONB-6 — the story pages: the beat's payoff, walked by Next. `pendingStep`
   // holds the server's answer until the last page is read — the server already
   // advanced (D-ONB-1), the STORY hasn't yet.
@@ -274,20 +262,55 @@ export function OnboardingPage({
   // S96 — the hero beat's "more heroes" reveal. Local, not a step: it only
   // decides which chips are on screen, and abandoning it loses nothing.
   const [moreHeroes, setMoreHeroes] = useState(false);
-  const [duo, setDuo] = useState<{ grade: string | null; pronoun: string | null }>({
-    grade: null,
-    pronoun: null,
-  });
+  const [duo, setDuo] = useState<{
+    examBoard: string | null;
+    grade: string | null;
+    pronoun: string | null;
+  }>({ examBoard: null, grade: null, pronoun: null });
+  // Slice E — the exam boards on offer, and whether a board is committed YET.
+  // `boarded` starts true for everyone resuming, so the pre-board path costs
+  // them nothing. It flips when chooseBoard succeeds, which is also the moment
+  // the x-board header starts being sent (setBoard, in commitAboutYou).
+  const [boards, setBoards] = useState<{ slug: string; name: string }[]>([]);
+  const [boarded, setBoarded] = useState(!needsBoard);
 
   const beat: Beat | undefined = BEAT_BY_ID[stepId];
   const name = useMemo(() => firstName(studentName), [studentName]);
 
+  // Slice E — the boards on offer. Only fetched for a student who must pick;
+  // for everyone else the row is filtered out and this list is never read.
   useEffect(() => {
-    trpc.onboarding.listGradeOptions
+    if (!needsBoard) return;
+    trpc.session.listBoards
       .query()
+      .then(setBoards)
+      .catch(() => setBoards([]));
+  }, [needsBoard]);
+
+  // 🔑 THE CHICKEN-AND-EGG, on the client. The grade chips are board-scoped, so
+  // WHERE they come from depends on whether a board is committed:
+  //   boarded   → onboarding.listGradeOptions (protected; uses the x-board header)
+  //   pre-board → session.listGradesForBoard  (no membership, board named explicitly)
+  // Calling the protected one pre-board is a guaranteed FORBIDDEN, which would
+  // surface as "— no classes set up yet —" and read like missing content rather
+  // than a bug, so the guard is load-bearing rather than an optimisation.
+  useEffect(() => {
+    if (boarded) {
+      trpc.onboarding.listGradeOptions
+        .query()
+        .then(setGrades)
+        .catch(() => setGrades([]));
+      return;
+    }
+    if (!duo.examBoard) {
+      setGrades([]);
+      return;
+    }
+    trpc.session.listGradesForBoard
+      .query({ board: duo.examBoard })
       .then(setGrades)
       .catch(() => setGrades([]));
-  }, []);
+  }, [boarded, duo.examBoard]);
 
   const [begun, setBegun] = useState(false);
   useEffect(() => {
@@ -327,7 +350,10 @@ export function OnboardingPage({
     return () => clearInterval(t);
   }, [rotating]);
 
-  const ctx: BeatCtx = { name, answers };
+  // `needsBoard`, not `!boarded`: the copy must not change under the student
+  // mid-beat. `boarded` flips the instant chooseBoard returns, which would
+  // re-count the prompt from three to two while they are still looking at it.
+  const ctx: BeatCtx = { name, needsBoard, answers };
   const promptText = beat
     ? (typeof beat.prompt === "function" ? beat.prompt(ctx) : beat.prompt).replace("{name}", name)
     : "";
@@ -371,7 +397,7 @@ export function OnboardingPage({
   if (!beat) {
     // A step the copy file doesn't know (contracts gained a beat, copy didn't).
     // Never trap the student in a broken welcome — let them through (G3).
-    onDone();
+    onDone(ctx.answers);
     return null;
   }
 
@@ -388,7 +414,6 @@ export function OnboardingPage({
   ) {
     setAnswers(next.answers);
     setDraft("");
-    setOtherOpen(false);
     setMoreHeroes(false);
 
     if (story && story.length > 0) {
@@ -430,10 +455,27 @@ export function OnboardingPage({
 
   async function commitAboutYou() {
     if (!beat || saving || !duo.grade || !duo.pronoun) return;
+    if (!boarded && !duo.examBoard) return;
     setSaving(true);
     setError(null);
     try {
-      const next = await trpc.onboarding.saveAboutYou.mutate(duo);
+      // Slice E — board FIRST, then the answers. Deliberately NOT atomic: if
+      // saveAboutYou fails after chooseBoard succeeded, the student resumes at
+      // `about_you` under the correct board with it already picked, and retries
+      // one call. Fusing them would drag tenancy into the onboarding namespace
+      // — chooseBoard would have to live behind a procedure that needs the very
+      // board it is creating.
+      if (!boarded && duo.examBoard) {
+        await trpc.session.chooseBoard.mutate({ board: duo.examBoard });
+        // Every call from here carries x-board, so the protected onboarding
+        // procedures (including saveAboutYou, one line down) now work.
+        setBoard(duo.examBoard);
+        setBoarded(true);
+      }
+      const next = await trpc.onboarding.saveAboutYou.mutate({
+        grade: duo.grade,
+        pronoun: duo.pronoun,
+      });
       land(next, beat.reaction(duo.grade, ctx));
     } catch (e: any) {
       setError(String(e?.message ?? e).replace(/^BAD_REQUEST:\s*/, ""));
@@ -447,22 +489,44 @@ export function OnboardingPage({
     setSaving(true);
     setError(null);
     try {
-      // A talk-only beat (greet/lore) must POST a NULL value even when the
-      // student tapped a chip. `lore`'s Yes/No is THEATRE — both paths land the
-      // same reveal and nothing is stored — but sending "No" made the server
-      // reject the step and the flow dead-ended, unfinishable (M43).
+      // A talk-only beat (greet) must POST a NULL value — sending a real
+      // string made the server reject the step and the flow dead-ended,
+      // unfinishable (M43).
       //
       // Keyed off ONBOARDING_ANSWER_COLUMNS — the SAME contract the server
       // validates against — so a new beat can't drift the two apart.
       const persists = Boolean(
         (ONBOARDING_ANSWER_COLUMNS as Record<string, string | undefined>)[beat.id],
       );
+
+      // 🔑 SLICE E — the beats BEFORE the board pick advance locally.
+      // `saveStep` is a protectedProcedure, so a student who has not yet chosen
+      // a board cannot call it; `greet` is the only beat in that window and it
+      // is talk-only, so there is nothing to lose. This is safe because the
+      // onboarding row is born on the first real ANSWER, not on `greet`:
+      // `saveAboutYou` upserts unconditionally and sets `current_step` itself,
+      // so the row that appears a moment later is identical either way.
+      //
+      // ⚠️ If a beat that PERSISTS is ever moved ahead of `about_you`, this
+      // silently drops its answer. Refuse loudly instead of guessing.
+      if (!boarded) {
+        if (persists) {
+          throw new Error(
+            `beat '${beat.id}' persists an answer but runs before the board pick`,
+          );
+        }
+        // Same ordered contract the server advances by (ONBOARDING_STEPS), so
+        // the local advance cannot drift from `nextStep` on the BE.
+        const after = ONBOARDING_STEPS[ONBOARDING_STEPS.indexOf(beat.id) + 1] ?? "done";
+        land({ currentStep: after, answers }, beat.reaction(value, ctx), beat.pages?.(value, ctx));
+        return;
+      }
+
       const next = await trpc.onboarding.saveStep.mutate({
         step: beat.id,
         value: persists ? value : null,
       });
-      // The reaction/pages read the value that was TAPPED — for the talk-only
-      // lore beat that is what picks the reveal's opening line.
+      // The reaction/pages read the value that was TAPPED.
       land(next, beat.reaction(value, ctx), beat.pages?.(value, ctx));
     } catch (e: any) {
       // saveStep deliberately does NOT fail open — a dropped answer would make
@@ -489,14 +553,7 @@ export function OnboardingPage({
       : [];
   const bigChips = beat.input.kind === "chips" && beat.input.big === true;
   const cardChips = beat.input.kind === "chips" && beat.input.cards === true;
-  const other = beat.input.kind === "chips" ? beat.input.other : undefined;
-  const chipsClass = cardChips
-    ? "onb-chips is-cards"
-    : bigChips
-      ? "onb-chips is-big"
-      : beat.id === "lore"
-        ? "onb-chips is-lore" // inked answers, not generic pills (founder)
-        : "onb-chips";
+  const chipsClass = cardChips ? "onb-chips is-cards" : bigChips ? "onb-chips is-big" : "onb-chips";
 
   // S96 — the companion the hero brought, pre-selected on the pet beat. It is a
   // DEFAULT with a wink, not a lock (founder, agreed): the pet is the flow's
@@ -558,40 +615,110 @@ export function OnboardingPage({
 
             {beat.input.kind === "duo" && (
               <div className="onb-duo">
-                {beat.input.rows.map((row) => {
-                  const opts: ChipOption[] =
-                    row.chips === null ? grades.map((g) => ({ value: g, label: g })) : row.chips;
+                {beat.input.rows
+                  // Slice E — the exam-board row exists only for a student who
+                  // has not committed to a board. Everyone else already belongs
+                  // to one; showing it would invite a switch that enrols them
+                  // on a second board instead of moving them.
+                  .filter((row) => row.key !== "examBoard" || needsBoard)
+                  .map((row) => {
+                  const opts: ChipOption[] = Array.isArray(row.chips)
+                    ? row.chips
+                    : row.chips.source === "boards"
+                      ? boards.map((b) => ({ value: b.slug, label: b.name }))
+                      : grades.map((g) => ({ value: g, label: g }));
                   const label = (typeof row.label === "function" ? row.label(ctx) : row.label)
                     .replace("{name}", name);
                   return (
-                    <div key={row.key} className="onb-duo-row">
+                    <div
+                      key={row.key}
+                      className={"onb-duo-row" + (row.style === "sticker" ? " is-sticker" : "")}
+                    >
                       <span className="onb-duo-label">{label}</span>
                       <div className="onb-duo-opts">
                         {opts.length === 0 && row.key === "grade" ? (
-                          <span className="onb-duo-empty">— no classes set up yet —</span>
+                          // Slice E — an empty grade list means two different
+                          // things now, and saying the wrong one makes the flow
+                          // look broken. Pre-board it is simply "you haven't
+                          // told me whose syllabus yet"; only WITH a board is
+                          // it a real content gap.
+                          <span className="onb-duo-empty">
+                            {needsBoard && !duo.examBoard
+                              ? "— pick your board first —"
+                              : "— no classes set up yet —"}
+                          </span>
                         ) : (
                           opts.map((o) => (
                             <button
                               key={o.value}
                               className={
-                                (row.style === "board" ? "onb-board" : "onb-chip") +
+                                (row.style === "board"
+                                  ? "onb-board"
+                                  : // Slice L — the sticker row borrows the pet
+                                    // beat's own card, art and all, rather than
+                                    // growing a second look that drifts from it.
+                                    row.style === "sticker"
+                                    ? "onb-choice onb-duo-sticker"
+                                    : "onb-chip") +
                                 (duo[row.key] === o.value ? " is-picked" : "")
                               }
                               disabled={saving}
                               aria-pressed={duo[row.key] === o.value}
-                              onClick={() => setDuo((d) => ({ ...d, [row.key]: o.value }))}
+                              onClick={() =>
+                                setDuo((d) =>
+                                  // 🔴 Changing the board CLEARS the grade. Grade
+                                  // values are not portable between boards — cbse
+                                  // has "9"/"10", cambridge "IGCSE" — so a grade
+                                  // kept across a switch fails saveAboutYou's
+                                  // closed-set check at submit time, after the
+                                  // board has already been committed.
+                                  row.key === "examBoard"
+                                    ? { ...d, examBoard: o.value, grade: null }
+                                    : { ...d, [row.key]: o.value },
+                                )
+                              }
                             >
-                              {o.label.replace("{name}", name)}
+                              {/* The art is decoration for a labelled control —
+                                  the label below it is the accessible name, so
+                                  an empty alt is correct, not an omission. */}
+                              {row.style === "sticker" && o.img && (
+                                <img src={o.img} alt="" className="onb-choice-img" />
+                              )}
+                              <span className={row.style === "sticker" ? "onb-choice-label" : undefined}>
+                                {o.label.replace("{name}", name)}
+                              </span>
                             </button>
                           ))
                         )}
                       </div>
+                      {/* D-L1 — the opt-out that still answers. Under the row and
+                          quieter, because it is not another item IN the row; it
+                          commits the same key and shows the same picked state. */}
+                      {row.aside && (
+                        <div className="onb-duo-aside-row">
+                          <button
+                            className={
+                              "onb-other onb-duo-aside" +
+                              (duo[row.key] === row.aside.value ? " is-picked" : "")
+                            }
+                            disabled={saving}
+                            aria-pressed={duo[row.key] === row.aside.value}
+                            onClick={() =>
+                              setDuo((d) => ({ ...d, [row.key]: row.aside!.value }))
+                            }
+                          >
+                            {row.aside.label.replace("{name}", name)}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
                 <button
                   className="onb-btn onb-duo-cta"
-                  disabled={saving || !duo.grade || !duo.pronoun}
+                  disabled={
+                    saving || !duo.grade || !duo.pronoun || (needsBoard && !duo.examBoard)
+                  }
                   onClick={commitAboutYou}
                 >
                   {saving ? "…" : beat.input.cta}
@@ -599,40 +726,10 @@ export function OnboardingPage({
               </div>
             )}
 
-            {beat.input.kind === "chips" && otherOpen && other && (
-              <form
-                className="onb-form"
-                onSubmit={(ev) => {
-                  ev.preventDefault();
-                  if (draft.trim()) commit(draft.trim());
-                }}
-              >
-                <input
-                  className="onb-field"
-                  value={draft}
-                  autoFocus
-                  placeholder={other.placeholder}
-                  onChange={(ev) => setDraft(ev.target.value)}
-                  disabled={saving}
-                />
-                <button className="onb-btn" type="submit" disabled={saving || !draft.trim()}>
-                  {saving ? "…" : "Send"}
-                </button>
-                <button
-                  type="button"
-                  className="onb-skip"
-                  disabled={saving}
-                  onClick={() => {
-                    setOtherOpen(false);
-                    setDraft("");
-                  }}
-                >
-                  {other.back}
-                </button>
-              </form>
-            )}
-
-            {beat.input.kind === "chips" && !otherOpen && (
+            {/* Slice L — the "Something else" text form lived here. It is gone
+                with the custom pet: every chip beat is now a closed set, so
+                there is no chip that opens an input. */}
+            {beat.input.kind === "chips" && (
               <div className={chipsClass}>
                 {chips.length === 0 && beat.input.source === "grades" ? (
                   // No grades on the board = nothing truthful to offer. Let them
@@ -696,17 +793,11 @@ export function OnboardingPage({
               </div>
             )}
 
-            {/* The hatch is NOT another pet, so it doesn't wear a pet card — as
-                one it wrapped onto a row of its own and read as a layout
-                accident. A quieter control under the row says what it is. */}
-            {beat.input.kind === "chips" && !otherOpen && other && chips.length > 0 && (
-              <div className="onb-other-row">
-                <button className="onb-other" disabled={saving} onClick={() => setOtherOpen(true)}>
-                  {other.emoji && <span aria-hidden="true">{other.emoji} </span>}
-                  {other.label}
-                </button>
-              </div>
-            )}
+            {/* Slice L — the "Something else" hatch button lived here. Its
+                reasoning survives one level up, on DuoRow.aside: a control that
+                is NOT another item in the row belongs under the row, quieter,
+                rather than wearing the same card. That is now the pronoun
+                opt-out's shape. */}
 
             {beat.input.kind === "text" && (
               <form
@@ -761,13 +852,24 @@ export function OnboardingPage({
  * server finalize fires immediately, and the door opens when BOTH the clock
  * and the server are done — never before, so the bar never lies twice.
  */
-function OnboardingLoader({ ctx, onDone }: { ctx: BeatCtx; onDone: () => void }) {
+function OnboardingLoader({
+  ctx,
+  onDone,
+}: {
+  ctx: BeatCtx;
+  onDone: (answers: BeatCtx["answers"]) => void;
+}) {
   const reducedMotion = useRef(
     typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
   ).current;
   const [idx, setIdx] = useState(0);
   const perPage = EPILOGUE_TOTAL_MS / EPILOGUE_PAGES.length;
+  // Slice G — captured ONCE at mount, not read live. The flow is over by the
+  // time this renders, so the answers are final; pinning them keeps `ctx` (a
+  // fresh object every render) out of the effect's dep array, which would
+  // otherwise tear down and restart the epilogue's timers mid-read.
+  const finalAnswers = useRef(ctx.answers).current;
 
   useEffect(() => {
     let clockDone = false;
@@ -777,7 +879,7 @@ function OnboardingLoader({ ctx, onDone }: { ctx: BeatCtx; onDone: () => void })
       if (gone) return;
       if (clockDone && serverDone) {
         gone = true;
-        onDone();
+        onDone(finalAnswers);
       }
     };
 
@@ -806,7 +908,7 @@ function OnboardingLoader({ ctx, onDone }: { ctx: BeatCtx; onDone: () => void })
       clearInterval(pager);
       clearTimeout(clock);
     };
-  }, [onDone, perPage]);
+  }, [onDone, perPage, finalAnswers]);
 
   const page = EPILOGUE_PAGES[idx]!;
   const say = (typeof page.say === "function" ? page.say(ctx) : page.say).replace(
@@ -815,6 +917,9 @@ function OnboardingLoader({ ctx, onDone }: { ctx: BeatCtx; onDone: () => void })
   );
   const img = typeof page.img === "function" ? page.img(ctx) : page.img;
   const epScene = typeof page.scene === "function" ? page.scene(ctx) : page.scene;
+  const olorinSay = (
+    typeof page.olorinSay === "function" ? page.olorinSay(ctx) : page.olorinSay
+  )?.replace("{name}", ctx.name);
 
   const { visible: typedSay, done: sayDone } = useTypewriter(say, !reducedMotion, TYPE_MS);
 
@@ -825,7 +930,9 @@ function OnboardingLoader({ ctx, onDone }: { ctx: BeatCtx; onDone: () => void })
       <div className="onb-card onb-card-loader">
         {/* Keyed by page so the art and type replay their entrances. */}
         <div key={idx} className="onb-epi">
-          {page.sticker ? (
+          {page.throne ? (
+            <ThroneScene ctx={ctx} />
+          ) : page.sticker ? (
             <div className="onb-delivery">
               <img
                 src={loaderPetImg(ctx.answers.pet)}
@@ -840,11 +947,60 @@ function OnboardingLoader({ ctx, onDone }: { ctx: BeatCtx; onDone: () => void })
             {typedSay}
             {!sayDone && !reducedMotion && <span className="onb-caret" />}
           </div>
+          {/* ONB-9 — Olórin's comment on the coronation. Same bubble language
+              as the beats, attributed, and it arrives after the composite has
+              finished assembling rather than competing with it. */}
+          {olorinSay && (
+            <div className="onb-bubble-row onb-throne-say-row">
+              <span className="onb-bubble onb-throne-say">
+                {olorinSay}
+                <span className="onb-bubble-by">— Olórin</span>
+              </span>
+            </div>
+          )}
         </div>
         <div className="onb-loader-bar is-epi">
           <span style={{ animationDuration: `${EPILOGUE_TOTAL_MS}ms` }} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * ONB-8 — the CORONATION (founder: "instead of loader... a throne with boy or
+ * girl sitting, hero and pet on both side and gandalf in back"). Every image
+ * name comes from throneClose() in the copy file; this component only stacks
+ * the layers: Olórin looming behind, the throne, the student seated in it
+ * (a back-view inked silhouette — no face, so no gender guess; `longHair`
+ * follows the pronoun answer), the hero at its left, the companion sticker at
+ * its right.
+ *
+ * The composite is the page's payoff, so unlike the scene layer it is NOT
+ * aria-hidden — the wrapper narrates itself once.
+ */
+function ThroneScene({ ctx }: { ctx: BeatCtx }) {
+  const t = throneClose(ctx);
+  return (
+    <div className="onb-throne" role="img" aria-label={t.alt}>
+      <img src={t.olorin} alt="" className="onb-throne-olorin" />
+      <img src={t.throne} alt="" className="onb-throne-seat" />
+      <svg
+        className="onb-throne-student"
+        viewBox="0 0 200 150"
+        preserveAspectRatio="xMidYMax meet"
+      >
+        {/* Back view, seated: a head and sloped shoulders rising above the
+            seat. The bottom edge never closes — the CSS mask dissolves it into
+            the seat, so the figure sits IN the throne instead of on it. */}
+        {t.longHair ? (
+          <path d="M100 16 C 82 16, 70 28, 70.5 44 C 70.8 52, 72.5 59, 76 65 C 74.5 76, 73.5 88, 74 98 L 66 102 C 55 108, 48 118, 46 130 L 44 150 L 156 150 L 154 130 C 152 118, 145 108, 134 102 L 126 98 C 126.5 88, 125.5 76, 124 65 C 127.5 59, 129.2 52, 129.5 44 C 130 28, 118 16, 100 16 Z" />
+        ) : (
+          <path d="M100 18 C 84 18, 73 30, 73.5 45 C 74 55, 77 63, 82 68.5 L 83 78 C 76 81, 68 85, 62 91 C 52 100, 46 112, 44 128 L 42.5 150 L 157.5 150 L 156 128 C 154 112, 148 100, 138 91 C 132 85, 124 81, 117 78 L 118 68.5 C 123 63, 126 55, 126.5 45 C 127 30, 116 18, 100 18 Z" />
+        )}
+      </svg>
+      {t.hero && <img src={t.hero} alt="" className="onb-throne-hero" />}
+      <img src={t.pet} alt="" className="onb-throne-pet" />
     </div>
   );
 }

@@ -114,6 +114,15 @@ export type ChapterNavSubTopic = {
   slug: string;
   name: string;
   ordinal: number;
+  /**
+   * Will opening THIS sub_topic render, or 404? Decided by `publishedSlideId`,
+   * the same predicate `getSlide` resolves through — see its comment for why
+   * the sharing is load-bearing.
+   *
+   * This is the honest grain of the question. Chapter-level `hasContent` below
+   * is derived from it, not the other way round.
+   */
+  hasContent: boolean;
 };
 export type ChapterNavTopic = {
   id: string;
@@ -126,6 +135,26 @@ export type ChapterNavChapter = {
   name: string;
   ordinal: number;
   topics: ChapterNavTopic[];
+  /**
+   * Does this chapter have anything a student can actually open?
+   *
+   * The nav is built from the curriculum spine, which exists independently of
+   * whether anyone has published content for it, so a chapter can be perfectly
+   * well-formed here and still have nothing to open (only 1 of 24 seeded CBSE
+   * chapters has content).
+   *
+   * 🔴 Slice I changed what this MEANS. It used to be "a published slide_module
+   * row exists for this chapter" — which is necessary but NOT sufficient, since
+   * rendering is decided per sub_topic against the manifest. A chapter passed
+   * while its first sub_topic 404'd, so the first-run CTA dead-ended on the one
+   * action a new student is given. It is now DERIVED: true iff at least one
+   * sub_topic under it is renderable. Strictly narrower, and true to the name.
+   *
+   * ⚠️ A chapter being true does NOT mean every sub_topic under it is. Anything
+   * aiming at a specific sub_topic must test that sub_topic's own `hasContent`
+   * — that conflation IS the bug this slice fixed.
+   */
+  hasContent: boolean;
 };
 
 export async function getChapterNav(
@@ -143,11 +172,38 @@ export async function getChapterNav(
       subSlug: subTopic.slug,
       subName: subTopic.name,
       subOrdinal: subTopic.ordinal,
+      subSlideKey: subTopic.contentSlideKey,
     })
     .from(subTopic)
     .innerJoin(topic, eq(subTopic.topicId, topic.id))
     .innerJoin(chapter, eq(topic.chapterId, chapter.id))
     .orderBy(chapter.ordinal, topic.ordinal, subTopic.ordinal);
+
+  // The published MANIFEST per chapter — not merely which chapters have a
+  // module row. Slice I needs the manifest itself, because whether a given
+  // sub_topic renders is decided by whether its content_slide_key appears in
+  // it (see `publishedSlideId`). One extra query rather than a join on the row
+  // fan-out above — the nav returns one row per sub-topic, and joining
+  // content_unit/content_version there would multiply them.
+  const published = await tx
+    .select({ chapterId: contentUnit.chapterId, body: contentVersion.body })
+    .from(contentUnit)
+    .innerJoin(contentVersion, eq(contentVersion.id, contentUnit.currentVersionId))
+    .where(
+      and(
+        eq(contentUnit.type, "slide_module"),
+        isNull(contentUnit.subTopicId),
+        isNotNull(contentUnit.currentVersionId),
+      ),
+    );
+  // Read `.manifest` off the body exactly as resolveSlideContext does — the two
+  // must not drift in HOW they find the manifest either, not just in the test
+  // they apply to it.
+  const manifestByChapter = new Map<string, any>(
+    published
+      .filter((r) => r.chapterId)
+      .map((r) => [r.chapterId as string, (r.body as any)?.manifest]),
+  );
 
   // Group the ordered rows into the tree. Rows are already in tree order, so a
   // simple "current chapter / current topic" fold preserves ordinal order
@@ -159,7 +215,14 @@ export async function getChapterNav(
   for (const r of rows) {
     let ch = chapterById.get(r.chapterId);
     if (!ch) {
-      ch = { id: r.chapterId, name: r.chapterName, ordinal: r.chapterOrdinal, topics: [] };
+      ch = {
+        id: r.chapterId,
+        name: r.chapterName,
+        ordinal: r.chapterOrdinal,
+        topics: [],
+        // Derived in the pass below, once every sub_topic under it is known.
+        hasContent: false,
+      };
       chapterById.set(r.chapterId, ch);
       chapters.push(ch);
     }
@@ -174,10 +237,64 @@ export async function getChapterNav(
       slug: r.subSlug,
       name: r.subName,
       ordinal: r.subOrdinal,
+      hasContent:
+        publishedSlideId(manifestByChapter.get(r.chapterId), {
+          slug: r.subSlug,
+          contentSlideKey: r.subSlideKey,
+        }) !== null,
     });
   }
 
+  // Chapter content is DERIVED from its sub_topics, never tested separately —
+  // one predicate, evaluated at one grain. A chapter offers something iff at
+  // least one thing under it actually opens.
+  for (const ch of chapters) {
+    ch.hasContent = ch.topics.some((t) => t.subTopics.some((s) => s.hasContent));
+  }
+
   return chapters;
+}
+
+/**
+ * 🔑 THE single definition of "will this sub_topic actually render?" — returns
+ * the slideId getSlide would serve, or null if opening it would 404.
+ *
+ * Real path (D-C1-1): the sub_topic's content_slide_key IS the slideId; the
+ * real Starkhorn manifest (module → section → slide) has no sub_topic level, so
+ * the spine declares the mapping. The key must be published in THIS version's
+ * manifest.
+ * Legacy fallback: pre-C1 synthetic fixtures carry no content_slide_key and a
+ * simplified `manifest.slides{slug→slideId}` map. (Remove when seed_s2 retires.)
+ *
+ * 🔴 Slice I — this is exported and shared ON PURPOSE, and the sharing is the
+ * point. `resolveSlideContext` (the render path) and `getChapterNav` (the
+ * "can this be opened?" signal) MUST agree, because the nav's whole job is to
+ * predict the render path's verdict. Two copies of this predicate is exactly
+ * the bug Slice I exists to fix, one level down: before Slice I the nav's
+ * `hasContent` was a CHAPTER-level test (does a published slide_module exist)
+ * while rendering is decided per SUB_TOPIC here — so the dashboard cheerfully
+ * aimed a brand-new student's single CTA at a chapter that qualified and a
+ * sub_topic that 404'd. Do not re-implement this test anywhere; call it.
+ *
+ * A caller with no manifest at all (chapter has no published module) passes
+ * undefined and correctly gets null from both branches.
+ */
+export function publishedSlideId(
+  manifest: any,
+  st: { slug: string; contentSlideKey: string | null },
+): string | null {
+  if (st.contentSlideKey) {
+    const key = st.contentSlideKey;
+    const published =
+      Array.isArray(manifest?.sections) &&
+      manifest.sections.some(
+        (sec: any) =>
+          Array.isArray(sec.topics) && sec.topics.some((t: any) => t.id === key),
+      );
+    return published ? key : null;
+  }
+  const legacy = manifest?.slides?.[st.slug];
+  return typeof legacy === "string" && legacy.length > 0 ? legacy : null;
 }
 
 /**
@@ -252,29 +369,8 @@ async function resolveSlideContext(
 
   const manifest = (ver.body as any)?.manifest;
 
-  // Real path (D-C1-1): the sub_topic's content_slide_key IS the slideId; the
-  // real Starkhorn manifest (module → section → slide) has no sub_topic level,
-  // so the spine declares the mapping. Validate the slideId is published in this
-  // version's manifest before serving it.
-  // Legacy fallback: pre-C1 synthetic fixtures carry no content_slide_key and a
-  // simplified `manifest.slides{slug→slideId}` map. (Remove when seed_s2 retires.)
-  let slideId: unknown;
-  if (st.contentSlideKey) {
-    slideId = st.contentSlideKey;
-    const published =
-      Array.isArray(manifest?.sections) &&
-      manifest.sections.some(
-        (sec: any) =>
-          Array.isArray(sec.topics) &&
-          sec.topics.some((t: any) => t.id === slideId),
-      );
-    if (!published) throw new SlideNotFoundError(subTopicId);
-  } else {
-    slideId = manifest?.slides?.[st.slug];
-  }
-  if (typeof slideId !== "string" || slideId.length === 0) {
-    throw new SlideNotFoundError(subTopicId);
-  }
+  const slideId = publishedSlideId(manifest, st);
+  if (slideId === null) throw new SlideNotFoundError(subTopicId);
 
   return { versionId: ver.id, versionNo: ver.versionNo, slideId, manifest };
 }

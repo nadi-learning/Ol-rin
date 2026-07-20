@@ -42,11 +42,10 @@ import {
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { listAvailability, NoQuestionsError, startSession } from "../src/services/practice";
 
 type Tx = PgTransaction<any, any, any>;
@@ -90,12 +89,8 @@ async function main() {
 
   const emailST = `avail-st-${tag}@example.com`;
   const emailST2 = `avail-st2-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailST, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailST2, role: "student" });
-  });
-  const ST = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailST, name: "Student", board: P }));
-  const ST2 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailST2, name: "Student2", board: P }));
+  const ST = await withBoard(P.id, (tx) => grantRole(tx, { email: emailST, name: "Student", board: P, role: "student" }));
+  const ST2 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailST2, name: "Student2", board: P, role: "student" }));
   const studentId = ST.user.id;
   const student2Id = ST2.user.id;
 
@@ -191,7 +186,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailST));
   await db.delete(appUser).where(eq(appUser.email, emailST2));

@@ -1,12 +1,19 @@
-import { useRef, useState, type ReactNode } from "react";
-import { PikaSplash } from "./PikaSplash";
+import { type ReactNode } from "react";
 
 // The shared TAITOR app shell — a floating white left nav rail beside a
 // graph-paper canvas (the tutor-canvas layout from the reference). For the
 // walking skeleton only "Revision" (book) is wired; the other rail items are
 // on-design placeholders for later surfaces.
 
-export type AppView = "dashboard" | "revision" | "practice" | "insights" | "pace" | "profile";
+export type AppView =
+  | "dashboard"
+  | "journal"
+  | "crew"
+  | "revision"
+  | "practice"
+  | "insights"
+  | "pace"
+  | "profile";
 
 type Props = {
   children: ReactNode;
@@ -20,31 +27,18 @@ type Props = {
 
 export function AppShell({ children, userName, view, onNavigate, wide = false }: Props) {
   const initials = userName.trim().slice(0, 1).toUpperCase() || "?";
-  const [pikaOpen, setPikaOpen] = useState(false);
-  const [logoPulse, setLogoPulse] = useState(false);
-  const logoRef = useRef<HTMLButtonElement>(null);
-
-  // Pikachu is summoned by the logo ONLY — he never appears on his own. An
-  // easter egg you can't trigger on purpose is an interruption, not a reward.
-  const closePika = () => {
-    setPikaOpen(false);
-    setLogoPulse(true);
-    window.setTimeout(() => setLogoPulse(false), 900);
-  };
 
   return (
     <div className="app-shell">
-      {pikaOpen && <PikaSplash onClose={closePika} logoRef={logoRef} />}
       <nav className="nav-rail">
-        <button
-          ref={logoRef}
-          className={`nav-logo${logoPulse ? " nav-logo--pulse" : ""}`}
-          title="b2c"
-          aria-label="Pikachu"
-          onClick={() => setPikaOpen(true)}
-        >
+        {/* Slice G — the logo is INERT again. It used to summon a full-page
+            Pikachu splash; the founder retired the easter egg along with every
+            other Pikachu, so the trigger, the splash and its state went with
+            it. Deliberately still a <div>, not a <button>: a button that does
+            nothing is a worse affordance than no button. */}
+        <div className="nav-logo" title="b2c" aria-hidden>
           <Logo />
-        </button>
+        </div>
 
         <div className="nav-group">
           <RailItem
@@ -53,7 +47,35 @@ export function AppShell({ children, userName, view, onNavigate, wide = false }:
             active={view === "dashboard"}
             onClick={() => onNavigate("dashboard")}
           />
-          <RailItem label="Journal" icon={<JournalIcon />} badge soon />
+          {/* Slice J (D-J1) — Journal is a REAL destination now, so the rail
+              item stops being inert. `soon` is gone from here deliberately: the
+              page itself carries the coming-soon, and that is the governing rule
+              this whole pattern inherits from SoonBanner — once per page, never
+              per row. A rail that said "soon" beside a page that opens would be
+              two answers to one question. The badge STAYS: the red dot exists to
+              draw the eye to a slot worth noticing, which is still true. */}
+          <RailItem
+            label="Journal"
+            icon={<JournalIcon />}
+            badge
+            active={view === "journal"}
+            onClick={() => onNavigate("journal")}
+          />
+          {/* Slice K (D-K2) — Crew sits HERE, in the companion group, and not in
+              the vacated Search slot below. The lower group is the study tools
+              (Revision, Practice, Insights, Pace plan); Crew is about who walks
+              with you, which is the question Journal asks. Filing it beside
+              Home/Journal is what makes the two groups mean something instead of
+              being "the short one and the long one".
+
+              No `soon`, for the same reason Journal dropped it in Slice J: the
+              page opens, and the coming-soon lives once, on the page. */}
+          <RailItem
+            label="Crew"
+            icon={<CrewIcon />}
+            active={view === "crew"}
+            onClick={() => onNavigate("crew")}
+          />
         </div>
 
         <div className="nav-spacer" />
@@ -83,7 +105,11 @@ export function AppShell({ children, userName, view, onNavigate, wide = false }:
             active={view === "pace"}
             onClick={() => onNavigate("pace")}
           />
-          <RailItem label="Search" icon={<SearchIcon />} soon />
+          {/* Slice K — the Search rail item is GONE. It had been inert since the
+              walking skeleton and there is no search behind it, so it was a
+              permanent promise nobody was working on. Its icon went with it
+              rather than being left orphaned (M59: dead code that matches
+              nothing reports no failure). */}
           <button
             className={`nav-avatar${view === "profile" ? " nav-avatar--active" : ""}`}
             aria-label={`${userName} - profile`}
@@ -107,38 +133,37 @@ export function AppShell({ children, userName, view, onNavigate, wide = false }:
   );
 }
 
+// Slice K — the inert variant is GONE, along with the last item that used it.
+// `onClick` is required now rather than optional, so the compiler is what stops
+// a future rail item from being added with nowhere to go — which is the failure
+// the deleted variant used to dress up as a feature. Same move as D-J4, where
+// the viewless dashboard tile type was tightened instead of left in place.
 function RailItem({
   label,
   icon,
   active = false,
-  soon = false,
   badge = false,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
   active?: boolean;
-  /** Not-yet-wired destination — shown but inert, tooltip flags "soon". */
-  soon?: boolean;
   /** Red dot — draws the eye to a rail slot worth noticing. */
   badge?: boolean;
-  onClick?: () => void;
+  onClick: () => void;
 }) {
   return (
     <button
-      className={`nav-item${active ? " nav-item--active" : ""}${soon ? " nav-item--soon" : ""}`}
-      aria-label={soon ? `${label} (coming soon)` : label}
+      className={`nav-item${active ? " nav-item--active" : ""}`}
+      aria-label={label}
       aria-current={active ? "page" : undefined}
-      aria-disabled={soon || undefined}
-      onClick={soon ? undefined : onClick}
+      onClick={onClick}
     >
       {icon}
       {badge && <span className="nav-dot" aria-hidden />}
       <span className="nav-tip">
         {label}
-        {/* one tag only — "NEW SOON" side by side contradicts itself. The badge
-            wins: it's the louder claim, and the dot has already made it. */}
-        {badge ? <em className="nav-tip-new">new</em> : soon && <em className="nav-tip-soon">soon</em>}
+        {badge && <em className="nav-tip-new">new</em>}
       </span>
     </button>
   );
@@ -200,11 +225,16 @@ function BookIcon() {
     </svg>
   );
 }
-function SearchIcon() {
+function CrewIcon() {
+  // Two figures, one slightly behind the other — the crew, not a single user.
+  // Stroked at the shared 1.7 like every sibling except the Journal butterfly,
+  // which is filled for a reason particular to that mark.
   return (
     <svg {...ic} aria-hidden>
-      <circle cx="11" cy="11" r="6" />
-      <path d="m20 20-3.2-3.2" />
+      <circle cx="9.5" cy="8" r="3.2" />
+      <path d="M3.8 19.5c0-3.1 2.6-5.2 5.7-5.2s5.7 2.1 5.7 5.2" />
+      <path d="M16.2 6.2a3.2 3.2 0 0 1 0 6" />
+      <path d="M17.4 14.6c1.8.6 3 2.2 3 4.3" />
     </svg>
   );
 }

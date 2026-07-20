@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { trpc, BOARD } from "../trpc";
+import { trpc, getBoard } from "../trpc";
 import { MathText } from "./MathText";
-import pikachuWave from "../assets/pikachu-wave.png";
+import { loaderPetImg } from "./onboarding.copy";
 import "./practice.css";
 
 // The Practice surface (Slice L) — self-serve subjective practice capture.
@@ -47,7 +47,7 @@ const SOON_COPY = {
   count: (n: number) => `${n} topic${n === 1 ? "" : "s"} still to come`,
 };
 
-export function PracticePage() {
+export function PracticePage({ pet }: { pet: string | null }) {
   const [nav, setNav] = useState<Nav | null>(null);
   const [assignments, setAssignments] = useState<Assignment[] | null>(null);
   // Slice AVAIL — sub_topic ids this student can actually practise (sparse: the
@@ -320,6 +320,7 @@ export function PracticePage() {
             error={error}
             hasAssigned={hasAssigned}
             hasAssignedBlock={hasAssignedBlock}
+            pet={pet}
             onPick={(id) => pick(id)}
           />
         </>
@@ -367,7 +368,7 @@ export function PracticePage() {
                 {question.imageId && (
                   <img
                     className="prac-figure"
-                    src={`/content/image/${question.imageId}?board=${BOARD}`}
+                    src={`/content/image/${question.imageId}?board=${getBoard() ?? ""}`}
                     alt="Question figure"
                     loading="lazy"
                   />
@@ -466,7 +467,7 @@ export function PracticePage() {
                             {lastPhotoImageIds.map((id) => (
                               <PhotoThumb
                                 key={id}
-                                src={`/practice/answer-photo/${id}?board=${BOARD}`}
+                                src={`/practice/answer-photo/${id}?board=${getBoard() ?? ""}`}
                                 alt="Your uploaded answer"
                               />
                             ))}
@@ -549,7 +550,7 @@ function ReviewView({
           {it.question.imageId && (
             <img
               className="prac-figure"
-              src={`/content/image/${it.question.imageId}?board=${BOARD}`}
+              src={`/content/image/${it.question.imageId}?board=${getBoard() ?? ""}`}
               alt="Question figure"
               loading="lazy"
             />
@@ -562,7 +563,7 @@ function ReviewView({
                   {it.photoImageIds.map((id) => (
                     <PhotoThumb
                       key={id}
-                      src={`/practice/answer-photo/${id}?board=${BOARD}`}
+                      src={`/practice/answer-photo/${id}?board=${getBoard() ?? ""}`}
                       alt="Your uploaded answer"
                     />
                   ))}
@@ -771,6 +772,7 @@ function PickList({
   error,
   hasAssigned,
   hasAssignedBlock,
+  pet,
   onPick,
 }: {
   subTopics: Picker[];
@@ -781,6 +783,8 @@ function PickList({
   // Whether an assigned block is rendered above (open OR caught-up). Drives the
   // banner's "always open above ↑" line, which must not point at nothing.
   hasAssignedBlock: boolean;
+  /** Slice G — the companion for the "coming soon" banner. */
+  pet: string | null;
   onPick: (id: string) => void;
 }) {
   if (loading) return <p className="prac-muted">Loading topics…</p>;
@@ -818,19 +822,36 @@ function PickList({
           ))}
         </ul>
       )}
-      {soonCount > 0 && <SoonBanner count={soonCount} showTutorLine={hasAssignedBlock} />}
+      {soonCount > 0 && (
+        <SoonBanner count={soonCount} showTutorLine={hasAssignedBlock} pet={pet} />
+      )}
     </section>
   );
 }
 
 // Slice AVAIL-2 — the one playful surface that replaces the 154 dead rows.
-// Pikachu holds the banner (the raised arm carries it). Rare-by-construction:
-// it appears ONCE per page, never per row, which is what keeps it charming
-// rather than an apology (the PikaSplash easter-egg works for the same reason).
-function SoonBanner({ count, showTutorLine }: { count: number; showTutorLine: boolean }) {
+// Rare-by-construction: it appears ONCE per page, never per row, which is what
+// keeps it charming rather than an apology.
+//
+// Slice G — the companion stands beside the banner. Pikachu USED to hold it
+// (the raised arm carried it, and the banner tucked under the paw). That
+// gag does not survive the swap: the seven companions have no common pose and
+// no raised arm, so the carried-overlap offsets were removed rather than
+// re-tuned onto art that cannot support them. The pet now stands NEXT TO the
+// banner — which is a pose-independent composition and therefore correct for
+// all seven.
+function SoonBanner({
+  count,
+  showTutorLine,
+  pet,
+}: {
+  count: number;
+  showTutorLine: boolean;
+  pet: string | null;
+}) {
   return (
     <section className="prac-soon" aria-label="More practice coming soon">
-      <img className="prac-soon-pika" src={pikachuWave} alt="" draggable={false} />
+      <img className="prac-soon-pet" src={loaderPetImg(pet)} alt="" draggable={false} />
       <div className="prac-soon-banner">
         <h3 className="prac-soon-head">{SOON_COPY.head}</h3>
         <p className="prac-soon-body">{SOON_COPY.body}</p>
@@ -1027,7 +1048,7 @@ function UploadPanel({
       <div className="prac-upload-done">
         <p className="prac-qr-status is-live">✓ Photo received</p>
         <PhotoThumb
-          src={`/practice/upload-preview/${mint.token}?board=${BOARD}`}
+          src={`/practice/upload-preview/${mint.token}?board=${getBoard() ?? ""}`}
           alt="Your uploaded answer"
         />
         <p className="prac-muted">

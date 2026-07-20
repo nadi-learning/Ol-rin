@@ -3,10 +3,10 @@
  * student so the Parent read surface has something to show.
  *
  * Creates (under board `cbse`, idempotent):
- *  1. whitelist(cbse, parent@example.com, role='parent') — the SET side of the
- *     role gate (M11). The parent membership itself is created the REAL way, by
- *     driving resolveMembership (whitelist → app_user → membership), never a
- *     direct insert.
+ *  1. membership(cbse, parent@example.com, role='parent') via `grantRole` — the
+ *     SET side of the role gate (M11). Made the REAL way, by driving the same
+ *     helper `admin.setRole` drives (app_user → membership), never a direct
+ *     insert.
  *  2. a parent_child link from that parent to smoke@example.com (the student the
  *     practice/Stage-1/Stage-2 seeds already exercise — so the report shows real
  *     certified mastery + a trend + practice metrics).
@@ -21,10 +21,10 @@
  */
 import { eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board, parentChild, whitelist } from "@b2c/kernel/schema";
+import { appUser, board, parentChild } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -48,16 +48,13 @@ async function main() {
   }
 
   await withBoard(b.id, async (tx: Tx) => {
-    // 1. whitelist the parent (idempotent), then create the membership via the
-    // REAL flow (M11 SET side) so role='parent' is enabled exactly how login does.
-    await tx
-      .insert(whitelist)
-      .values({ boardId: b.id, email: PARENT_EMAIL, role: "parent" })
-      .onConflictDoNothing({ target: [whitelist.boardId, whitelist.email] });
-    const parent = await resolveMembership(tx, {
+    // 1. grant the parent role (idempotent, force-set) via the REAL flow (M11 SET
+    // side) — the same helper `admin.setRole` drives.
+    const parent = await grantRole(tx, {
       email: PARENT_EMAIL,
       name: PARENT_NAME,
       board: { id: b.id, slug: b.slug },
+      role: "parent",
     });
 
     // 2. resolve the student's app_user (global). Must already exist — they're
@@ -69,7 +66,7 @@ async function main() {
       .limit(1);
     if (!student) {
       console.warn(
-        `[seed:parent] student '${STUDENT_EMAIL}' has no app_user yet — log in as the student once (dev login) first, then re-run. Parent + whitelist are seeded; the link is skipped.`,
+        `[seed:parent] student '${STUDENT_EMAIL}' has no app_user yet — log in as the student once (dev login) first, then re-run. The parent role is granted; the link is skipped.`,
       );
       console.log(
         `[seed:parent] cbse / parent=${PARENT_EMAIL} (role=parent, user=${parent.user.id}). Link to ${STUDENT_EMAIL}: SKIPPED (student not found).`,
@@ -77,7 +74,8 @@ async function main() {
       return;
     }
 
-    // 3. link parent → child (idempotent on the unique (parent,student)).
+    // 3. link parent → child (idempotent on the unique (board,parent,student) —
+    // boardId joined that unique in S109, so the target must name it too).
     await tx
       .insert(parentChild)
       .values({
@@ -86,7 +84,7 @@ async function main() {
         studentId: student.id,
       })
       .onConflictDoNothing({
-        target: [parentChild.parentId, parentChild.studentId],
+        target: [parentChild.boardId, parentChild.parentId, parentChild.studentId],
       });
 
     console.log(

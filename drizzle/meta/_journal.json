@@ -232,6 +232,20 @@
       "when": 1784279695874,
       "tag": "0032_shocking_green_goblin",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784464055497,
+      "tag": "0033_silky_salo",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1784482022626,
+      "tag": "0034_cute_shadow_king",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { trpc, BOARD } from "../trpc";
+import { trpc, getBoard } from "../trpc";
 import { MathText } from "./MathText";
 import "./tutor.css";
 
@@ -1971,7 +1971,7 @@ function ObsRecall({ o }: { o: ObservationView }) {
 // full-screen lightbox on click — mirrors the student-side PhotoThumb.
 function TutorPhotoThumb({ imageId }: { imageId: string }) {
   const [open, setOpen] = useState(false);
-  const src = `/practice/tutor-answer-photo/${imageId}?board=${BOARD}`;
+  const src = `/practice/tutor-answer-photo/${imageId}?board=${getBoard() ?? ""}`;
   return (
     <>
       <button
@@ -3708,7 +3708,7 @@ function AuthoredQuestionCard({ q }: { q: AuthoredQuestion }) {
       {q.imageId && (
         <img
           className="tut-saved-thumb"
-          src={`/content/image/${q.imageId}?board=${BOARD}`}
+          src={`/content/image/${q.imageId}?board=${getBoard() ?? ""}`}
           alt="Question figure"
           loading="lazy"
         />
@@ -4345,7 +4345,7 @@ function DraftFigureSection({
       {img.imageId && (
         <div className="tut-auth-fig-preview">
           <img
-            src={`/content/image/${img.imageId}?board=${BOARD}`}
+            src={`/content/image/${img.imageId}?board=${getBoard() ?? ""}`}
             alt={description || "Question figure"}
             loading="lazy"
           />

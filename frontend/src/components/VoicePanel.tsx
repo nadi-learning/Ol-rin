@@ -7,9 +7,12 @@
 //   server-authoritative transcript (JSON control frames) ; "End" sends {end},
 //   the relay persists the transcript + analysis and closes.
 //
-// The character (a knocked-out Pikachu peeker, a DEV PLACEHOLDER — real product
-// needs an original mascot) sits at the bottom-left corner and animates off the
-// live state: idle bob · connecting pulse · listening rise · SPEAKING squash-
+// The character is THE STUDENT'S OWN COMPANION, the one they chose in
+// onboarding (Slice G — it replaced a knocked-out Pikachu that had been the dev
+// placeholder since VOICE-3, and the placeholder's "needs an original mascot"
+// note is answered: the mascot is theirs, not ours). It arrives as a prop from
+// App, never fetched here. It sits at the bottom-left corner and animates off
+// the live state: idle bob · connecting pulse · listening rise · SPEAKING squash-
 // stretch bounce (the "talking" feel — bounce-only, no lip-sync, per the VOICE-3
 // design chat). Tapping it opens a small HUB (Talk / End / Show conversation);
 // the per-slide transcript is an on-demand DRAWER, hidden by default.
@@ -25,15 +28,15 @@
 // the verbatim Starkhorn revision-shell.css globals (the S23 convention).
 
 import { useEffect, useReducer, useRef, useState } from "react";
-import { trpc, BOARD } from "../trpc";
+import { trpc, getBoard } from "../trpc";
 import { MathText } from "./MathText";
+import { loaderPetImg, loaderPetSpoken } from "./onboarding.copy";
 import {
   startMicCapture,
   createPlaybackQueue,
   type MicCapture,
   type PlaybackQueue,
 } from "./voice/voice-audio";
-import pikachuPeeker from "../assets/pikachu-peeker.png";
 import "./voice.css";
 
 type Phase = "idle" | "connecting" | "live" | "ending" | "ended" | "error";
@@ -49,7 +52,7 @@ type ServerFrame =
 
 function voiceWsUrl(sessionId: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const qs = new URLSearchParams({ board: BOARD, sessionId });
+  const qs = new URLSearchParams({ board: getBoard() ?? "", sessionId });
   // Same-origin through the Vite proxy (ws:true) so the session cookie rides.
   return `${proto}//${window.location.host}/voice/live?${qs.toString()}`;
 }
@@ -57,9 +60,15 @@ function voiceWsUrl(sessionId: string): string {
 export function VoicePanel({
   subTopicId,
   slideTitle,
+  pet,
 }: {
   subTopicId: string;
   slideTitle?: string;
+  /**
+   * Slice G — the student's companion, as the RAW onboarding answer. Every
+   * projection of it falls back to the owl stand-in, so this is never a hole.
+   */
+  pet: string | null;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [speaking, setSpeaking] = useState(false);
@@ -293,7 +302,14 @@ export function VoicePanel({
         <div className="voice-transcript" ref={scrollRef}>
           {!hasConversation && (
             <p className="voice-transcript-hint">
-              {inCall ? "Say hello to get started…" : "No conversation yet. Tap Pikachu to talk."}
+              {/* Slice G — names the student's OWN companion. It previously
+                  named the dev-placeholder mascot, which no student ever chose.
+                  (The old literal is deliberately not quoted here: probe
+                  echo_guard greps this whole FILE for it, and a comment must
+                  not be able to defuse that claim.) */}
+              {inCall
+                ? "Say hello to get started…"
+                : `No conversation yet. Tap ${loaderPetSpoken(pet)} to talk.`}
             </p>
           )}
           {c.turns.map((turn, i) => (
@@ -369,7 +385,7 @@ export function VoicePanel({
         aria-expanded={hubOpen}
       >
         <span className="voice-avatar-shadow" aria-hidden />
-        <img className="voice-avatar-img" src={pikachuPeeker} alt="" draggable={false} />
+        <img className="voice-avatar-img" src={loaderPetImg(pet)} alt="" draggable={false} />
         <span className={`voice-avatar-dot${inCall ? " is-live" : ""}${speaking ? " is-speaking" : ""}`} aria-hidden />
       </button>
     </div>

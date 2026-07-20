@@ -8,6 +8,10 @@
  *   4. RLS visibility: the same row IS visible under board A.
  *   5. Fail-closed read: with NO board claim, the row is invisible.
  *   6. WITH CHECK: inserting a cross-board row (board_id ≠ claim) is rejected.
+ *   7. THE CENSUS (S113, Slice F): TENANT_SCOPED_TABLES reconciled against
+ *      pg_class in BOTH directions — no listed table is missing from the DB
+ *      (which would hard-fail migrate.ts and every later migration), and no
+ *      board_id table is missing from the list (M34 — RLS silently OFF).
  *
  * This is only meaningful because the app connects as a NON-superuser role
  * (DATABASE_URL → b2c_app); a superuser would bypass RLS and pass vacuously
@@ -15,7 +19,7 @@
  */
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { board, subject } from "@b2c/kernel/schema";
+import { board, subject, TENANT_SCOPED_TABLES } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
@@ -107,6 +111,64 @@ async function main() {
     rejected = true;
   }
   check("WITH CHECK: cross-board insert (board_id ≠ claim) rejected", rejected);
+
+  // ── 7. THE CENSUS — TENANT_SCOPED_TABLES reconciled against pg_class. ──
+  // The list is hand-maintained and the toolchain checks NEITHER direction:
+  //
+  //   list ⊄ db  — an entry whose table does not exist makes migrate.ts
+  //                hard-fail on `ALTER TABLE <gone>`, breaking not just that
+  //                run but EVERY later migration. This is the trap Slice F
+  //                (S113, DROP TABLE whitelist) walked into deliberately.
+  //   db ⊄ list  — a board_id table missing from the list ships with RLS OFF
+  //                while the migration still prints success (M34). That is a
+  //                cross-tenant leak, the highest-severity bug class here.
+  //
+  // Read from pg_class, never from the migrate log — a success message is not
+  // a security check (M34). pg_class is the catalog, so unlike a row read it
+  // is not itself RLS-filtered (M29/M61): a zero here means zero.
+  const census = (await db.execute(sql`
+    select c.relname, c.relrowsecurity, c.relforcerowsecurity
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind = 'r'
+  `)) as unknown as Array<{
+    relname: string;
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+  }>;
+  const byName = new Map(census.map((r) => [r.relname, r]));
+
+  const missing = TENANT_SCOPED_TABLES.filter((t) => !byName.has(t));
+  check(
+    `list ⊆ db: every TENANT_SCOPED_TABLES entry exists${missing.length ? ` (missing: ${missing.join(", ")})` : ""}`,
+    missing.length === 0,
+  );
+
+  const unprotected = TENANT_SCOPED_TABLES.filter(
+    (t) => byName.has(t) && !(byName.get(t)!.relrowsecurity && byName.get(t)!.relforcerowsecurity),
+  );
+  check(
+    `every listed table has RLS ENABLED + FORCED${unprotected.length ? ` (open: ${unprotected.join(", ")})` : ""}`,
+    unprotected.length === 0,
+  );
+
+  // The M34 direction: a table carrying board_id that nobody added to the list.
+  // Derived from the catalog, so a new table is caught the day it lands.
+  const boardIdTables = (await db.execute(sql`
+    select table_name from information_schema.columns
+    where table_schema = 'public' and column_name = 'board_id'
+  `)) as unknown as Array<{ table_name: string }>;
+  const listed = new Set<string>(TENANT_SCOPED_TABLES);
+  // upload_token + ai_call_log carry board_id but are DELIBERATELY global —
+  // they are read without a board claim (see their comments in schema.ts).
+  const EXEMPT = new Set(["upload_token", "ai_call_log"]);
+  const unlisted = boardIdTables
+    .map((r) => r.table_name)
+    .filter((t) => !listed.has(t) && !EXEMPT.has(t));
+  check(
+    `db ⊆ list: no board_id table is missing from TENANT_SCOPED_TABLES${unlisted.length ? ` (unlisted: ${unlisted.join(", ")})` : ""}`,
+    unlisted.length === 0,
+  );
 
   // cleanup
   await withBoard(boardA.id, (tx) => tx.delete(subject).where(eq(subject.id, subjA.id)));

@@ -10,8 +10,9 @@
  * Two access boundaries, both load-bearing:
  *  - ROLE gate (M11): only a membership with role='parent' may reach these reads.
  *    The CHECK side is `assertParent` (used by parentProcedure); the SET side is
- *    the real whitelist(role='parent') → resolveMembership flow (seed_parent /
- *    the probe drive it, never insert a parent membership directly).
+ *    the real `grantRole(…, role: 'parent')` flow (seed_parent / the probe /
+ *    admin.setRole drive it, never insert a parent membership directly). Nobody
+ *    is pre-invited: a parent signs in as a student and is promoted afterwards.
  *  - OWNERSHIP guard (D-L-5 pattern): RLS scopes by board, NOT by user, so a
  *    parent sharing a board with other families could otherwise read their
  *    children. Every per-child read asserts a parent_child link first; a child

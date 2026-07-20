@@ -98,14 +98,24 @@
   background: var(--primary-soft);
   border-radius: var(--r-card);
 }
-.prac-soon-pika {
-  width: 132px;
+/* Slice G — sized by HEIGHT, not width. Pikachu was ONE image (844x1254, 0.67
+   aspect), so `width: 132px` fixed his height too. The seven companions span
+   0.46 (owl, tall and narrow) to 1.40 (direwolf, wide and low): under a fixed
+   WIDTH the owl would render 287px tall and swamp the banner while the direwolf
+   came out 94px and looked like a sticker that failed to load. Height is the
+   axis that actually binds a figure standing beside a card (M63 — size on the
+   axis that binds, not the one you happen to be reasoning in), so it is pinned
+   and the width follows, capped so a wide pet can't eat the row.
+   The carried-overlap offsets (z-index, negative margin, rotation) are GONE:
+   they were tuned to a raised paw that no companion has. */
+.prac-soon-pet {
+  height: 116px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+  object-position: bottom center;
   flex: none;
   align-self: flex-end;
-  position: relative;
-  z-index: 1; /* the raised arm sits OVER the banner, so it reads as carried */
-  margin-bottom: -18px;
-  transform: rotate(-5deg);
   pointer-events: none;
   user-select: none;
 }
@@ -114,12 +124,11 @@
   min-width: 0;
   background: var(--surface);
   border-radius: var(--r-md);
-  /* tucked under the raised paw so it reads as carried, with the left padding
-     opened up so no copy sits under Pikachu. Text stays LEVEL on purpose: a
-     tilted panel drags every baseline with it and legibility loses to the gag. */
-  padding: 16px 18px 16px 46px;
+  /* Slice G — the banner no longer tucks under a raised paw, so the pull-in
+     (-34px) and the 46px gutter that kept copy clear of it are gone. The
+     companion STANDS BESIDE the card; the gap comes from the flex row. */
+  padding: 16px 18px;
   box-shadow: var(--shadow-card);
-  margin-left: -34px;
 }
 .prac-soon-head {
   margin: 0 0 4px;
@@ -152,15 +161,16 @@
     align-items: stretch;
     padding: 8px 14px 18px;
   }
-  .prac-soon-pika {
+  /* Stacked: the companion sits ABOVE the banner. Still height-driven, just
+     smaller — a phone row is width-starved, and capping the width here is what
+     stops the two WIDE pets (direwolf 1.40, dragon 1.30) from pushing the
+     column (M63: width is the axis that binds on a phone). */
+  .prac-soon-pet {
     align-self: center;
-    margin: 0 0 -10px;
-    width: 92px;
-    transform: rotate(0deg);
+    height: 88px;
+    max-width: 40vw;
+    margin: 0;
   }
-  /* Pikachu sits ABOVE the banner when stacked, so the carried-overlap offsets
-     are undone - the -34px pull and the 46px left gutter only make sense while
-     he's beside the card. */
   .prac-soon-banner {
     margin-left: 0;
     padding: 14px 16px;

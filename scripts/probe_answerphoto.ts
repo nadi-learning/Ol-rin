@@ -42,13 +42,12 @@ import {
   topic,
   tutorStudent,
   uploadToken,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { mintUploadToken, recordPhoneUpload } from "../src/services/upload";
 import { startSession, submitPhotoAttempt } from "../src/services/practice";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { ImageError } from "../src/services/image_serve";
 import {
   resolveAnswerPhotoBytes,
@@ -106,16 +105,9 @@ async function main() {
   const emailW = `ap-w-${tag}@example.com`;
   const emailX = `ap-x-${tag}@example.com`;
   const emailQ = `ap-q-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailW, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailX, role: "student" });
-  });
-  await withBoard(Q.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: Q.id, email: emailQ, role: "student" });
-  });
-  const W = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "W", board: P }));
-  const X = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailX, name: "X", board: P }));
-  await withBoard(Q.id, (tx) => resolveMembership(tx, { email: emailQ, name: "QU", board: Q }));
+  const W = await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "W", board: P, role: "student" }));
+  const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: P, role: "student" }));
+  await withBoard(Q.id, (tx) => grantRole(tx, { email: emailQ, name: "QU", board: Q, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
 
@@ -151,8 +143,7 @@ async function main() {
   // A tutor T linked to student W may pull W's answer photo; the OWNER cannot use
   // this route (they use the owner one), a non-tutor/unlinked caller gets 404.
   const emailT = `apt-t-${tag}@example.com`;
-  await withBoard(P.id, (tx) => tx.insert(whitelist).values({ boardId: P.id, email: emailT, role: "tutor" }));
-  const T = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailT, name: "T", board: P }));
+  const T = await withBoard(P.id, (tx) => grantRole(tx, { email: emailT, name: "T", board: P, role: "tutor" }));
   await withBoard(P.id, (tx) => tx.insert(tutorStudent).values({ boardId: P.id, tutorId: T.user.id, studentId: userW }));
   const t1 = await call(() => resolveTutorAnswerPhotoBytes({ imageId: imgId, boardSlug: P.slug, email: emailT }));
   check("T1 linked tutor → 200, bytes round-trip", t1.status === 200 && t1.bytes?.[0] === 137 && t1.mime === "image/png");
@@ -209,11 +200,9 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await withBoard(Q.id, async (tx: Tx) => {
     await tx.delete(membership).where(eq(membership.boardId, Q.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, Q.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.email, emailX));

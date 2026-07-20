@@ -9,11 +9,11 @@ import { eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser, assignment, attempt, board, chapter, membership,
-  practiceSession, question, subTopic, subject, topic, tutorStudent, whitelist,
+  practiceSession, question, subTopic, subject, topic, tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { auth } from "../src/auth/auth";
 import { env } from "../src/config/env";
 
@@ -73,13 +73,17 @@ async function main() {
 
   const emailTU = `smkasg-tu-${tag}@example.com`;
   const emailST = `smkasg-st-${tag}@example.com`;
-  await withBoard(Z.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: Z.id, email: emailTU, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: Z.id, email: emailST, role: "student" });
-  });
+  // The tutor role is granted up front via `grantRole` (the M11 SET side, the
+  // same helper admin.setRole drives) — nothing else can mint a role above
+  // student. The STUDENT needs no pre-enablement: the platform is ungated, so
+  // `me` creates their membership at 'student' on its own.
+  await withBoard(Z.id, (tx) =>
+    grantRole(tx, { email: emailTU, name: "Tutor", board: Z, role: "tutor" }),
+  );
   const cookieT = await signUpCookie(emailTU);
   const cookieS = await signUpCookie(emailST);
-  // `me` over the wire creates the membership (the real enablement path).
+  // `me` over the wire resolves the membership — creating the student's, and
+  // returning (never downgrading) the tutor's.
   const meT = await call("query", "me", cookieT, Z.slug, {});
   const meS = await call("query", "me", cookieS, Z.slug, {});
   check("tutor me → role tutor (wire)", meT?.role === "tutor");
@@ -132,7 +136,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, Z.id));
     await tx.delete(subject).where(eq(subject.boardId, Z.id));
     await tx.delete(membership).where(eq(membership.boardId, Z.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, Z.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailTU));
   await db.delete(appUser).where(eq(appUser.email, emailST));

@@ -222,3 +222,166 @@
   font-size: 12.5px;
   color: var(--ink-soft, #8a8175);
 }
+
+/* ─────────────── Slice D — tabs + the people surface ─────────────── */
+
+.adm-tabs {
+  display: flex;
+  gap: 6px;
+  margin: -8px 0 20px;
+  border-bottom: 1px solid var(--line, #e6e0d7);
+}
+.adm-tab {
+  border: none;
+  background: none;
+  padding: 8px 14px 10px;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--ink-soft, #6b6459);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.adm-tab:hover { color: var(--ink, #33302b); }
+.adm-tab-on {
+  color: var(--ink, #1c1a17);
+  border-bottom-color: #2563eb;
+}
+
+.adm-hint {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft, #6b6459);
+  margin: -4px 0 2px;
+}
+
+.adm-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.adm-row .adm-select { flex: none; width: auto; }
+.adm-row .adm-input { flex: 1; min-width: 0; }
+
+.adm-input {
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--ink, #1c1a17);
+}
+.adm-input:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+.adm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.adm-table th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft, #8a8175);
+  font-weight: 600;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--line, #e6e0d7);
+}
+.adm-table td {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft, #f0ebe3);
+  vertical-align: top;
+}
+.adm-table td:last-child { width: 1%; white-space: nowrap; padding-left: 12px; }
+
+.adm-person-name { font-weight: 600; }
+.adm-person-email {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  word-break: break-all;
+}
+.adm-you {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #2563eb;
+  background: #eaf0ff;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.adm-blocked {
+  font-size: 11.5px;
+  color: #9b6b1c;
+  margin-top: 3px;
+}
+
+.adm-found {
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fbfaf8;
+}
+.adm-found-email {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  word-break: break-all;
+}
+.adm-found-state { font-size: 12.5px; color: var(--ink-soft, #6b6459); }
+
+.adm-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.adm-links li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft, #f0ebe3);
+}
+.adm-kind {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.adm-kind-tutor { background: #2563eb; }
+.adm-kind-parent { background: #e87b35; }
+.adm-link-people { flex: 1; min-width: 0; word-break: break-word; }
+.adm-unlink {
+  flex: none;
+  border: 1px solid var(--line, #e6e0d7);
+  background: #fff;
+  border-radius: 7px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #9b1c1c;
+}
+.adm-unlink:hover { background: #fdecec; border-color: #f3b4b4; }
+.adm-unlink:disabled { opacity: 0.5; cursor: default; }
+
+@media (max-width: 560px) {
+  .adm-row { flex-wrap: wrap; }
+  .adm-table td:last-child { white-space: normal; }
+}

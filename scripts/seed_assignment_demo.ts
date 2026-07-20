@@ -3,8 +3,8 @@
  * in the browser (the canonical cbse content isn't present in every dev DB).
  * Idempotent. Seeds under board `cbse` (the FE BOARD const):
  *   subject "Physics (demo)" → chapter "Motion (demo)" → topic → 2 sub_topics,
- *   each with 2 subjective practice questions; whitelists + links a tutor and a
- *   student so dev-login works for both roles.
+ *   each with 2 subjective practice questions; grants the roles for + links a
+ *   tutor and a student so dev-login works for both roles.
  *
  *   Tutor:   tutor@example.com   (role tutor)
  *   Student: smoke@example.com   (role student)
@@ -15,16 +15,16 @@
  *
  * Remove later: everything is tagged with the slug prefix `asgdemo-`; delete the
  * subject/chapter/topic/sub_topics/questions with that prefix + the two
- * whitelist/membership/tutor_student rows (or just leave it — it's inert).
+ * membership/tutor_student rows (or just leave it — it's inert).
  */
 import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
-  board, chapter, question, subTopic, subject, topic, tutorStudent, whitelist,
+  board, chapter, question, subTopic, subject, topic, tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 
 type Tx = PgTransaction<any, any, any>;
 const BOARD = "cbse";
@@ -53,17 +53,12 @@ async function main() {
         ]);
       }
     }
-
-    // whitelist (idempotent) + link
-    for (const [email, role] of [[TUTOR, "tutor"], [STUDENT, "student"]] as const) {
-      const [w] = await tx.select().from(whitelist).where(and(eq(whitelist.boardId, b.id), eq(whitelist.email, email))).limit(1);
-      if (!w) await tx.insert(whitelist).values({ boardId: b.id, email, role });
-    }
   });
 
-  // resolve memberships (creates app_user + membership) then link.
-  const tu = await withBoard(b.id, (tx) => resolveMembership(tx, { email: TUTOR, name: "Demo Tutor", board: b }));
-  const st = await withBoard(b.id, (tx) => resolveMembership(tx, { email: STUDENT, name: "Demo Student", board: b }));
+  // grant the two roles (creates app_user + membership, idempotent force-set —
+  // the M11 SET side, same helper admin.setRole drives) then link.
+  const tu = await withBoard(b.id, (tx) => grantRole(tx, { email: TUTOR, name: "Demo Tutor", board: b, role: "tutor" }));
+  const st = await withBoard(b.id, (tx) => grantRole(tx, { email: STUDENT, name: "Demo Student", board: b, role: "student" }));
   await withBoard(b.id, async (tx: Tx) => {
     const [link] = await tx.select().from(tutorStudent).where(and(eq(tutorStudent.tutorId, tu.user.id), eq(tutorStudent.studentId, st.user.id))).limit(1);
     if (!link) await tx.insert(tutorStudent).values({ boardId: b.id, tutorId: tu.user.id, studentId: st.user.id });

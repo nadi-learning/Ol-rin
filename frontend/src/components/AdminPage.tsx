@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { trpc } from "../trpc";
+import { AdminPeoplePanel } from "./AdminPeoplePanel";
 import "./admin.css";
 
 // Slice QA3-b — the ADMIN topics.md ingest tool (D-QA3-6): the sole prod write
@@ -14,11 +15,20 @@ type Extraction = Awaited<ReturnType<typeof trpc.admin.extractTopicsMd.mutate>>;
 
 export function AdminPage({
   adminName,
+  adminEmail,
   onSignOut,
 }: {
   adminName: string;
+  adminEmail: string;
   onSignOut: () => void;
 }) {
+  // Slice D — the admin surface grew a second job (people), so the header gets a
+  // tab strip. Ingest stays the default: it is the older tool and the one an
+  // admin arrives for; people is the new capability the whitelist's death
+  // requires. Local state, not a route — AdminPage is already reached by role
+  // routing, not by URL, so a router would be the only URL-aware thing here.
+  const [tab, setTab] = useState<"ingest" | "people">("ingest");
+
   const [chapters, setChapters] = useState<Chapter[] | null>(null);
   const [chapterId, setChapterId] = useState<string>("");
   const [rawMd, setRawMd] = useState<string>("");
@@ -104,7 +114,9 @@ export function AdminPage({
     <div className="adm-root graph-paper">
       <header className="adm-header">
         <div>
-          <div className="adm-eyebrow">Admin · topics.md ingest</div>
+          <div className="adm-eyebrow">
+            Admin · {tab === "ingest" ? "topics.md ingest" : "people"}
+          </div>
           <h1 className="adm-title">{adminName}</h1>
         </div>
         <button className="adm-signout" onClick={onSignOut}>
@@ -112,6 +124,23 @@ export function AdminPage({
         </button>
       </header>
 
+      <nav className="adm-tabs">
+        <button
+          className={`adm-tab${tab === "ingest" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("ingest")}
+        >
+          Content
+        </button>
+        <button
+          className={`adm-tab${tab === "people" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("people")}
+        >
+          People
+        </button>
+      </nav>
+
+      {tab === "people" ? <AdminPeoplePanel adminEmail={adminEmail} /> : (
+      <>
       {error && <p className="adm-error">{error}</p>}
       {committed && <p className="adm-ok">{committed}</p>}
 
@@ -195,6 +224,8 @@ export function AdminPage({
           )}
         </section>
       </div>
+      </>
+      )}
     </div>
   );
 }

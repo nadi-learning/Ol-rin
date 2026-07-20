@@ -7,7 +7,8 @@
  *
  *   1. DB connectivity as the app role.
  *   2. ROLE gate (M11 SET side): the tutor membership is role='tutor', created
- *      via the REAL whitelist → resolveMembership flow (not a direct insert).
+ *      via the REAL grantRole flow (not a direct insert) — the same helper
+ *      admin.setRole drives.
  *   3. The student (W) sets up a Science plan; the tutor reads the SAME
  *      derive-at-read view: needsSetup false, projected dates + pace status +
  *      preparedness rolled up from W's certified mastery (chA strong, chB
@@ -35,11 +36,10 @@ import {
   subject,
   topic,
   tutorStudent,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { setupPlan } from "../src/services/pace";
 import {
   getStudentPacePlan,
@@ -138,18 +138,13 @@ async function main() {
   });
 
   // tutor T (role tutor) + student W (linked) + student X (UNLINKED bystander),
-  // all via the REAL whitelist → resolveMembership flow (the M11 SET side).
+  // all via the REAL grantRole flow (the M11 SET side).
   const emailT = `tpace-t-${tag}@example.com`;
   const emailW = `tpace-w-${tag}@example.com`;
   const emailX = `tpace-x-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailT, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailW, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailX, role: "student" });
-  });
-  const T = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailT, name: "Tutor", board: P }));
-  const W = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "Wanda", board: P }));
-  const X = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailX, name: "Xavier", board: P }));
+  const T = await withBoard(P.id, (tx) => grantRole(tx, { email: emailT, name: "Tutor", board: P, role: "tutor" }));
+  const W = await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "Wanda", board: P, role: "student" }));
+  const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "Xavier", board: P, role: "student" }));
   const userT = T.user.id;
   const userW = W.user.id;
   const userX = X.user.id;
@@ -265,7 +260,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailT));
   await db.delete(appUser).where(eq(appUser.email, emailW));

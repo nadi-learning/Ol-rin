@@ -33,33 +33,11 @@
   height: 40px;
   margin-bottom: 6px;
   padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
   border-radius: 12px;
-  transition: transform 0.15s ease;
 }
-.nav-logo:hover {
-  transform: scale(1.1) rotate(-4deg);
-}
-.nav-logo:active {
-  transform: scale(0.94);
-}
-/* Pulse after the screensaver collapses into the logo — shows the user where it
-   went and that it's tappable again. */
-.nav-logo--pulse {
-  animation: nav-logo-pop 0.85s ease-out;
-}
-@keyframes nav-logo-pop {
-  0% { transform: scale(1); }
-  30% { transform: scale(1.35) rotate(-8deg); }
-  55% { transform: scale(0.92) rotate(4deg); }
-  75% { transform: scale(1.12) rotate(-2deg); }
-  100% { transform: scale(1) rotate(0deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .nav-logo--pulse { animation: none; }
-}
+/* Slice G — the hover/active/pulse states went with the Pikachu easter egg.
+   The logo no longer does anything, so it must not advertise that it does:
+   `cursor: pointer` on an inert mark is a promise the app cannot keep. */
 
 .nav-group {
   display: flex;
@@ -94,15 +72,11 @@
   background: var(--primary);
   color: #fff;
 }
-/* not-yet-wired destinations — visible but clearly inert */
-.nav-item--soon {
-  color: var(--ink-faint, #b6b6c6);
-  cursor: default;
-}
-.nav-item--soon:hover {
-  background: transparent;
-  color: var(--ink-faint, #b6b6c6);
-}
+/* Slice K — `.nav-item--soon` is DELETED. Search was its last user, and with
+   Search gone every rail item navigates somewhere real. The rule this closes:
+   a coming-soon lives once, on the page it describes, never on the row that
+   points at it (SoonBanner, `practice.css:90`). The rail can no longer express
+   the other answer, which is the point. */
 
 /* red dot — a rail slot worth noticing. Sits on the icon's top-right corner
    with a ring in the rail's own white so it reads as a badge, not a smudge. */
@@ -159,19 +133,19 @@
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
-.nav-tip-soon,
+/* Slice K — the two blocks are merged. They were split because the shared pill
+   shape was worn by BOTH tags and only the colour differed; with `soon` gone
+   there is one tag, so a base rule immediately overridden by its own selector
+   is just a rule with a dead line in it. */
 .nav-tip-new {
   margin-left: 6px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
   font-style: normal;
   font-size: 0.66rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-}
-.nav-tip-new {
   background: #f04438;
   color: #fff;
 }

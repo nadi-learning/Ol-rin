@@ -1,0 +1,232 @@
+/* Slice J — the Journal surface. All `.jrnl-`-scoped (the revision-shell.css
+   global-leak discipline: no bare element selectors, no shared class names). */
+
+.jrnl {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* ── the greeting ───────────────────────────────────────────────────────── */
+
+.jrnl-say {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+/* M63 — sized on HEIGHT, the axis that binds a figure standing beside a card.
+   This slot takes ELEVEN heroes plus seven pets as a fallback, and their scans
+   do not share an aspect ratio; a fixed `width` would pin the height too and
+   render a tall portrait at double the size of a wide one. Height is pinned,
+   width follows the art and is capped so a wide character can't eat the row.
+   Same rule and same reason as `.prac-soon-pet` and `.dash-tour-pet`. */
+.jrnl-front {
+  height: 150px;
+  width: auto;
+  max-width: 190px;
+  object-fit: contain;
+  object-position: bottom center;
+  flex: none;
+  /* The onboarding scans are opaque JPEGs on toned paper. `multiply` is what
+     lets them sit on the graph-paper canvas without dragging a white plate
+     around with them (S101/S102's compositing finding, and the reason no
+     transform may be left applied on this subtree — M60: a stray transform
+     silently switches blend modes OFF). */
+  mix-blend-mode: multiply;
+  /* 🔑 THE OTHER HALF OF THE COMPOSITE, and the walk is what proved it was
+     missing. `multiply` alone kills the plate only for scans with a near-white
+     ground; S102 measured the grounds at 156-255 and found most heroes are
+     full-bleed toned drawings whose own tone runs to the frame, which multiply
+     lands on the paper as a hard rectangle. Harry (line art on white) looked
+     perfect and iron_man looked like a pasted photo — same CSS, different art.
+     Feather every edge and the drawing dissolves whatever its ground.
+
+     Gentler than the onboarding's 14% (this is a 150px bust, not a full-page
+     scene — at 14% the feather starts eating the head). */
+  mask-image:
+    linear-gradient(to right, transparent 0, black 8%, black 92%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 8%, black 92%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  pointer-events: none;
+  user-select: none;
+}
+
+.jrnl-bubble {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border-radius: var(--r-card);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+.jrnl-head {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.jrnl-sub {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+/* ── the stage: preview and panel share one grid cell ───────────────────── */
+
+.jrnl-stage {
+  display: grid;
+  /* Both children claim 1/1, so the row is as tall as the TALLER of the two and
+     the panel can never overflow the art it sits on. */
+  align-items: center;
+  justify-items: center;
+  border-radius: var(--r-card);
+  /* The blur bleeds past the element's own box; without a clipping parent it
+     smears onto the canvas and reads as a broken render rather than a preview. */
+  overflow: hidden;
+}
+.jrnl-stage > * {
+  grid-area: 1 / 1;
+}
+
+/* ── the blurred mock (D-J2) ────────────────────────────────────────────── */
+
+.jrnl-preview {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px 22px;
+  background: var(--primary-soft);
+  /* Heavy ENOUGH to be obviously deliberate. A light blur (2-3px) reads as a
+     font that failed to load or a screenshot at the wrong scale; at 7px nobody
+     mistakes it for content that was supposed to be legible. */
+  filter: blur(7px);
+  /* Belt and braces with the JSX: `aria-hidden` keeps it off the accessibility
+     tree, this keeps a mouse out of it. Neither alone covers keyboard focus,
+     which is why nothing inside is a focusable element in the first place. */
+  pointer-events: none;
+  user-select: none;
+}
+
+.jrnl-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.jrnl-msg {
+  height: 34px;
+  border-radius: var(--r-md);
+  /* Sized bars, never text — see the JSX comment. */
+  background: var(--surface);
+  opacity: 0.9;
+}
+.jrnl-msg--them {
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+.jrnl-msg--me {
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+  background: var(--primary);
+  opacity: 0.55;
+}
+
+.jrnl-audio {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--r-md);
+  opacity: 0.9;
+}
+.jrnl-audio-orb {
+  height: 34px;
+  width: 34px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--primary);
+  opacity: 0.6;
+}
+.jrnl-wave {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.jrnl-wave-bar {
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+  opacity: 0.45;
+}
+
+/* ── the soon panel — once per page, never per row ──────────────────────── */
+
+.jrnl-soon {
+  /* Sits IN the same cell as the blur, so it must carry its own surface or the
+     blurred art shows through the type and neither is readable. */
+  position: relative;
+  max-width: 420px;
+  margin: 0 18px;
+  padding: 20px 24px;
+  text-align: center;
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+.jrnl-soon-head {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.jrnl-soon-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+/* ── phone ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  /* The greeting stacks: at 390 a 150px character beside a bubble leaves the
+     bubble ~180px wide, which wraps the heading to four lines (M63 — width is
+     the axis that binds on a phone, whichever axis the desktop rule pinned). */
+  .jrnl-say {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .jrnl-front {
+    height: 112px;
+    max-width: 60vw;
+  }
+  .jrnl-bubble {
+    width: 100%;
+  }
+  .jrnl-head {
+    font-size: 18px;
+  }
+  .jrnl-preview {
+    padding: 18px 14px;
+    /* The panel and the mock are nearly the same height at 390, so the mock was
+       almost entirely eclipsed and the page read as a white card on a blue
+       blob — the whole "preview behind glass" idea, lost exactly where most
+       students will see it. Give the mock more room than the panel needs and
+       spread it, so the thread shows above and the audio rail below. */
+    min-height: 400px;
+    justify-content: space-between;
+  }
+  .jrnl-soon {
+    margin: 0 12px;
+    padding: 16px 18px;
+  }
+}

@@ -42,12 +42,11 @@ import {
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { skip, startSession, submitAttempt } from "../src/services/practice";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { getMyInsights } from "../src/services/insights";
 import { env } from "../src/config/env";
 
@@ -94,14 +93,9 @@ async function main() {
   const emailW = `ins-w-${tag}@example.com`;
   const emailX = `ins-x-${tag}@example.com`;
   const emailZ = `ins-z-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    for (const email of [emailW, emailX, emailZ]) {
-      await tx.insert(whitelist).values({ boardId: P.id, email, role: "student" });
-    }
-  });
-  const W = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "W", board: P }));
-  const X = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailX, name: "X", board: P }));
-  const Z = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailZ, name: "Z", board: P }));
+  const W = await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "W", board: P, role: "student" }));
+  const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: P, role: "student" }));
+  const Z = await withBoard(P.id, (tx) => grantRole(tx, { email: emailZ, name: "Z", board: P, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
   const userZ = Z.user.id;
@@ -207,7 +201,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   for (const email of [emailW, emailX, emailZ]) {
     await db.delete(appUser).where(eq(appUser.email, email));

@@ -45,11 +45,10 @@ import {
   subject,
   topic,
   tutorStudent,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { StudentNotFoundError } from "../src/services/tutor";
 import { ChildNotFoundError } from "../src/services/parent";
 import {
@@ -108,18 +107,11 @@ async function main() {
   const emailPA = `rps-pa-${tag}@example.com`;
   const emailPA2 = `rps-pa2-${tag}@example.com`;
   const emailST = `rps-st-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailTU, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailTU2, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailPA, role: "parent" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailPA2, role: "parent" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailST, role: "student" });
-  });
-  const TU = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailTU, name: "Tutor", board: P }));
-  const TU2 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailTU2, name: "Tutor Two", board: P }));
-  const PA = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailPA, name: "Parent", board: P }));
-  const PA2 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailPA2, name: "Parent Two", board: P }));
-  const ST = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailST, name: "Stu Dent", board: P }));
+  const TU = await withBoard(P.id, (tx) => grantRole(tx, { email: emailTU, name: "Tutor", board: P, role: "tutor" }));
+  const TU2 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailTU2, name: "Tutor Two", board: P, role: "tutor" }));
+  const PA = await withBoard(P.id, (tx) => grantRole(tx, { email: emailPA, name: "Parent", board: P, role: "parent" }));
+  const PA2 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailPA2, name: "Parent Two", board: P, role: "parent" }));
+  const ST = await withBoard(P.id, (tx) => grantRole(tx, { email: emailST, name: "Stu Dent", board: P, role: "student" }));
   const userTU = TU.user.id, userTU2 = TU2.user.id, userPA = PA.user.id, userPA2 = PA2.user.id, userST = ST.user.id;
 
   // link TU→ST and PA→ST (TU2 + PA2 deliberately UNLINKED).
@@ -314,7 +306,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   for (const email of [emailTU, emailTU2, emailPA, emailPA2, emailST]) {
     await db.delete(appUser).where(eq(appUser.email, email));

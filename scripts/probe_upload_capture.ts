@@ -44,7 +44,6 @@ import {
   subject,
   topic,
   uploadToken,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -64,7 +63,7 @@ import {
   UploadSlotInvalidError,
 } from "../src/services/upload";
 import { getObject } from "../src/services/object_storage";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { env } from "../src/config/env";
 
 type Tx = PgTransaction<any, any, any>;
@@ -105,12 +104,8 @@ async function main() {
 
   const emailW = `q3-w-${tag}@example.com`;
   const emailX = `q3-x-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailW, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailX, role: "student" });
-  });
-  const W = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "W", board: P }));
-  const X = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailX, name: "X", board: P }));
+  const W = await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "W", board: P, role: "student" }));
+  const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: P, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
 
@@ -299,7 +294,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.email, emailX));

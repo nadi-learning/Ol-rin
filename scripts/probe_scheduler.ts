@@ -41,11 +41,10 @@ import {
   subject,
   topic,
   tutorStudent,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import {
   computeRetentionDue,
   getDueQueue,
@@ -125,15 +124,11 @@ async function main() {
     };
   });
 
-  // tutor TU + student ST via the REAL flow (whitelist → resolveMembership), linked.
+  // tutor TU + student ST via the REAL flow (grantRole), linked.
   const emailTU = `psch-tu-${tag}@example.com`;
   const emailST = `psch-st-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailTU, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailST, role: "student" });
-  });
-  const TU = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailTU, name: "Tutor", board: P }));
-  const ST = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailST, name: "Student", board: P }));
+  const TU = await withBoard(P.id, (tx) => grantRole(tx, { email: emailTU, name: "Tutor", board: P, role: "tutor" }));
+  const ST = await withBoard(P.id, (tx) => grantRole(tx, { email: emailST, name: "Student", board: P, role: "student" }));
   const tutorUserId = TU.user.id;
   const studentId = ST.user.id;
   check("real flow: tutor role = 'tutor' (M11 SET side)", TU.role === "tutor");
@@ -291,7 +286,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailTU));
   await db.delete(appUser).where(eq(appUser.email, emailST));

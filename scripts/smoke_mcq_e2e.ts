@@ -10,7 +10,7 @@ import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser, board, chapter, contentUnit, contentVersion, eventLog,
-  membership, subTopic, subject, topic, whitelist,
+  membership, subTopic, subject, topic,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -88,8 +88,9 @@ async function main() {
     return { subTopicId: st!.id, unitId: u!.id };
   });
 
+  // No pre-enablement: the platform is ungated, so `me` over the wire creates
+  // the student membership itself — that IS the real path.
   const email = `smkmcq-s-${tag}@example.com`;
-  await withBoard(Z.id, (tx) => tx.insert(whitelist).values({ boardId: Z.id, email, role: "student" }));
   const cookie = await signUpCookie(email);
   const me = await call("query", "me", cookie, Z.slug, {});
   check("student me → role student (wire)", me?.role === "student");
@@ -119,7 +120,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, Z.id));
     await tx.delete(subject).where(eq(subject.boardId, Z.id));
     await tx.delete(membership).where(eq(membership.boardId, Z.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, Z.id));
   });
   await db.delete(appUser).where(eq(appUser.email, email));
   await db.delete(board).where(eq(board.id, Z.id));

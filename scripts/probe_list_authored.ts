@@ -31,11 +31,10 @@ import {
   subject,
   topic,
   tutorStudent,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { listAuthoredQuestions } from "../src/services/authoring";
 import { StudentNotFoundError } from "../src/services/tutor";
 import { env } from "../src/config/env";
@@ -81,14 +80,9 @@ async function main() {
   const emailT = `pla-t-${tag}@example.com`;
   const emailS1 = `pla-s1-${tag}@example.com`;
   const emailS2 = `pla-s2-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailT, role: "tutor" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailS1, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailS2, role: "student" });
-  });
-  const T = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailT, name: "Tutor", board: P }));
-  const S1 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailS1, name: "Stu One", board: P }));
-  const S2 = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailS2, name: "Stu Two", board: P }));
+  const T = await withBoard(P.id, (tx) => grantRole(tx, { email: emailT, name: "Tutor", board: P, role: "tutor" }));
+  const S1 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailS1, name: "Stu One", board: P, role: "student" }));
+  const S2 = await withBoard(P.id, (tx) => grantRole(tx, { email: emailS2, name: "Stu Two", board: P, role: "student" }));
   const userT = T.user.id;
   const userS1 = S1.user.id;
   const userS2 = S2.user.id;
@@ -167,7 +161,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailT));
   await db.delete(appUser).where(eq(appUser.email, emailS1));

@@ -9,7 +9,7 @@
  *
  *   1. DB connectivity.
  *   2. admin gate both sides (M11): assertAdmin('admin') ok · non-admin → throws;
- *      the REAL flow whitelist(role='admin')→resolveMembership yields role 'admin'.
+ *      the REAL grantRole(role='admin') flow yields role 'admin'.
  *   3. validateExtracted (O8, pure): valid passes; empty-topics / a sub-topic with
  *      no LOs / no sub-topics each fail with a clear reason.
  *   4. commitTopicsMd: upserts the spine (topics/sub_topics/LOs) + stores the raw
@@ -36,11 +36,10 @@ import {
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import {
   assertAdmin,
   AdminOnlyError,
@@ -138,11 +137,10 @@ async function main() {
     adminOk = false;
   }
   check("assertAdmin('admin') → passes", adminOk);
-  // real SET side: whitelist(role='admin') → resolveMembership → role 'admin' (M27: lowercase)
+  // real SET side: grantRole(role='admin') → role 'admin' (M27: lowercase)
   const adminEmail = `qa3b-admin-${tag}@example.com`;
-  await withBoard(A.id, (tx) => tx.insert(whitelist).values({ boardId: A.id, email: adminEmail, role: "admin" }));
-  const adminM = await withBoard(A.id, (tx) => resolveMembership(tx, { email: adminEmail, name: "Adm", board: A }));
-  check("real flow whitelist(admin)→resolveMembership yields role 'admin'", adminM.role === "admin");
+  const adminM = await withBoard(A.id, (tx) => grantRole(tx, { email: adminEmail, name: "Adm", board: A, role: "admin" }));
+  check("real flow grantRole(admin) yields role 'admin'", adminM.role === "admin");
 
   // 3. validateExtracted (O8, pure)
   check("validateExtracted(FIX) → ok", validateExtracted(FIX).ok);
@@ -250,7 +248,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, A.id));
     await tx.delete(subject).where(eq(subject.boardId, A.id));
     await tx.delete(membership).where(eq(membership.boardId, A.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, A.id));
   });
   await db.delete(appUser).where(eq(appUser.email, adminEmail));
   await db.delete(board).where(eq(board.id, A.id));

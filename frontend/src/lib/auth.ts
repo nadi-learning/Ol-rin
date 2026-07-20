@@ -12,8 +12,9 @@ export const { useSession, signIn, signUp, signOut } = authClient;
  * Dev-only login bypass (mirrors the Python app's SKIP_AUTH_FOR_TESTING). Email
  * + a fixed dev password — no Google. Sign up on first use, sign in after.
  * Backed by Better Auth's email/password, which is enabled on the BE only when
- * NODE_ENV !== production. Whether `me` then succeeds still depends on the
- * email being whitelisted for the board.
+ * NODE_ENV !== production. `me` then succeeds for anyone who signs in — there is
+ * no invite gate (Slice C / S110); resolveMembership creates the membership at
+ * 'student' on first login.
  */
 const DEV_PASSWORD = "dev-password-123";
 export async function devLogin(email: string) {

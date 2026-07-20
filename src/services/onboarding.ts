@@ -1,11 +1,12 @@
 /**
  * Slice ONB-1 — the conversational welcome.
  *
- * Runs on first LOGIN, not signup. The platform is whitelist-gated
- * (services/membership.ts throws NOT_WHITELISTED for anyone not pre-invited),
+ * Runs on first LOGIN, not signup. Nobody is gated (Slice C / S110): anyone who
+ * signs in gets an app_user + a membership at 'student' from resolveMembership,
  * so by the time a student reaches this flow we already know who they are and
- * which board they belong to. It is a welcome, not a registration — that is
- * why nothing here can reject a user, only ask them things.
+ * which board they belong to — not because they were pre-invited, but because
+ * login itself created that identity. It is a welcome, not a registration —
+ * that is why nothing here can reject a user, only ask them things.
  *
  * Load-bearing decisions realized here:
  *  - D-ONB-1  WRITE-PER-ANSWER. Each beat commits on answer and advances
@@ -30,6 +31,7 @@ import {
   FAV_CHARACTERS,
   ONBOARDING_ANSWER_COLUMNS,
   ONBOARDING_STEPS,
+  PETS,
   PRONOUNS,
   resolveOnboardingStep,
   type OnboardingStep,
@@ -247,12 +249,22 @@ export async function saveStep(
     }
   }
 
-  // S91 — pet is required but deliberately NOT closed-set: the "something else"
-  // chip opens a text field, and that free text IS the answer (it is what
-  // Pikachu promises to arrange). Non-empty is the whole contract; isKnownPet()
-  // downstream decides arrives-now vs 2-3-dayssss.
-  if (step === "pet" && !value) {
-    throw new OnboardingValidationError("pet is required");
+  // Slice L — pet is now CLOSED-SET, mirroring fav_character above. It was the
+  // last free-text answer in the flow: S91 left it open because the "something
+  // else" chip opened a text field and that free text WAS the answer (the
+  // "2-3 dayssss" promise). Both are deleted, so an off-list pet can no longer
+  // come from the UI — and, exactly as with fav_character, the value of
+  // checking here is that a hand-rolled request cannot reintroduce a pet
+  // Olórin has no line for and no art to hand over.
+  //
+  // ⚠️ This validates WRITES only. Rows written before this slice hold free
+  // text and are read every day; loaderPetImg/loaderPetAlt/loaderSay fall back
+  // to the stand-in owl for them. Do not "clean up" those fallbacks.
+  if (step === "pet") {
+    if (!value) throw new OnboardingValidationError("pet is required");
+    if (!(PETS as readonly string[]).includes(value)) {
+      throw new OnboardingValidationError(`pet must be one of: ${PETS.join(", ")}`);
+    }
   }
 
   if (step === "done") {

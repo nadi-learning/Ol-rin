@@ -37,15 +37,48 @@ export function RevisionPage({
   studentName,
   initialSubTopicId = null,
   onOpenPace,
+  pet,
 }: {
   studentName: string;
+  /** Slice G — passed straight through to the voice tutor's avatar. */
+  pet: string | null;
   /** Slice DASH: a sub_topic to open at (from the dashboard "Continue lesson"
    *  deep-link). Snaps once the nav tree is loaded; null = open at the landing. */
   initialSubTopicId?: string | null;
   /** REV-LAND: the landing's "Set my plan" chip → the Pace Plan surface. */
   onOpenPace?: () => void;
 }) {
-  const [nav, setNav] = useState<Nav | null>(null);
+  const [rawNav, setRawNav] = useState<Nav | null>(null);
+
+  /**
+   * Slice I — the viewer runs on the OPENABLE tree, not the curriculum spine.
+   *
+   * This one derivation is deliberately at the top, because EVERYTHING below
+   * reads it: `flat` (prev/next + the "n / total" counter), the index sidebar,
+   * and the deep-link's findIndex. Filtering any one of them alone would leave
+   * the others disagreeing about what this chapter contains.
+   *
+   * 🔴 What it fixes, all of it found by the Slice I walk and none of it
+   * visible to a probe:
+   *   1. `currentIdx` starts at 0, so the FIRST slide fetched on any deep-link
+   *      was `flat[0]` — the first sub_topic of the first chapter in SPINE
+   *      order, which on CBSE is "Basics" and 404s. Every single lesson open
+   *      fired a doomed getSlide before the real one.
+   *   2. prev/next walked THROUGH unrenderable slides — 128 of CBSE's 159 are
+   *      dead, so "Next" was mostly a 404 machine.
+   *   3. the counter read "68 / 159" when 31 slides exist.
+   */
+  const nav = useMemo<Nav | null>(() => {
+    if (!rawNav) return null;
+    return rawNav
+      .map((ch) => ({
+        ...ch,
+        topics: ch.topics
+          .map((t) => ({ ...t, subTopics: t.subTopics.filter((s) => s.hasContent) }))
+          .filter((t) => t.subTopics.length > 0),
+      }))
+      .filter((ch) => ch.topics.length > 0);
+  }, [rawNav]);
   const [mode, setMode] = useState<"landing" | "slide">(
     initialSubTopicId ? "slide" : "landing",
   );
@@ -79,7 +112,7 @@ export function RevisionPage({
     trpc.revision.getChapterNav
       .query()
       .then((tree) => {
-        setNav(tree);
+        setRawNav(tree);
         setCurrentIdx(0);
       })
       .catch((e) => setError(String(e?.message ?? e)));
@@ -107,15 +140,30 @@ export function RevisionPage({
     if (mode !== "slide" || !selected) return;
     setSlide(null);
     setError(null);
+    // 🔴 Slice I — STALENESS GUARD. `setError(null)` above only clears at the
+    // START of a fetch, which does nothing about a LOSING one that lands late:
+    // the Slice I walk caught a fully-rendered slide wearing a SLIDE_NOT_FOUND
+    // banner, because the doomed flat[0] request rejected AFTER the real one
+    // had resolved and overwrote the cleared error. The nav filter above stops
+    // that particular doomed request, but any fast prev/next would re-open the
+    // same race — so the class gets closed, not just the instance.
+    let live = true;
     trpc.revision.getSlide
       .query({ subTopicId: selected })
       .then((s) => {
+        if (!live) return;
         setSlide(s);
         // D-REV-1: durable resume. Fire-and-forget — a lost visit only costs
         // resume freshness, never the slide render.
         trpc.revision.recordVisit.mutate({ subTopicId: selected }).catch(() => {});
       })
-      .catch((e) => setError(String(e?.message ?? e)));
+      .catch((e) => {
+        if (!live) return;
+        setError(String(e?.message ?? e));
+      });
+    return () => {
+      live = false;
+    };
   }, [selected, mode]);
 
   // auto-expand the section (topic) containing the active slide
@@ -300,7 +348,12 @@ export function RevisionPage({
             authored voice_context (the prod button gate). Keyed on the sub_topic
             so navigating slides disposes the session (unmount → relay finalizes). */}
         {slide?.hasVoiceContext && selected && (
-          <VoicePanel key={selected} subTopicId={selected} slideTitle={current?.name} />
+          <VoicePanel
+            key={selected}
+            subTopicId={selected}
+            slideTitle={current?.name}
+            pet={pet}
+          />
         )}
 
         {!slide && !error && <p className="revision-muted">Loading…</p>}

@@ -16,10 +16,11 @@
  * No DB, no network — safeEcho is pure. It imports FE modules directly because
  * that is where the guard lives and a copy in scripts/ would drift.
  */
-import { FAV_CHARACTERS, HERO_COMPANION, PETS } from "@b2c/kernel/contracts";
+import { FAV_CHARACTERS, HERO_COMPANION, PETS, PRONOUNS } from "@b2c/kernel/contracts";
 import { canEcho, looksLikeRefusal } from "../frontend/src/lib/safeEcho";
 import type { BeatCtx } from "../frontend/src/components/onboarding.copy";
 import {
+  ABOUT_ROWS,
   BEAT_BY_ID,
   EPILOGUE_PAGES,
   EPILOGUE_TOTAL_MS,
@@ -27,9 +28,13 @@ import {
   HEROES_BY_PRONOUN,
   PET_COPY,
   companionFor,
+  heroCompositeImg,
+  heroImg,
   heroesFor,
+  loaderPetSpoken,
   loaderSay,
   petWink,
+  throneClose,
 } from "../frontend/src/components/onboarding.copy";
 
 /**
@@ -170,18 +175,32 @@ check("a normal pet", !looksLikeRefusal("llama"));
 check("a normal phone number", !looksLikeRefusal("9876543210"));
 check("'Naruto'", !looksLikeRefusal("Naruto"));
 
-// ── 7. the reactions actually BRANCH on it ─────────────────────────────────
-// The guard existing is not the fix; the copy calling it is. These assert the
-// two surfaces where free text still reaches a reaction.
-console.log("\n7. the copy uses the guard");
+// ── 7. the pet reaction (Slice L — the branches it guarded are GONE) ───────
+// 🔑 These legs are INVERTED by Slice L, not deleted, and the inversion is the
+// point. They used to assert that free text reaching this reaction was handled
+// safely ("a real custom pet IS taken seriously"); they now assert that free
+// text CANNOT reach it at all. Deleting them would have left the strongest
+// claim in the slice unwritten — that closing the set is better than guarding
+// it — and would have let the hatch grow back silently.
+console.log("\n7. the pet reaction is closed-set");
 const petReaction = BEAT_BY_ID["pet"]!.reaction;
 check(
-  "a refused pet is NOT praised or repeated",
-  !petReaction("no", ctx()).includes("no?") && petReaction("no", ctx()).includes("owl"),
-  petReaction("no", ctx()),
+  "a custom pet is NOT taken seriously any more — it says nothing at all",
+  petReaction("llama", ctx()) === "",
+  JSON.stringify(petReaction("llama", ctx())),
 );
-check("a real custom pet IS taken seriously", petReaction("llama", ctx()).includes("llama"), petReaction("llama", ctx()));
+check("a refused pet is never repeated", !petReaction("no", ctx()).includes("no"), petReaction("no", ctx()));
 check("a blocked pet is never repeated", !petReaction("fuck you", ctx()).includes("fuck"), petReaction("fuck you", ctx()));
+// The structural claim behind all three: there is no longer an INPUT that can
+// produce an off-list pet. A reaction that merely handles free text safely is
+// one refactor away from handling it unsafely; a beat with no text field is not.
+const petInput = BEAT_BY_ID["pet"]!.input;
+check("the pet beat is still chips (never a text ask)", petInput.kind === "chips");
+check(
+  "and it has NO escape hatch — the property is gone from the type, not just unset",
+  !("other" in petInput),
+  JSON.stringify(Object.keys(petInput)),
+);
 
 // Every known pet gets its OWN line — asserted as a PROPERTY, not by grepping
 // for a word. The previous version looked for "scorch" in the dragon's reply and
@@ -196,14 +215,13 @@ check(
   PETS.every((p) => petReaction(p, ctx()) === PET_COPY[p]!.reaction),
 );
 // S96 — the three new pets (kurama/jarvis/alfred) must be as complete as the
-// four originals: a card renders `img`, the loader speaks `spoken`, and the
-// payoff page prints `story` + `bubble`. A half-filled row is a broken card,
-// not a missing word.
+// four originals: a card renders `img`, the loader speaks `spoken`. (ONB-7 cut
+// the pet payoff page, and `story`/`bubble` went with it.)
 check(
-  "every pet has label + spoken + art + reaction + story + bubble",
+  "every pet has label + spoken + art + reaction",
   PETS.every((p) => {
     const c = PET_COPY[p];
-    return Boolean(c?.label && c?.spoken && c?.img && c?.reaction && c?.story && c?.bubble?.text && c?.bubble?.by);
+    return Boolean(c?.label && c?.spoken && c?.img && c?.reaction);
   }),
 );
 
@@ -215,60 +233,30 @@ check(
 );
 check("a real number is accepted", phoneReaction("9876543210", ctx()).includes("Got it"), phoneReaction("9876543210", ctx()));
 
-// ── 7b. the reveal is now PAGES (ONB-6) ────────────────────────────────────
-// The founder's video verdict on the S96 reveal: "a para comes all of a sudden
-// and it vanishes before someone read it". The reveal is now three Next-gated
-// story pages, so the claims moved: the reaction is only the G3 fallback, and
-// the hero/pet naming lives on page two.
-console.log("\n7b. the three-page reveal");
-const lorePages = BEAT_BY_ID["lore"]!.pages!;
-const revealNo = lorePages("No", ctx({ favCharacter: "jon_snow", pet: "direwolf" }))!;
-const revealYes = lorePages("Yes", ctx({ favCharacter: "thor", pet: "groot" }))!;
-check("the reveal is THREE pages", revealNo.length === 3, String(revealNo.length));
-check("every page is Next-gated (has a CTA)", revealNo.every((p) => p.cta.length > 0));
-check("page 1 tells the Gandalf story in the FIRST person", revealNo[0]!.text.includes("Gandalf") && revealNo[0]!.text.includes("my name"));
-check("page 1 wears the young/old pair", revealNo[0]!.scene?.kind === "pair");
-check("'Yes' gets credit for knowing", revealYes[0]!.text.includes("already know"));
-check(
-  "page 2 places all three: hero, pet, Olórin-when-impossible",
-  revealNo[1]!.text.includes("Jon Snow") && revealNo[1]!.text.includes("direwolf") && revealNo[1]!.text.includes("impossible"),
-  revealNo[1]!.text,
-);
-check("page 2 still reads if the hero is somehow absent", lorePages("Yes", ctx())![1]!.text.includes("your hero"));
-check("page 3 is the fellowship trio", Boolean(revealNo[2]!.trio?.petImg && revealNo[2]!.trio?.olorinImg));
-check("page 3 names the student", revealNo[2]!.title?.includes("Ravi") === true, revealNo[2]!.title);
-check("the last CTA turns the page", revealNo[2]!.cta === "Turn the page");
-// The G3 fallback reaction survives for unknown-step walkers.
-const loreReaction = BEAT_BY_ID["lore"]!.reaction;
-check("the fallback reaction still exists", loreReaction("No", ctx()).includes("Gandalf"));
+// ── 7b. the reveal is GONE from onboarding (ONB-7, founder) ────────────────
+// The Gandalf reveal leaves the flow entirely — Olórin introduces himself
+// later in the product, at a moment the student is actually stuck. The copy
+// file must not quietly grow the beat back.
+console.log("\n7b. the reveal is out of the flow");
+check("no `lore` beat in the copy file", BEAT_BY_ID["lore"] === undefined);
 // D-ONB-14 — the promise is bound to PRESENCE. Onboarding may not offer
 // conversation; that feature does not exist and a child who tries on day 2
-// learns the story lied. Swept across EVERY surface the rework added: hero
-// stories, hero bubbles, pet stories, pet bubbles, all reveal pages.
+// learns the story lied. Swept across every surviving surface: hero stories,
+// hero bubbles.
 const PROMISE_BOUND = /\b(talk to|chat|message|ask (him|her|them)|tell (him|her|them))\b/i;
-check(
-  "no reveal page promises conversation (D-ONB-14)",
-  [...revealNo, ...revealYes].every((p) => !PROMISE_BOUND.test(p.text) && !PROMISE_BOUND.test(p.title ?? "")),
-);
 check(
   "no hero story or bubble promises conversation (D-ONB-14)",
   FAV_CHARACTERS.every((id) => !PROMISE_BOUND.test(HEROES[id]!.story) && !PROMISE_BOUND.test(HEROES[id]!.bubble.text)),
 );
-check(
-  "no pet story or bubble promises conversation (D-ONB-14)",
-  PETS.every((p) => !PROMISE_BOUND.test(PET_COPY[p]!.story) && !PROMISE_BOUND.test(PET_COPY[p]!.bubble.text)),
-);
 
-// ── 7c. the payoff pages (ONB-6) ───────────────────────────────────────────
-// The founder: "we are not explaining who and why the hero is here… we need to
-// explain everything about pet and hero". Every hero pick must earn a complete
-// comic page; every KNOWN pet likewise; the guarded custom path must NOT get a
-// page (its value is free text — the quick reply already goes through the
-// guard, and a page would print it larger and longer).
-console.log("\n7c. the payoff pages");
+// ── 7c. the hero payoff page (ONB-6, kept lean by ONB-7) ───────────────────
+// The one payoff page that survived the cut: every hero pick earns ONE short
+// comic page (quip + role line + bubble + art). The pet payoff page is GONE —
+// the pick lands with its one-line reaction only.
+console.log("\n7c. the hero payoff page");
 const heroPagesFn = BEAT_BY_ID["fav_character"]!.pages!;
 check(
-  "every hero gets one complete page: quip title + story + bubble + collage",
+  "every hero gets one complete page: quip title + role line + bubble + collage",
   FAV_CHARACTERS.every((id) => {
     const pg = heroPagesFn(id, ctx());
     const p = pg?.[0];
@@ -283,16 +271,7 @@ check(
   }),
 );
 check("a retired hero id gets NO page (falls back to the quick reply)", heroPagesFn("spider_man", ctx()) === undefined);
-const petPagesFn = BEAT_BY_ID["pet"]!.pages!;
-check(
-  "every known pet gets one page with the sticker + story + bubble",
-  PETS.every((p) => {
-    const pg = petPagesFn(p, ctx({ favCharacter: "harry_potter" }));
-    return pg?.length === 1 && Boolean(pg[0]!.sticker?.img) && pg[0]!.text === PET_COPY[p]!.story && Boolean(pg[0]!.bubble);
-  }),
-);
-check("a custom pet gets NO page (free text stays on the guarded path)", petPagesFn("llama", ctx()) === undefined);
-check("a refused pet gets NO page", petPagesFn("no", ctx()) === undefined);
+check("the pet beat has NO pages (ONB-7 cut the payoff page)", BEAT_BY_ID["pet"]!.pages === undefined);
 
 // ── 8. the delivery line (S91, Olórin's since S96) ─────────────────────────
 // The handover moved from Pikachu to Olórin when Pikachu was cut (D-ONB-16).
@@ -306,10 +285,21 @@ check("a known pet arrives now, no promise made", loaderSay("owl").includes("owl
 // speaks the pet now (loaderTitle died with the spinner).
 check("a species is spoken in lower case", loaderSay("owl").includes("one owl"), loaderSay("owl"));
 check("a NAME keeps its capital", loaderSay("groot").includes("one Groot"), loaderSay("groot"));
-check("a custom pet gets the 2-3 dayssss gag", loaderSay("llama").includes("2-3 dayssss"));
-check("...and the owl covers, so nobody leaves petless", loaderSay("llama").includes("owl"));
-check("a refused pet is never repeated in the gag", !loaderSay("no").includes("One no"), loaderSay("no"));
-check("a blocked pet is never repeated in the gag", !loaderSay("fuck you").includes("fuck"), loaderSay("fuck you"));
+// 🔑 Slice L — INVERTED, same reasoning as §7. The "2-3 dayssss" promise is
+// retired: it was hand-fulfillable only at invite-only scale and signup opened
+// in S110, so the flow was promising a pet nobody would make.
+check("the 2-3 dayssss promise is GONE for everyone", !loaderSay("llama").includes("2-3 dayssss"), loaderSay("llama"));
+check("a custom pet is never repeated back at all", !loaderSay("llama").includes("llama"), loaderSay("llama"));
+check("a refused pet is never repeated", !loaderSay("no").includes("One no"), loaderSay("no"));
+check("a blocked pet is never repeated", !loaderSay("fuck you").includes("fuck"), loaderSay("fuck you"));
+// ⚠️ THE LEGACY POPULATION, asserted rather than assumed. A pre-Slice-L row
+// holds free text and is read on every resume. The claim is not "it is handled"
+// but the specific thing that must be true: they still leave with a companion.
+check(
+  "a pre-Slice-L free-text row still gets a real line, not an empty one",
+  loaderSay("llama").length > 0 && loaderSay("llama").includes("owl"),
+  loaderSay("llama"),
+);
 // Every one of the seven pets must have a speakable delivery — the epilogue's
 // first page is the payoff screen, and "one undefined" is the failure mode.
 check(
@@ -317,20 +307,144 @@ check(
   PETS.every((p) => loaderSay(p).includes(PET_COPY[p]!.spoken)),
 );
 
-// ── 9. the epilogue (ONB-6) ────────────────────────────────────────────────
-// The founder: "the loader setting up is also like 5 sec make it 45 sec". The
-// close is now five read-along pages; the number is the founder's, so a drift
-// from it is a probe failure, not a tuning choice.
+// ── 9. the epilogue (ONB-6; cut to ~10s by ONB-7) ──────────────────────────
+// ONB-6 stretched the close to 45s; the first two outside viewers called the
+// flow too long and the founder approved ~10s over two pages. The number is a
+// decision of record now in the OTHER direction — a drift back up is a probe
+// failure, not a tuning choice.
 console.log("\n9. the epilogue");
-check("the total is the founder's 45 seconds", EPILOGUE_TOTAL_MS === 45_000, String(EPILOGUE_TOTAL_MS));
-check("five pages", EPILOGUE_PAGES.length === 5, String(EPILOGUE_PAGES.length));
+check("the total is the approved ~10 seconds", EPILOGUE_TOTAL_MS === 10_000, String(EPILOGUE_TOTAL_MS));
+check("two pages", EPILOGUE_PAGES.length === 2, String(EPILOGUE_PAGES.length));
 check("page one is the handover (leads with the sticker)", EPILOGUE_PAGES[0]!.sticker === true);
 const epCtx = ctx({ favCharacter: "naruto", pet: "kurama", grade: "10" });
 const epSays = EPILOGUE_PAGES.map((p) => (typeof p.say === "function" ? p.say(epCtx) : p.say));
 check("every page has words for a real student", epSays.every((s) => s.length > 0), JSON.stringify(epSays));
 check("the handover speaks the picked pet", epSays[0]!.includes("Kurama"), epSays[0]);
-check("the hero page names the picked hero", epSays.some((s) => s.includes("Naruto")));
-check("the last page sends the student off by name", epSays[EPILOGUE_PAGES.length - 1]!.includes("Ravi"));
+// ONB-8 — the close is the CORONATION. The hero's name left the sentence on
+// purpose: the hero is now IN the picture (throneClose below), and the words
+// only crown the student. "names the picked hero" is deliberately replaced by
+// the composite claims — this is the slice, not a defused gate (M55).
+check("the close is the throne page", EPILOGUE_PAGES[1]!.throne === true);
+check("the close names the class", /class 10/i.test(epSays[1]!), epSays[1]);
+check("the close sends the student off by name", epSays[1]!.includes("Ravi"), epSays[1]);
+
+// The coronation composite resolves every layer from the student's own picks.
+const crown = throneClose(epCtx);
+check("the coronation seats a throne and Olórin behind it", Boolean(crown.throne) && Boolean(crown.olorin));
+check(
+  "the picked hero stands at the throne's side (the CURATED flank scan)",
+  crown.hero === (HEROES["naruto"]!.throneImg ?? HEROES["naruto"]!.img),
+  crown.hero,
+);
+// The curation is per-hero and deliberate — every hero must resolve SOME flank
+// art, and the curated six must differ from their main art (that was the bug:
+// iron_man's main scan is a tiny figure on a codex page).
+check(
+  "every hero resolves a throne flank",
+  FAV_CHARACTERS.every((id) => Boolean(HEROES[id]!.throneImg ?? HEROES[id]!.img)),
+);
+check(
+  "iron_man's flank is not his codex page",
+  Boolean(HEROES["iron_man"]!.throneImg) && HEROES["iron_man"]!.throneImg !== HEROES["iron_man"]!.img,
+);
+check("the picked companion stands at the other side", crown.pet === PET_COPY["kurama"]!.img, crown.pet);
+check(
+  "the composite narrates itself (it is the payoff, not atmosphere)",
+  crown.alt.includes("Naruto") && crown.alt.includes("Kurama") && /ol[óo]rin/i.test(crown.alt),
+  crown.alt,
+);
+// A heroless student with a custom pet still gets a full frame: throne +
+// stand-in owl + Olórin. The hero layer alone may be absent.
+const bare = throneClose(ctx({ pet: "llama" }));
+check("a heroless student still gets the throne + companion", !bare.hero && Boolean(bare.pet) && Boolean(bare.throne));
+check("the heroless alt does not name a missing hero", bare.alt.includes("your hero"), bare.alt);
+// The silhouette follows the pronoun ANSWER, never a guess from the name.
+check("she → the long-haired silhouette", throneClose(ctx({ pronoun: "she" })).longHair === true);
+check("he → cropped", throneClose(ctx({ pronoun: "he" })).longHair === false);
+check("'just my name' → cropped (no guess)", throneClose(ctx({ pronoun: "name" })).longHair === false);
+
+// ── ONB-9: Olórin SPEAKS on the coronation ─────────────────────────────────
+// Founder: "a comment from Olórin should be also there." The narration line
+// stays unattributed and stays put; his is a separate, attributed bubble.
+const olorinLine = (() => {
+  const raw = EPILOGUE_PAGES[1]!.olorinSay;
+  return typeof raw === "function" ? raw(epCtx) : (raw ?? "");
+})();
+check("Olórin comments on the coronation", olorinLine.length > 0, olorinLine);
+check(
+  "his comment is first person — the platform speaks, it does not narrate",
+  /\bI\b|\bI'll\b|\bmy\b/.test(olorinLine),
+  olorinLine,
+);
+check(
+  "his comment keeps his ROLE (behind you / with you), the one thing the cut kept",
+  /behind you|with you|beside you/i.test(olorinLine),
+  olorinLine,
+);
+check(
+  "his comment does not promise conversation (D-ONB-14)",
+  !PROMISE_BOUND.test(olorinLine) && !olorinLine.includes("?"),
+  olorinLine,
+);
+check(
+  "the narration line survives ALONGSIDE his comment (it was not replaced)",
+  epSays[1]!.includes("The seat was always yours") && olorinLine !== epSays[1],
+  epSays[1],
+);
+// The picture must still carry the hero — his line deliberately does NOT name
+// them (that trade was made in ONB-8 and ONB-9 must not quietly undo it).
+check(
+  "his comment does not re-import the hero's name into the words",
+  !olorinLine.includes("Naruto"),
+  olorinLine,
+);
+
+// ── ONB-9: the founder's PROPORTIONS ───────────────────────────────────────
+// "size of hero should 1.25x of throne and pet should be 0.5x". These numbers
+// live only in CSS, and the coronation has now been sent back twice over
+// proportion — so the ratio is held here rather than trusted to a comment.
+// The claim is on the calc() EXPRESSION, not a rendered pixel: the point is
+// that the flanks stay DERIVED from --throne-h and can't be pinned to a
+// literal height that silently stops tracking it.
+const coronationCss = await Bun.file(
+  new URL("../frontend/src/components/onboarding.css", import.meta.url),
+).text();
+const cssRule = (selector: string) =>
+  coronationCss.slice(coronationCss.indexOf(`.${selector} {`)).split("}")[0] ?? "";
+check(
+  "the throne declares the ratio base --throne-h",
+  /--throne-h:\s*\d/.test(cssRule("onb-throne")),
+);
+check(
+  "the throne's own height IS the base (not a second, drifting number)",
+  /height:\s*var\(--throne-h\)/.test(cssRule("onb-throne-seat")),
+  cssRule("onb-throne-seat"),
+);
+check(
+  "hero = 1.25x the throne (the founder's number, as math)",
+  /height:\s*calc\(var\(--throne-h\)\s*\*\s*1\.25\)/.test(cssRule("onb-throne-hero")),
+  cssRule("onb-throne-hero"),
+);
+check(
+  "pet = 0.5x the throne (the founder's number, as math)",
+  /height:\s*calc\(var\(--throne-h\)\s*\*\s*0\.5\)/.test(cssRule("onb-throne-pet")),
+  cssRule("onb-throne-pet"),
+);
+// "gandalf should be right behind the throne" — centred, not the old left-2%.
+check(
+  "Olórin stands centred behind the throne, not off to its left",
+  /margin-inline:\s*auto/.test(cssRule("onb-throne-olorin")) &&
+    !/left:\s*-/.test(cssRule("onb-throne-olorin")),
+  cssRule("onb-throne-olorin"),
+);
+// Centred + multiply + unmasked = his robes print THROUGH the sword wall.
+// The vertical mask that dissolves him below the throne's crest is the fix,
+// so it is a claim, not a detail.
+check(
+  "…and is masked away below the throne's crest (multiply would show him through it)",
+  /linear-gradient\(to bottom,\s*black[^)]*transparent/.test(cssRule("onb-throne-olorin")),
+  cssRule("onb-throne-olorin"),
+);
 check(
   "every page still reads for a student with NO hero and a custom pet",
   EPILOGUE_PAGES.map((p) => (typeof p.say === "function" ? p.say(ctx({ pet: "llama" })) : p.say)).every(
@@ -341,45 +455,100 @@ check(
   "no epilogue page promises conversation (D-ONB-14)",
   epSays.every((s) => !PROMISE_BOUND.test(s)),
 );
+check("every epilogue page is drawn on scenery, not an empty grid", EPILOGUE_PAGES.every((p) => Boolean(p.scene)));
 
-// ── 10. the founder's ONB-6 asks, as claims (S103) ─────────────────────────
-// Each of these is a note the founder made on a rendered page. They are cheap
-// to satisfy and easy to undo by accident in a copy pass, which is exactly
-// what a probe is for.
-console.log("\n10. the S103 feedback holds");
+// ── 10. the ONB-7 lean cut holds ───────────────────────────────────────────
+// The first two outside viewers, independently: "onboarding is big and a lot
+// of english to read". The founder's rule for the cut: keep the student and
+// THE ROLE OF EACH CHARACTER, cut everything else. These claims are the
+// feedback, encoded — a copy pass that quietly grows the flow back fails here.
+console.log("\n10. the ONB-7 lean cut holds");
+const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
+const beatText = (id: string, c: BeatCtx) => {
+  const b = BEAT_BY_ID[id]!;
+  const p = typeof b.prompt === "function" ? b.prompt(c) : b.prompt;
+  const s = typeof b.sub === "function" ? b.sub(c) : (b.sub ?? "");
+  return `${p} ${s}`;
+};
+// THE WORD BUDGET — the whole point of the slice, as one number. Worst-case
+// mandatory reading for one student: every beat's prompt+sub, the longest
+// hero payoff page, the longest pet reaction, both epilogue pages.
+const budgetCtx = ctx({ favCharacter: "jon_snow", pet: "direwolf", grade: "10" });
+const beatWords = ["greet", "about_you", "fav_character", "pet", "phone"]
+  .map((id) => words(beatText(id, budgetCtx)))
+  .reduce((a, b) => a + b, 0);
+const worstHeroPage = Math.max(
+  ...FAV_CHARACTERS.map((id) => {
+    const p = BEAT_BY_ID["fav_character"]!.pages!(id, ctx())![0]!;
+    return words(`${p.title ?? ""} ${p.text} ${p.bubble?.text ?? ""}`);
+  }),
+);
+const worstPetLine = Math.max(...PETS.map((p) => words(PET_COPY[p]!.reaction)));
+// ONB-9 — Olórin's coronation comment is MANDATORY reading (it is printed, not
+// hovered), so it is charged to the budget like every other line.
+const epilogueWords = EPILOGUE_PAGES.map((p) => {
+  const say = words(typeof p.say === "function" ? p.say(budgetCtx) : p.say);
+  const olorin = p.olorinSay
+    ? words(typeof p.olorinSay === "function" ? p.olorinSay(budgetCtx) : p.olorinSay)
+    : 0;
+  return say + olorin;
+}).reduce((a, b) => a + b, 0);
+const totalWords = beatWords + worstHeroPage + worstPetLine + epilogueWords;
+check(
+  `the WHOLE flow's mandatory reading fits the budget (${totalWords} words ≤ 260)`,
+  totalWords <= 260,
+  `beats=${beatWords} heroPage=${worstHeroPage} petLine=${worstPetLine} epilogue=${epilogueWords}`,
+);
+// Per-piece caps, so one screen can't hoard the budget.
+check(
+  "no hero's role line runs past 30 words",
+  FAV_CHARACTERS.every((id) => words(HEROES[id]!.story) <= 30),
+  JSON.stringify(FAV_CHARACTERS.map((id) => [id, words(HEROES[id]!.story)])),
+);
+check(
+  "no beat's prompt+sub runs past 40 words",
+  ["greet", "about_you", "fav_character", "pet", "phone"].every(
+    (id) => words(beatText(id, budgetCtx)) <= 40,
+  ),
+  JSON.stringify(
+    ["greet", "about_you", "fav_character", "pet", "phone"].map((id) => [
+      id,
+      words(beatText(id, budgetCtx)),
+    ]),
+  ),
+);
+// THE ROLE OF EACH CHARACTER — the one thing the founder kept. Olórin says
+// what he does, the hero ask says what a hero does, the pet ask says what a
+// pet does, the phone ask says why it wants the number.
 const greet = BEAT_BY_ID["greet"]!;
-const greetPrompt = typeof greet.prompt === "function" ? greet.prompt(ctx()) : greet.prompt;
-check("greet welcomes them to Olórin's home", /welcome to the home of Ol/i.test(greetPrompt), greetPrompt);
+check("greet states Olórin's role: your guide", /guide/i.test(beatText("greet", ctx())), beatText("greet", ctx()));
 check(
   "greet's CTA is not the old 'Start my story'",
   greet.input.kind === "none" && greet.input.cta !== "Start my story",
   greet.input.kind === "none" ? greet.input.cta : "(not a cta beat)",
 );
-const about = BEAT_BY_ID["about_you"]!;
-const aboutPrompt = typeof about.prompt === "function" ? about.prompt(ctx()) : about.prompt;
-check("about_you frames the ask as understanding them first", /before your story begins/i.test(aboutPrompt), aboutPrompt);
-const heroBeat = BEAT_BY_ID["fav_character"]!;
-const heroSub = typeof heroBeat.sub === "function" ? heroBeat.sub(ctx()) : heroBeat.sub ?? "";
-check("the hero ask says it's Olórin's favourite part", /my favourite part/i.test(
-  (typeof heroBeat.prompt === "function" ? heroBeat.prompt(ctx()) : heroBeat.prompt) + heroSub,
-));
-check("...and says the pick is the student's own", /pick the one you want|entirely yours/i.test(heroSub), heroSub);
-const phoneBeat = BEAT_BY_ID["phone"]!;
-const phoneSub = typeof phoneBeat.sub === "function" ? phoneBeat.sub(ctx()) : phoneBeat.sub ?? "";
-check("the phone ask gives the REASON: staying in touch beyond the app", /stay in touch outside/i.test(phoneSub), phoneSub);
-// Every hero + pet story must address the student directly — the founder's
-// "the copy should speak to the user" on both payoff pages. A story that never
-// says "you" is a Wikipedia entry with art behind it.
 check(
-  "every hero story speaks TO the student",
+  "the hero ask states the hero's role: beside you as you study",
+  /beside you every day you study/i.test(beatText("fav_character", ctx())),
+  beatText("fav_character", ctx()),
+);
+check(
+  "the pet ask states the pet's role: grows as you work",
+  /grows as you work/i.test(beatText("pet", ctx())) &&
+    /grows as you work/i.test(beatText("pet", ctx({ favCharacter: "jon_snow" }))),
+);
+check(
+  "the phone ask gives the reason: a tutor can reach you",
+  /reach you/i.test(beatText("phone", ctx())),
+  beatText("phone", ctx()),
+);
+// Every hero's role line must still speak TO the student (founder, S103) —
+// lean is not license to go third-person.
+check(
+  "every hero role line speaks TO the student",
   FAV_CHARACTERS.every((id) => /\byou\b|\byour\b/i.test(HEROES[id]!.story)),
 );
-check(
-  "every pet story speaks TO the student",
-  PETS.every((p) => /\byou\b|\byour\b/i.test(PET_COPY[p]!.story)),
-);
-// "more sketches in the page" — the pages that carry art must actually carry
-// several, or the note comes back next session.
+// The art survived the cut: the hero payoff still hangs several sketches.
 check(
   "every hero payoff page hangs at least 3 sketches",
   FAV_CHARACTERS.every((id) => {
@@ -387,32 +556,820 @@ check(
     return sc?.kind === "collage" && Boolean(sc.main) && sc.items.length >= 3;
   }),
 );
+
+// ── Slice G (S114) — THE COMPANION IS EVERYWHERE, AND PIKACHU IS RETIRED. ──
+//
+// The slice's whole claim is about surfaces OUTSIDE onboarding, so nothing that
+// existed in this probe could go red for it — it ran 144/144 both before and
+// after the swap. Asserted at SOURCE level for the same reason the coronation
+// ratios above are: the fact is "which image this component reaches for", and
+// that lives only in the source.
+//
+// M43 is the reason these are CLIENT claims. There is no server rule to probe
+// here — the pet never leaves the browser on these surfaces — so a server-side
+// leg would be green while the student looked at a Pikachu.
+const src = async (p: string) =>
+  await Bun.file(new URL(`../frontend/src/${p}`, import.meta.url)).text();
+
+const [voicePanel, practicePage, appShell, appTsx, revisionPage, practiceCss, voiceCss] =
+  await Promise.all([
+    src("components/VoicePanel.tsx"),
+    src("components/PracticePage.tsx"),
+    src("components/AppShell.tsx"),
+    src("App.tsx"),
+    src("components/RevisionPage.tsx"),
+    src("components/practice.css"),
+    src("components/voice.css"),
+  ]);
+
+// 1. The retirement. A grep for "pikachu" over every FE source is the claim
+// that would catch the easter egg (or the placeholder avatar) coming back —
+// including in a file this probe does not name individually.
+const feFiles = new Bun.Glob("**/*.{ts,tsx,css}");
+const feRoot = new URL("../frontend/src/", import.meta.url).pathname;
+const offenders: string[] = [];
+for await (const f of feFiles.scan(feRoot)) {
+  const text = await Bun.file(`${feRoot}${f}`).text();
+  // safeEcho.ts explains the guard's ORIGIN in prose ("Pikachu shouts their
+  // favourite character") — history, not a live reference. Only code that
+  // reaches for the art or the component counts as a reintroduction.
+  if (/pikachu-\w+\.png|PikaSplash|from "\.\/PikaSplash"/i.test(text)) offenders.push(f);
+}
 check(
-  "every pet payoff page hangs at least 3 sketches",
-  PETS.every((p) => {
-    const sc = BEAT_BY_ID["pet"]!.pages!(p, ctx({ favCharacter: "harry_potter" }))![0]!.scene;
-    return sc?.kind === "collage" && sc.items.length >= 3;
-  }),
+  `no FE source imports Pikachu art or the splash (found: ${offenders.join(", ") || "none"})`,
+  offenders.length === 0,
 );
 check(
-  "every pet has its OWN universe art (not a shared stock sketch)",
-  PETS.every((p) => PET_COPY[p]!.pages.length >= 2),
+  "the three pikachu PNGs are deleted from the asset tree",
+  !(await Bun.file(new URL("../frontend/src/assets/pikachu-wave.png", import.meta.url)).exists()),
 );
-check("the lore ask carries Middle-earth in its corners", (() => {
-  const sc = BEAT_BY_ID["lore"]!.scene;
-  const scene = typeof sc === "function" ? sc(ctx()) : sc;
-  return scene?.kind === "pair" && (scene.items?.length ?? 0) >= 2;
-})());
+check("PikaSplash.tsx is deleted", !(await Bun.file(new URL("../frontend/src/components/PikaSplash.tsx", import.meta.url)).exists()));
 check(
-  "the fellowship page names the class they're about to conquer",
-  BEAT_BY_ID["lore"]!.pages!("Yes", ctx({ favCharacter: "thor", pet: "groot", grade: "10" }))![2]!
-    .title!.includes("class 10"),
+  "the nav logo no longer summons anything (no onClick, no pika state)",
+  !/setPikaOpen|pikaOpen/.test(appShell) && !/aria-label="Pikachu"/.test(appShell),
+);
+
+// 2. The swap. Each surface must resolve the companion through the SHARED
+// helper — a hard-coded pet import would render one child's dragon to everyone.
+check(
+  "VoicePanel's avatar resolves through loaderPetImg(pet)",
+  /loaderPetImg\(pet\)/.test(voicePanel) && /import\s*\{[^}]*loaderPetImg/.test(voicePanel),
 );
 check(
-  "...and still reads for a student with no grade on file",
-  Boolean(BEAT_BY_ID["lore"]!.pages!("Yes", ctx({ favCharacter: "thor", pet: "groot" }))![2]!.title),
+  "the practice SoonBanner resolves through loaderPetImg(pet)",
+  /loaderPetImg\(pet\)/.test(practicePage),
 );
-check("every epilogue page is drawn on scenery, not an empty grid", EPILOGUE_PAGES.every((p) => Boolean(p.scene)));
+check(
+  "no surface imports a specific pet PNG directly (that would pin one pet for everyone)",
+  ![voicePanel, practicePage, appShell].some((f) => /from "\.\.\/assets\/pets\//.test(f)),
+);
+
+// 3. The chain. A prop that App never passes is the failure mode this whole
+// lift invites, and it type-checks fine at every level in between.
+check("App lifts the pet from the onboarding answers", /const pet = onb\?\.answers\.pet \?\? null/.test(appTsx));
+check("App passes pet to PracticePage", /<PracticePage pet=\{pet\}/.test(appTsx));
+check("App passes pet to RevisionPage", /pet=\{pet\}/.test(appTsx));
+check("RevisionPage forwards pet to VoicePanel", /pet=\{pet\}/.test(revisionPage));
+
+// 4. 🔴 THE ANSWERS SURVIVE THE HANDOVER. `onDone` used to discard them
+// (`setOnb(null)`), which was harmless until the companion was lifted from
+// `onb` — after which a student who had JUST chosen a dragon would be handed
+// the owl stand-in for the rest of the session. Nothing else in the suite
+// looks at this, and the bug is invisible on a reload, so it would have been
+// found by a founder, not by us.
+check(
+  "onboarding hands its ANSWERS back on the way out (not a bare onDone())",
+  /onDone: \(answers: BeatCtx\["answers"\]\) => void/.test(
+    await src("components/OnboardingPage.tsx"),
+  ),
+);
+check(
+  "App keeps those answers instead of nulling the onboarding state",
+  /onDone=\{\(answers\) =>/.test(appTsx) && /answers,\s*\}\)/.test(appTsx),
+);
+
+// 5. 🔑 THE SIZING AXIS (M63). Pikachu was ONE aspect ratio, so `width: Npx`
+// pinned his height too. The companions span 0.46 (owl) to 1.40 (direwolf):
+// under a fixed width the owl renders ~2.5x the direwolf's height. Both slots
+// must therefore drive HEIGHT and cap width. This asserts the RULE, not a
+// pixel — a probe on the number would just re-state the CSS.
+const rule = (css: string, selector: string) =>
+  css.slice(css.indexOf(`.${selector} {`)).split("}")[0] ?? "";
+for (const [name, css, sel] of [
+  ["practice SoonBanner", practiceCss, "prac-soon-pet"],
+  ["voice avatar", voiceCss, "voice-avatar-img"],
+] as const) {
+  const r = rule(css, sel);
+  check(`${name}: sized on HEIGHT, not width (M63)`, /height:\s*\d+px/.test(r), r);
+  check(`${name}: width follows the art`, /width:\s*auto/.test(r), r);
+  check(`${name}: a wide companion is capped, not allowed to overhang`, /max-width:\s*\d/.test(r), r);
+  check(`${name}: object-fit contain, so no aspect is cropped`, /object-fit:\s*contain/.test(r), r);
+}
+// The carried-banner gag is gone WITH its offsets — leaving them would tuck the
+// banner under a paw that no companion has.
+check(
+  "the SoonBanner no longer pulls under a raised paw",
+  !/margin-left:\s*-34px/.test(rule(practiceCss, "prac-soon-banner")),
+);
+
+// 6. The copy stopped naming a character the student never chose, and names
+// theirs correctly: a SPECIES takes an article, a NAME does not.
+check("the voice hint no longer says 'Tap Pikachu'", !/Tap Pikachu/.test(voicePanel));
+check("the voice hint names the student's own companion", /loaderPetSpoken\(pet\)/.test(voicePanel));
+check("a species reads with an article ('the owl')", loaderPetSpoken("owl") === "the owl");
+check("a NAME reads bare ('Groot', not 'the Groot')", loaderPetSpoken("groot") === "Groot");
+check("JARVIS keeps its own casing", loaderPetSpoken("jarvis") === "JARVIS");
+// The fallback is what makes every `pet` prop above safe to render unguarded.
+check("an unknown/custom pet falls back to the owl stand-in", loaderPetSpoken("a robot dog") === "the owl");
+check("a skipped pet falls back too", loaderPetSpoken(null) === "the owl");
+
+// ── Slice H (S115) — THE FIRST-RUN DASHBOARD ───────────────────────────────
+//
+// Same reasoning as Slice G's block: these are CLIENT facts with no server rule
+// behind them (M43), so a service-level leg would be green while a student
+// looked at the wrong thing. Asserted at source, alongside a browser walk
+// (`scratchpad/tour-walk.mjs`) that measures what source cannot — that the tour
+// settles, survives a navigation, and goes away on real activity.
+const [dashPage, dashCss] = await Promise.all([
+  src("components/DashboardPage.tsx"),
+  src("components/dashboard.css"),
+]);
+
+// 1. The retirement of DASH-FR's card. Olórin's scan leaves the dashboard, and
+// his signature goes with it — the pet is the speaker now, and a signature under
+// a companion's sentence names the wrong character.
+check("Slice H: the Olórin welcome card is gone from the dashboard", !/dash-welcome/.test(dashPage));
+check("Slice H: its CSS went with it (no orphaned .dash-welcome rules)", !/\.dash-welcome/.test(dashCss));
+check("Slice H: Olórin's scan is no longer imported here", !/sceneOlorin/.test(dashPage));
+check("Slice H: the '— Olórin' signature is gone", !/— Olórin/.test(dashPage));
+check(
+  "Slice H: and the art file is not referenced by any other dashboard rule",
+  !/olorin\.jpg/.test(dashPage),
+);
+
+// 2. The tour renders the STUDENT'S companion through the shared helper. A
+// direct PNG import here would pin one child's dragon onto every child — the
+// exact failure Slice G's block guards on the other two surfaces.
+check("Slice H: the tour resolves its sticker via the shared helper", /loaderPetImg\(/.test(dashPage));
+check(
+  "Slice H: it imports no specific pet art (that would pin one pet on everyone)",
+  !/assets\/pets?\//.test(dashPage),
+);
+check("Slice H: the greeting uses FIRST name, not the full name", /firstName\(studentName\)/.test(dashPage));
+
+// 3. D-H1 — animate once per SESSION. The module-scope flag is the whole
+// mechanism; a useState/useRef instead would reset on every remount and re-type
+// the sentence on every return, which is the behaviour the founder ruled out.
+check("Slice H (D-H1): a module-scope flag holds the animate-once rule", /^let tourHasAnimated = false;/m.test(dashPage));
+check(
+  "Slice H (D-H1): the flag GATES the typewriter, not just the tiles",
+  /!tourHasAnimated && !reducedMotion/.test(dashPage),
+);
+check("Slice H (D-H1): reduced motion takes the same instant path", /reducedMotion/.test(dashPage));
+
+// 4. D-H2 — the lesson CTA survived. Losing it would leave a brand-new student
+// with five orienting tiles and no stated place to begin.
+check("Slice H (D-H2): the Start-lesson CTA is still rendered", /dash-tour-cta/.test(dashPage));
+
+// 5. The tiles. Slice J REPLACES three claims here rather than deleting them
+// (M55/M65 — a claim the next slice deliberately undoes must be restated as the
+// new behaviour, never quietly dropped, or the gate silently stops gating).
+//   was: "Journal is the one with no view (soon)"
+//   was: "the soon tile renders as a div, not a button"
+// Journal now HAS a page, so the inverse of each is the claim worth holding.
+check("Slice H: five section tiles are declared", (dashPage.match(/\{ view: /g) ?? []).length === 5);
+check(
+  "Slice J: Journal's tile navigates (it is no longer the viewless one)",
+  /\{ view: "journal", label: "Journal"/.test(dashPage) && !/view: null/.test(dashPage),
+);
+check(
+  "Slice J: EVERY tile is a button now — the viewless branch is gone",
+  !/dash-tour-tile--soon/.test(dashPage) && !/dash-tour-soon/.test(dashPage),
+);
+check(
+  "Slice J: the tile type forbids a viewless tile (compiler, not comment)",
+  /view: AppView;/.test(dashPage) && !/view: AppView \| null;/.test(dashPage),
+);
+check(
+  "Slice H: tile labels match the rail's spelling ('Pace plan')",
+  /label: "Pace plan"/.test(dashPage) && !/label: "Pace Plan"/.test(dashPage),
+);
+
+// 6. The loading gate. Without it the ternary's ELSE branch rendered while the
+// reads were in flight, so a first-run student watched three "-" stat cards
+// appear and then get swapped for the tour — the very flash DASH-FR's comment
+// claims to prevent. Found by the walk, not by reading the code.
+check(
+  "Slice H: neither branch renders until BOTH reads are in (no 0/0/0 flash)",
+  /\{!summary \|\| !nav \? null : firstRun \?/.test(dashPage),
+);
+
+// 7. The sizing axis (M63) — same rule as every other companion slot.
+{
+  const r = rule(dashCss, "dash-tour-pet");
+  check("Slice H sticker: sized on HEIGHT, not width (M63)", /height:\s*\d+px/.test(r), r);
+  check("Slice H sticker: width follows the art", /width:\s*auto/.test(r), r);
+  check("Slice H sticker: a wide companion is capped", /max-width:\s*\d/.test(r), r);
+  check("Slice H sticker: object-fit contain, so no aspect is cropped", /object-fit:\s*contain/.test(r), r);
+}
+
+// 8. M60 — the stagger must be a transition-delay, never an @keyframes with
+// `animation-fill-mode: both`, which leaves the transform applied forever and
+// silently switches off blend modes on the whole subtree.
+check(
+  "Slice H: the tile stagger is a transition-delay, not a filled animation (M60)",
+  /transition-delay:\s*calc\(var\(--i\)/.test(dashCss) && !/dash-tour-tile[\s\S]{0,400}animation-fill-mode/.test(dashCss),
+);
+check(
+  "Slice H: the settled tile state is `transform: none` (nothing lingers)",
+  /\.dash-tour-tiles\.is-in \.dash-tour-tile-wrap \{[^}]*transform:\s*none/.test(dashCss),
+);
+
+// ── Slice I (S116) — THE CHAPTER FILTER ────────────────────────────────────
+//
+// The server side of this slice is proven by probe_revision_nav, which asserts
+// the per-sub_topic flag AGAINST REAL getSlide calls. What no service test can
+// see is whether the three CLIENT surfaces actually consume it — and M43 is in
+// the log for precisely that shape: the server rule was verified and green, and
+// the client broke the same rule where no gate could see it. Slice I IS a
+// client-side filter, so its claims live here.
+//
+// The rule these legs encode: a surface that picks or lists a sub_topic must
+// test that SUB_TOPIC's `hasContent`. Chapter-level `hasContent` is derived and
+// says only that SOMETHING under it opens — conflating the two is the exact bug
+// this slice removed, and it is the one a future edit will reintroduce.
+const [dashI, landI, revI, revSvc] = await Promise.all([
+  src("components/DashboardPage.tsx"),
+  src("components/RevisionLanding.tsx"),
+  src("components/RevisionPage.tsx"),
+  Bun.file(new URL("../src/services/revision.ts", import.meta.url)).text(),
+]);
+
+// 1. ONE definition of "will this render", shared by the render path and the
+// nav that predicts it. Two copies is the bug one level down.
+check(
+  "Slice I: `publishedSlideId` is the single exported publication test",
+  /export function publishedSlideId\(/.test(revSvc),
+);
+check(
+  "Slice I: the render path (resolveSlideContext) CALLS it rather than re-testing",
+  /const slideId = publishedSlideId\(/.test(revSvc),
+);
+check(
+  "Slice I: getChapterNav calls it too — the nav predicts with the same rule",
+  /hasContent:\s*\n?\s*publishedSlideId\(/.test(revSvc),
+);
+check(
+  "Slice I: chapter hasContent is DERIVED from its sub_topics, not queried apart",
+  /ch\.hasContent = ch\.topics\.some\(\(t\) => t\.subTopics\.some\(\(s\) => s\.hasContent\)\)/.test(revSvc),
+);
+
+// 2. The dashboard: list filtered, and the CTA aimed at a renderable sub_topic
+// searched ACROSS sections (a chapter whose first section is unpublished is
+// still openable — assuming topics[0] was half the original bug).
+check("Slice I: the dashboard lesson list is filtered to openable chapters", /nav\?\.filter\(\(ch\) => ch\.hasContent\)/.test(dashI));
+check(
+  "Slice I: its sub_topic pick tests each sub_topic and spans sections",
+  /flatMap\(\(t\) => t\.subTopics\)\.filter\(\(s\) => s\.hasContent\)/.test(dashI),
+);
+check(
+  "Slice I (D-I2): NO fallback to an unopenable chapter when nothing is published",
+  !/\?\?\s*nav\?\.\[0\]/.test(dashI),
+);
+
+// 3. The Revision landing: the grid gate was `slideCount > 0` counting SPINE
+// rows, which let every chapter through. It must count openable ones.
+check(
+  "Slice I: the landing counts openable sub_topics, not spine rows",
+  /t\.subTopics\.some\(\(s\) => s\.hasContent\)/.test(landI),
+);
+check("Slice I: the landing's sub_topic picks go through one openable helper", /firstOpenable/.test(landI));
+
+// 4. The viewer: `flat` drives prev/next AND the "n / total" counter AND the
+// index sidebar. Built from the raw nav it fetched a doomed flat[0] on every
+// deep-link, walked prev/next through 404s, and counted 159 slides where 31
+// exist. One filtered derivation feeds all three.
+check(
+  "Slice I: the viewer derives a FILTERED nav that every consumer reads",
+  /const nav = useMemo<Nav \| null>\(\(\) => \{[\s\S]{0,400}s\.hasContent/.test(revI),
+);
+check(
+  "Slice I: the raw fetched tree is not consumed directly",
+  /setRawNav\(tree\)/.test(revI) && !/\bsetNav\(/.test(revI),
+);
+// 5. The staleness guard. A losing request that lands late must not paint an
+// error over a slide that rendered — the walk caught exactly that.
+check(
+  "Slice I: the slide fetch has a staleness guard (late rejects cannot set error)",
+  /let live = true;/.test(revI) && /if \(!live\) return;/.test(revI),
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// §Slice J — the Journal page.
+//
+// A page with no backend can only be probed as CLIENT claims (M43's rule, the
+// same reason the companion legs above are client-side): there is no server
+// rule to assert, so a server leg would be green while the page rendered wrong.
+// The look itself is the walk's job, not this file's — these hold the RULES a
+// later edit could break without anyone noticing.
+// ⚠️ `onboarding.copy.ts` is deliberately NOT read as text here, even though the
+// claim below is about its contents. Reading it with Bun.file() while it is ALSO
+// a static import of this probe makes Bun 1.3.8 intermittently try to transpile
+// the PNG that file imports, and the probe dies before its first check with
+// `Unexpected <PNG>` — no summary, no failing leg, exit 1. It is a coin flip per
+// run, which cost this session a long bisect in which every single-run result
+// was noise (see the miss log). The claim is asserted as BEHAVIOUR instead,
+// which is a better probe anyway — and it is the shape S113/S116's open
+// "in-suite only, dies silently" item should be re-examined under.
+const [journalPage, journalCss, dashCssJ] = await Promise.all([
+  src("components/JournalPage.tsx"),
+  src("components/journal.css"),
+  src("components/dashboard.css"),
+]);
+
+// 1. D-J1 — the rail navigates, and the "soon" lives ONCE, on the page. The
+// failure this catches: a rail item still flagged `soon` beside a page that
+// opens, i.e. two answers to one question.
+check(
+  "Slice J (D-J1): the Journal rail item navigates",
+  /label="Journal"[\s\S]{0,200}onClick=\{\(\) => onNavigate\("journal"\)\}/.test(appShell),
+);
+check(
+  "Slice J (D-J1): the Journal rail item is no longer inert",
+  !/<RailItem label="Journal" icon=\{<JournalIcon \/>\} badge soon \/>/.test(appShell),
+);
+check(
+  "Slice J (D-J1): the badge survived (the draw was never the soon flag)",
+  /label="Journal"[\s\S]{0,120}badge/.test(appShell),
+);
+check("Slice J: 'journal' is a real AppView member", /\| "journal"/.test(appShell));
+check(
+  "Slice J: App routes the view to the page",
+  /view === "journal" \? \(\s*<JournalPage/.test(appTsx),
+);
+
+// 2. 🔑 D-J3 — THE FALLBACK IS THE PET, NEVER OLÓRIN. S109's pivot took Olórin
+// off every post-onboarding surface; reaching for him to cover a missing hero
+// would reopen a closed decision. This is the leg that would catch it, and it
+// matters because the fallback fires for a REAL population: a student who
+// skipped the hero beat, and every pre-S96 row holding a retired id (which
+// `heroLabel` echoes back raw, so the name renders and only the art is missing).
+check(
+  "Slice J (D-J3): no Olórin art reaches the Journal page",
+  !/olorin/i.test(journalPage),
+);
+check(
+  "Slice J (D-J3): a missing hero falls back to the PET, which always resolves",
+  /if \(art\) return/.test(journalPage) && /loaderPetImg\(pet\)/.test(journalPage),
+);
+check(
+  "Slice J: the fallback takes art AND name from the same character",
+  /heroLabel\(hero\)/.test(journalPage) && /loaderPetSpoken\(pet\)/.test(journalPage),
+);
+
+// 3. D-J2 — the mock is a MOCK. Two independent failures live here: a screen
+// reader narrating four fabricated messages as the student's own, and a
+// keyboard tab landing inside a preview that does nothing.
+check(
+  "Slice J (D-J2): the blurred preview is off the accessibility tree",
+  /className="jrnl-preview" aria-hidden="true"/.test(journalPage),
+);
+check(
+  "Slice J (D-J2): nothing inside the mock is focusable (no buttons/inputs/links)",
+  !/<(button|input|a|textarea)\b/.test(
+    journalPage.slice(journalPage.indexOf("jrnl-preview"), journalPage.indexOf("jrnl-soon")),
+  ),
+);
+check(
+  "Slice J (D-J2): the mock is sized bars, not fake sentences under a blur",
+  /style=\{\{ width: "\d+%" \}\}/.test(journalPage),
+);
+check(
+  "Slice J: the waveform is a fixed pattern, not Math.random()",
+  !/Math\.random/.test(journalPage),
+);
+{
+  const r = rule(journalCss, "jrnl-preview");
+  // A light blur reads as a font that failed to load. The RULE is "unmistakably
+  // deliberate", and 5px is the floor where that holds.
+  const px = Number(/filter:\s*blur\((\d+)px\)/.exec(r)?.[1] ?? 0);
+  check(`Slice J (D-J2): the blur is heavy enough to read as deliberate (${px}px ≥ 5)`, px >= 5, r);
+  check("Slice J (D-J2): the mock cannot be moused into", /pointer-events:\s*none/.test(r), r);
+}
+{
+  // The blur bleeds past its own box; without a clipping parent it smears onto
+  // the canvas and looks like a broken render rather than a preview.
+  const r = rule(journalCss, "jrnl-stage");
+  check("Slice J: the stage clips the blur's bleed", /overflow:\s*hidden/.test(r), r);
+  check("Slice J: preview and panel share one grid cell, so neither can spill", /display:\s*grid/.test(r), r);
+}
+
+// 4. The soon panel — ONCE per page, never per row. The rule this whole family
+// inherits from SoonBanner (`practice.css:90`). A per-row "soon" is what made
+// AVAIL v1 a wall of 154 grey chips.
+check(
+  "Slice J: exactly ONE soon panel on the page",
+  (journalPage.match(/className="jrnl-soon"/g) ?? []).length === 1,
+);
+
+// 5. 🔑 THE SIZING AXIS (M63) — this slot is the WORST case in the app for it:
+// eleven heroes plus seven pets as fallback, no shared aspect ratio. Same rule
+// as every other character slot, asserted the same way.
+{
+  const r = rule(journalCss, "jrnl-front");
+  check("Slice J front: sized on HEIGHT, not width (M63)", /height:\s*\d+px/.test(r), r);
+  check("Slice J front: width follows the art", /width:\s*auto/.test(r), r);
+  check("Slice J front: a wide character is capped", /max-width:\s*\d/.test(r), r);
+  check("Slice J front: object-fit contain, so no aspect is cropped", /object-fit:\s*contain/.test(r), r);
+  // M60 — a transform left applied on this subtree silently switches the blend
+  // mode OFF, which is how the onboarding scans grew opaque plates in S101.
+  check("Slice J front: composites with multiply (opaque JPEG on graph paper)", /mix-blend-mode:\s*multiply/.test(r), r);
+  // 🔑 FOUND BY THE WALK, NOT BY THIS FILE. `multiply` alone kills the plate
+  // only for scans with a near-white ground; S102 measured the grounds at
+  // 156-255 and most heroes are full-bleed toned drawings, which multiply lands
+  // on the paper as a hard rectangle. Harry looked perfect and iron_man looked
+  // like a pasted photo under IDENTICAL CSS — which is why the probe has to
+  // hold the mask, not just the blend mode.
+  check("Slice J front: feathers EVERY edge, not just one axis (S102)", /mask-image:/.test(r), r);
+  check(
+    "Slice J front: the feather is two axes composited, not a single gradient",
+    /mask-composite:\s*intersect/.test(r) && (r.match(/linear-gradient/g) ?? []).length >= 2,
+    r,
+  );
+}
+// 🔑 The OTHER half of the same finding: which ART reaches a composite at all.
+// iron_man's `img` is a full-bleed codex page — fine at page scale, a dark
+// rectangle at 150px beside a card. `throneImg` is the curated per-hero bust.
+// One definition, two composites (the coronation and the Journal front).
+check(
+  "Slice J: the Journal front takes the COMPOSITE art, not the headline art",
+  /heroCompositeImg\(hero\)/.test(journalPage) && !/heroImg\(/.test(journalPage),
+);
+// Asserted as BEHAVIOUR, not as a grep (see the note on the src() batch above).
+// This is the stronger claim regardless: a source grep proves the call was
+// written, whereas these prove the two composites actually AGREE — which is the
+// thing that breaks if someone edits one of them.
+check(
+  "Slice J: the composite art differs from the headline art where it must",
+  // iron_man is the case that drove the fix: a full-bleed codex page as `img`,
+  // a curated bust as `throneImg`. If these ever collapse to one value the
+  // Journal front silently goes back to rendering a dark rectangle.
+  heroCompositeImg("iron_man") !== heroImg("iron_man"),
+  `${heroCompositeImg("iron_man")} vs ${heroImg("iron_man")}`,
+);
+check(
+  "Slice J: every hero resolves to SOME composite art (no holes)",
+  FAV_CHARACTERS.every((id) => Boolean(heroCompositeImg(id))),
+);
+check(
+  "Slice J: a skipped/legacy hero resolves to nothing, so the pet can take over",
+  heroCompositeImg(null) === undefined && heroCompositeImg("Interstellar - Cooper") === undefined,
+);
+check(
+  "Slice J: the coronation and the Journal front share ONE definition of it",
+  // throneClose is the coronation's resolver. If it stopped routing through the
+  // shared helper, these would drift apart the next time either changed.
+  throneClose(ctx({ favCharacter: "iron_man" })).hero === heroCompositeImg("iron_man"),
+);
+
+// 6. The dead CSS went with the branch. A rule matching nothing reports no
+// failure (M59) — this is the leg that notices.
+check(
+  "Slice J: the retired soon-tile CSS is deleted, not orphaned",
+  !/^\.dash-tour-tile--soon \{/m.test(dashCssJ) && !/^\.dash-tour-soon \{/m.test(dashCssJ),
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// §Slice K — the Crew page, and the retirement of the rail's inert variant.
+//
+// Client claims again (M43), for the same reason as §Slice J: no backend, so a
+// server leg would be green while the page rendered wrong. The look is the
+// walk's job; these hold the rules an edit could break silently.
+const [crewPage, crewCss, appShellK, appTsxK, appShellCss] = await Promise.all([
+  src("components/CrewPage.tsx"),
+  src("components/crew.css"),
+  src("components/AppShell.tsx"),
+  src("App.tsx"),
+  src("components/app-shell.css"),
+]);
+
+// 1. The page exists and is reachable. Four mechanical edits, four claims —
+// any one of them missing gives a rail item that highlights nothing or a view
+// that falls through to the Practice default (the `: (` arm of the chain, which
+// is why a missing branch renders the WRONG page rather than an error).
+check("Slice K: 'crew' is a real AppView member", /\| "crew"/.test(appShellK));
+check(
+  "Slice K: App routes the view to the page",
+  /view === "crew" \? \(\s*(?:\/\/[^\n]*\n\s*)*<CrewPage/.test(appTsxK),
+);
+check(
+  "Slice K (D-K2): the Crew rail item navigates",
+  /label="Crew"[\s\S]{0,200}onClick=\{\(\) => onNavigate\("crew"\)\}/.test(appShellK),
+);
+// 🔑 D-K2 is a claim about WHICH GROUP, not merely about presence — and the
+// groups are the whole reason the rail reads as two ideas (who walks with you /
+// what you study). `nav-spacer` is the divider, so "before it" is the claim.
+check(
+  "Slice K (D-K2): Crew sits in the companion group, above the spacer",
+  appShellK.indexOf('label="Crew"') < appShellK.indexOf("nav-spacer") &&
+    appShellK.indexOf('label="Crew"') > appShellK.indexOf('label="Journal"'),
+);
+
+// 2. Search is gone — item, icon and all. A component left behind after its
+// last call site is deleted matches nothing and reports no failure (M59).
+check("Slice K: the Search rail item is gone", !/label="Search"/.test(appShellK));
+check("Slice K: its icon went with it, not orphaned", !/function SearchIcon/.test(appShellK));
+
+// 3. 🔑 THE STRUCTURAL HALF OF THE SOON RULE. Search was the last user of the
+// rail's inert variant, so removing it retires the whole affordance — and with
+// the variant deleted the rail can no longer EXPRESS "soon" at all. That is
+// stronger than any per-item assertion: the rule (once per page, never per row)
+// is now enforced by the type rather than by everyone remembering it.
+check(
+  "Slice K: RailItem can no longer be made inert",
+  !/\bsoon\?: boolean/.test(appShellK) && !/nav-item--soon/.test(appShellK),
+);
+check(
+  "Slice K: every rail item goes somewhere (onClick is required)",
+  /onClick: \(\) => void/.test(appShellK),
+);
+check(
+  "Slice K: the inert variant's CSS is deleted, not orphaned (M59)",
+  !/^\.nav-item--soon/m.test(appShellCss) && !/^\.nav-tip-soon/m.test(appShellCss),
+);
+
+// 4. D-K1 — ONE soon panel, and the capability cards are PLAIN. The plan asked
+// for a pill on every card; that is the third answer to a question settled in
+// Slices I and J, so the panel speaks for all six cards instead.
+check(
+  "Slice K (D-K1): exactly ONE soon panel on the page",
+  (crewPage.match(/className="crew-soon"/g) ?? []).length === 1,
+);
+{
+  // Scoped to the rendered card region, NOT the whole file — the constants at
+  // the top explain the decision in prose, and a file-wide grep cannot tell a
+  // rule from an explanation of it (M74, three sessions running).
+  //
+  // The region ends at the list's own closing tag, NOT at the soon panel below
+  // it. Ending at the panel swallowed the comment that introduces the panel —
+  // which naturally says what the panel is — and reddened this leg on the first
+  // run. The region was wrong, not the prose: the claim is about CARDS, so it
+  // should stop where the cards do.
+  const cards = crewPage.slice(crewPage.indexOf("crew-caps"), crewPage.indexOf("</ul>"));
+  check("Slice K (D-K1): no per-card soon pill", !/soon/i.test(cards), cards.slice(0, 80));
+  check(
+    "Slice K (D-K1): nothing inside a capability card is focusable",
+    !/<(button|input|a|textarea)\b/.test(cards),
+  );
+}
+
+// 5. D-K3 — the rotation. Three separate failures live here, so three legs.
+check(
+  "Slice K (D-K3): the cycle reuses ROTATE_MS, not a fresh magic number",
+  /ROTATE_MS/.test(crewPage) && !/setInterval\([^,]+,\s*\d+\)/.test(crewPage),
+);
+check(
+  "Slice K (D-K3): reduced motion stops the timer before it is ever armed",
+  /if \(reducedMotion\) return;[\s\S]{0,120}setInterval/.test(crewPage),
+);
+check(
+  "Slice K (D-K3): an opened column stops cycling and settles on the first card",
+  /const capIdx = isOpen \? 0 :/.test(crewPage),
+);
+check(
+  "Slice K (D-K3): ONE timer drives both columns, so they cannot drift apart",
+  (crewPage.match(/setInterval/g) ?? []).length === 1,
+);
+
+// 6. 🔑 D-K4 — a hero with no art gets NO COLUMN. Asserted as BEHAVIOUR on the
+// resolver rather than as a grep, which is the stronger claim and the shape
+// that removes the comment-collision class entirely (M74).
+check(
+  "Slice K (D-K4): every known hero yields art, so their column always renders",
+  FAV_CHARACTERS.every((id) => Boolean(heroCompositeImg(id))),
+);
+check(
+  "Slice K (D-K4): a skipped hero and a legacy free-text row both yield nothing",
+  heroCompositeImg(null) === undefined && heroCompositeImg("Interstellar - Cooper") === undefined,
+);
+check(
+  "Slice K (D-K4): no Olórin art reaches the Crew page",
+  !/olorin/i.test(crewPage),
+);
+// The pet column is the one that can never be absent — every pet helper lands
+// on the owl stand-in — which is what makes "drop the hero column" safe. If
+// this stopped holding, a hero-less student would get an EMPTY page.
+check(
+  "Slice K (D-K4): the pet column is unconditional, so the page is never empty",
+  /cols\.push\(\{\s*key: "pet"/.test(crewPage),
+);
+
+// 7. 🔑 D-K5 — THE ART DOES NOT CYCLE, AND THIS IS THE LEG THAT WOULD CATCH IT
+// COMING BACK.
+//
+// The slice was built with the art rotating through all of a hero's scans, it
+// passed every leg in this file, and it passed an 89/89 browser walk. Only a
+// screenshot showed what was actually on screen: a hero has three scans and
+// only ONE is composite-grade, so the cycle was feeding the full-bleed page
+// scenes — the exact art `throneImg` was curated to keep OUT of composites —
+// into a 190px slot two frames in three.
+//
+// The rule that survives: this slot takes the curated bust and nothing else.
+check(
+  "Slice K (D-K5): the column art is a single image, not a list to index into",
+  /art: string;/.test(crewPage) && !/art\[/.test(crewPage),
+);
+check(
+  "Slice K (D-K5): the art comes from the COMPOSITE resolver",
+  /heroCompositeImg\(hero\)/.test(crewPage) && !/heroImg\(/.test(crewPage),
+);
+// Only the CARDS may be indexed by the clock. If a frame index ever reappears
+// here, the art is cycling again.
+check(
+  "Slice K (D-K5): only the cards are driven by the tick",
+  (crewPage.match(/tick %/g) ?? []).length === 1 && /capIdx/.test(crewPage),
+);
+// iron_man is the case that drove both S117's finding and this one: a
+// full-bleed codex page as headline art, a curated bust as the composite. If
+// those ever collapse to one value the column silently goes back to rendering a
+// dark rectangle, and nothing else in this file would notice.
+check(
+  "Slice K: the composite art still differs from the headline art where it must",
+  heroCompositeImg("iron_man") !== heroImg("iron_man"),
+  `${heroCompositeImg("iron_man")} vs ${heroImg("iron_man")}`,
+);
+// NOTE — the retired `heroArtVariants` helper is deleted rather than orphaned
+// (M59), but that is NOT asserted here and deliberately so: the only way to
+// check it is to read `onboarding.copy.ts` as TEXT, which is the one thing
+// §Slice J's header forbids in this file. Reading it with Bun.file() while it
+// is also a static import is what made this probe die intermittently on a PNG.
+// The claim is worth less than the crash it would risk re-introducing.
+
+// 8. The art slot — the same rules as every other character slot in the app,
+// and this is the worst case yet: eleven heroes at three scans EACH plus seven
+// pet stickers through one selector.
+{
+  const r = rule(crewCss, "crew-art");
+  check("Slice K art: sized on HEIGHT, not width (M63)", /height:\s*\d+px/.test(r), r);
+  check("Slice K art: width follows the art", /width:\s*auto/.test(r), r);
+  check("Slice K art: object-fit contain, so no aspect is cropped", /object-fit:\s*contain/.test(r), r);
+  check("Slice K art: composites with multiply", /mix-blend-mode:\s*multiply/.test(r), r);
+  // 🔑 BOTH halves of the composite (S117). This column cycles through art of
+  // both kinds — line-art on white AND full-bleed toned scans — so a missing
+  // mask would show up and vanish on a timer, which is the worst version of
+  // this bug to diagnose.
+  check("Slice K art: feathers EVERY edge, not just one axis (S102)", /mask-image:/.test(r), r);
+  check(
+    "Slice K art: the feather is two axes composited, not a single gradient",
+    /mask-composite:\s*intersect/.test(r) && (r.match(/linear-gradient/g) ?? []).length >= 2,
+    r,
+  );
+  // 🔑 M60 — the reason this file cares about a fill mode at all. A retained
+  // transform creates a stacking context that silently switches OFF the blend
+  // mode above, on art that was composited correctly. That is precisely how the
+  // onboarding scans grew opaque plates in ONB-6. Scoped to the DECLARATION so
+  // that prose about the rejected keyword cannot redden the rule (M74).
+  check(
+    "Slice K art: the entrance releases its transform (M60 — never a retained fill)",
+    /animation:[^;]*backwards/.test(r) && !/animation:[^;]*\bboth\b/.test(r),
+    r,
+  );
+}
+check(
+  "Slice K: no animation anywhere in the page retains its final transform (M60)",
+  !/animation:[^;]*\bboth\b/.test(crewCss),
+);
+
+// ── §Slice L — the pronoun stickers, and the closing of the last free set ──
+//
+// Two independent changes share this block because they share one idea: the
+// flow now picks EVERY answer from a set we authored, and picks them by their
+// picture. §7 and §8 above already carry the inverted custom-pet claims (the
+// behaviour that is GONE); these carry the structure that replaced it.
+console.log("\nSlice L — the pronoun stickers + the closed pet set");
+const [onbPageL, onbCssL, onbCopyL, onbServiceL] = await Promise.all([
+  src("components/OnboardingPage.tsx"),
+  src("components/onboarding.css"),
+  src("components/onboarding.copy.ts"),
+  Bun.file(new URL("../src/services/onboarding.ts", import.meta.url)).text(),
+]);
+
+// 1. The row itself. ABOUT_ROWS is imported live rather than grepped, so these
+// are claims about the DATA the component walks, not about its source text.
+const pronounRow = ABOUT_ROWS.find((r) => r.key === "pronoun")!;
+check("Slice L: the pronoun row is a sticker row now, not pills", pronounRow.style === "sticker");
+check(
+  "Slice L: it offers exactly TWO stickers (D-L1)",
+  Array.isArray(pronounRow.chips) && pronounRow.chips.length === 2,
+  JSON.stringify(Array.isArray(pronounRow.chips) ? pronounRow.chips.map((c) => c.value) : pronounRow.chips),
+);
+check(
+  "Slice L: both stickers carry art — a sticker row with no picture is just pills",
+  Array.isArray(pronounRow.chips) && pronounRow.chips.every((c) => Boolean(c.img)),
+);
+// 🔑 The claim that actually protects the student. PRONOUNS is the server's
+// closed set; the UI must offer ALL of it. Two stickers plus an aside is three
+// options, and if the aside were ever dropped the opt-out would vanish while
+// every other gate stayed green — a child who would rather not say would be
+// forced to pick he or she. Asserted against the CONTRACT, not a literal 3.
+const offeredPronouns = [
+  ...(Array.isArray(pronounRow.chips) ? pronounRow.chips.map((c) => c.value) : []),
+  ...(pronounRow.aside ? [pronounRow.aside.value] : []),
+];
+check(
+  "Slice L (D-L1): every pronoun the SERVER accepts is reachable in the UI",
+  PRONOUNS.every((p) => offeredPronouns.includes(p)) && offeredPronouns.length === PRONOUNS.length,
+  JSON.stringify({ offered: offeredPronouns, contract: PRONOUNS }),
+);
+check(
+  "Slice L (D-L1): the opt-out is the ASIDE, not one of the stickers",
+  pronounRow.aside?.value === "name",
+);
+// ⚠️ Optional-chained, NOT `!`. Caught by this slice's own negative control:
+// with the aside removed, a `!` here threw a TypeError and killed the run
+// BEFORE the tally printed — so the regression surfaced as a crash with no
+// "N failed" line, which is the S118 false-green shape (a probe that dies is
+// easily read as a probe that passed). A leg must survive the failure of the
+// leg above it.
+check(
+  "Slice L: the opt-out still says the student's own name",
+  pronounRow.aside?.label.includes("{name}") === true,
+  String(pronounRow.aside?.label),
+);
+// The other two rows must NOT have quietly become sticker rows — there is no
+// art for a class or a board, so the branch would render empty cards.
+check(
+  "Slice L: the board and grade rows are untouched",
+  ABOUT_ROWS.filter((r) => r.key !== "pronoun").every((r) => r.style === "board" && !r.aside),
+);
+
+// 2. The component renders both parts. The aside is a real committing control:
+// if it rendered without an onClick it would look like an option and do
+// nothing — the exact silent no-op D-J4/Slice K designed out of the rail.
+check("Slice L: the sticker branch exists in the duo row", /onb-choice onb-duo-sticker/.test(onbPageL));
+check("Slice L: it reuses the pet beat's art class, not a second one", /row\.style === "sticker" && o\.img/.test(onbPageL));
+check("Slice L: the aside renders", /onb-duo-aside/.test(onbPageL));
+check("Slice L: and the aside COMMITS — it is not a decorative label", /row\.aside!\.value/.test(onbPageL));
+check(
+  "Slice L: the aside shows a picked state, so the CTA's gate is legible",
+  /duo\[row\.key\] === row\.aside\.value/.test(onbPageL),
+);
+// M63/S114 — the axis that binds. The real art is not in the repo yet (D-L2),
+// so this asserts the slot is aspect-INDEPENDENT rather than asserting anything
+// about the placeholders: height-driven + contain means art of any shape lands
+// correctly, and a `width:`-driven slot would silently distort the real
+// sketches the day they arrive.
+const stickerImgRule = /\.onb-choice-img\s*\{[^}]*\}/.exec(onbCssL)?.[0] ?? "";
+check("Slice L art: the sticker slot is height-driven (M63)", /height:\s*\d+px/.test(stickerImgRule), stickerImgRule);
+check("Slice L art: object-fit contain, so no aspect is cropped", /object-fit:\s*contain/.test(stickerImgRule));
+
+// 3. The hatch is gone from EVERY layer. Three files, because a leftover in any
+// one of them is a different failure: copy = the option comes back, page = a
+// dead branch, css = an orphaned rule (M59).
+check("Slice L: PET_OTHER is gone from the copy", !/PET_OTHER/.test(onbCopyL));
+check("Slice L: the OtherOption TYPE is gone too, not just its instance", !/^export type OtherOption/m.test(onbCopyL));
+check("Slice L: the hatch's open/close state is gone from the page", !/otherOpen/.test(onbPageL));
+check("Slice L: and its 'back to the list' escape went with it", !/back to the list/.test(onbCopyL));
+// ⚠️ M74, fifth appearance — these greps run against files whose COMMENTS
+// deliberately explain what was deleted and why. Every claim above is scoped to
+// a declaration or an identifier that prose would not contain; `.onb-other` is
+// the exception, because it SURVIVES (the aside reuses it) and only the
+// hatch-specific styling should be gone.
+check(
+  "Slice L: the quiet-control CSS survives — the aside reuses it (not orphaned, not deleted)",
+  /\.onb-other\s*\{/.test(onbCssL) && /\.onb-duo-aside/.test(onbCssL),
+);
+
+// 4. The server. The FE closing the set is a convenience; THIS is the rule.
+// Scoped to the validation call, not to the word "pet", which appears in prose
+// all over this file.
+check(
+  "Slice L: saveStep validates pet against the closed PETS set",
+  /PETS as readonly string\[\]\)\.includes\(value\)/.test(onbServiceL),
+);
+check(
+  "Slice L: and PETS is actually imported there (not a stale reference)",
+  /^\s*PETS,$/m.test(onbServiceL),
+);
+// 🔑 The legacy population, at the layer that decides. saveStep validates
+// WRITES; nothing may retro-reject a row that already exists, because those
+// students' rows are read on every resume and a throw would lock them out of
+// their own dashboard. Asserted as the absence of a read-path check.
+check(
+  "Slice L: isKnownPet survives for the pre-Slice-L rows that still need it",
+  /export function isKnownPet/.test(await Bun.file(new URL("../packages/kernel/src/contracts.ts", import.meta.url)).text()),
+);
+
+// 5. The word budget (the plan's ⚠️). The stickers replace two chip LABELS with
+// two images, so the row's words go down, not up — but the budget is asserted
+// in §10 above against the whole flow, and this is the leg that would catch a
+// sticker row that grew a caption.
+check(
+  "Slice L: the pronoun row's own copy stays a label, not a paragraph",
+  words(typeof pronounRow.label === "function" ? pronounRow.label(ctx()) : pronounRow.label) <= 12,
+  typeof pronounRow.label === "string" ? pronounRow.label : "(fn)",
+);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+

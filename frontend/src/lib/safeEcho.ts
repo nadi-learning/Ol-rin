@@ -13,9 +13,44 @@
 //  - It is a deterministic word list on purpose (founder call, S90). An LLM
 //    check was considered and rejected: it would put 1-3s of latency, a network
 //    failure mode, and a per-call cost inside the first-run flow, to catch a
-//    long tail that a whitelist-gated audience of invited students does not
-//    have today. Revisit when public signup lands — that is when the tail
-//    arrives.
+//    long tail that an invite-only audience of known students did not have.
+//
+//    ⚠️ THAT PREMISE IS GONE (Slice C / S110). The whitelist was deleted;
+//    anyone who signs in becomes a student. The S90 note said "revisit when
+//    public signup lands" — public signup HAS landed. But the revisit found
+//    something more useful than "the tail got longer":
+//
+//    🔴 THIS GUARD IS AIMED AT THE WRONG INPUT.
+//    Both canEcho() call sites guarded the CUSTOM PET free text.
+//
+//    ⚠️ SLICE L HAS NOW LANDED, and this prediction came true exactly: PET_OTHER
+//    and the "Something else" hatch are deleted, saveStep validates `pet`
+//    against the closed PETS set, and both canEcho() call sites are gone. The
+//    only `kind:"text"` ask left in onboarding is the optional phone, which is
+//    never echoed.
+//
+//    🔴 SO canEcho() NOW HAS ZERO LIVE CALL SITES. It is retained deliberately,
+//    not by oversight: the founder's S110 decision below is still the plan, and
+//    the word list + its probe legs are the thing that slice will re-aim. If you
+//    are reading this because a dead-code sweep flagged it — the answer is to DO
+//    the name slice, not to delete the guard.
+//
+//    Meanwhile the input that open signup actually exposed is UNGUARDED:
+//    `displayName` (App.tsx:83) is `me.user.name`, straight from the Better
+//    Auth signup name. It is echoed all through onboarding — the greet, and the
+//    coronation's "The seat was always yours, {name}" — and never passes
+//    through canEcho(). Anyone can now sign up under any display name.
+//    It is also NOT confined to the student's own screen, which is what the
+//    "blast radius is one screen" argument below rests on: appUser.name renders
+//    in the tutor's student list (tutor.ts:176,515), parent surfaces
+//    (parent.ts:114,138), the parent report (report.ts:125) and the voice tutor
+//    (voice_pipecat.ts:257). Reaching those needs an admin link (Slice D), so
+//    it is not open-broadcast — but it does leave the student's own screen.
+//
+//    DECIDED (founder, S110): point the guard at the NAME, as its own slice
+//    with its own probe — deliberately NOT smuggled into Slice C. Until then
+//    the word list stays exactly as-is; it costs nothing and still catches the
+//    blunt cases on the path it currently covers.
 //  - It WILL miss things (l33tspeak, spacing, anything not on the list). A miss
 //    means Olórin echoes something crude back to the one child who typed it —
 //    the blast radius is one screen, not a broadcast. That is the accepted cost.

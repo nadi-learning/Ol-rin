@@ -3,9 +3,9 @@
  * student so the Tutor read surface has something to show.
  *
  * Creates (under board `cbse`, idempotent):
- *  1. whitelist(cbse, tutor@example.com, role='tutor') — the SET side of the role
- *     gate (M11). The tutor membership itself is created the REAL way, by driving
- *     resolveMembership (whitelist → app_user → membership), never a direct insert.
+ *  1. membership(cbse, tutor@example.com, role='tutor') via `grantRole` — the SET
+ *     side of the role gate (M11). Made the REAL way, by driving the same helper
+ *     `admin.setRole` drives (app_user → membership), never a direct insert.
  *  2. a tutor_student link from that tutor to smoke@example.com (the student the
  *     practice/Stage-1 seeds already exercise).
  *
@@ -20,10 +20,10 @@
  */
 import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board, tutorStudent, whitelist } from "@b2c/kernel/schema";
+import { appUser, board, tutorStudent } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -47,16 +47,13 @@ async function main() {
   }
 
   await withBoard(b.id, async (tx: Tx) => {
-    // 1. whitelist the tutor (idempotent), then create the membership via the
-    // REAL flow (M11 SET side) so role='tutor' is enabled exactly how login does.
-    await tx
-      .insert(whitelist)
-      .values({ boardId: b.id, email: TUTOR_EMAIL, role: "tutor" })
-      .onConflictDoNothing({ target: [whitelist.boardId, whitelist.email] });
-    const tutor = await resolveMembership(tx, {
+    // 1. grant the tutor role (idempotent, force-set) via the REAL flow (M11 SET
+    // side) — the same helper `admin.setRole` drives.
+    const tutor = await grantRole(tx, {
       email: TUTOR_EMAIL,
       name: TUTOR_NAME,
       board: { id: b.id, slug: b.slug },
+      role: "tutor",
     });
 
     // 2. resolve the student's app_user (global). Must already exist — they're
@@ -68,7 +65,7 @@ async function main() {
       .limit(1);
     if (!student) {
       console.warn(
-        `[seed:tutor] student '${STUDENT_EMAIL}' has no app_user yet — log in as the student once (dev login) first, then re-run. Tutor + whitelist are seeded; the link is skipped.`,
+        `[seed:tutor] student '${STUDENT_EMAIL}' has no app_user yet — log in as the student once (dev login) first, then re-run. The tutor role is granted; the link is skipped.`,
       );
       console.log(
         `[seed:tutor] cbse / tutor=${TUTOR_EMAIL} (role=tutor, user=${tutor.user.id}). Link to ${STUDENT_EMAIL}: SKIPPED (student not found).`,

@@ -35,8 +35,18 @@
 .voice-avatar-img {
   position: relative;
   z-index: 1;
-  width: 138px;
-  height: auto;
+  /* Slice G — HEIGHT-driven, was `width: 138px`. This character is the
+     student's chosen companion, so it is one of seven images spanning 0.46 to
+     1.40 aspect, not the single Pikachu peeker (1.70) the fixed width was cut
+     for. Pinning the height keeps every companion the same visual size on its
+     base — which is what the bob/squash animation and the grounded shadow
+     ellipse below are both aligned to — while `max-width` stops a wide one
+     from overhanging the rail. */
+  height: 116px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+  object-position: bottom center;
   transform-origin: bottom center; /* squash/bounce onto its base */
   filter: drop-shadow(0 6px 10px rgba(21, 22, 43, 0.16));
   animation: voice-bob 2.8s ease-in-out infinite; /* idle */

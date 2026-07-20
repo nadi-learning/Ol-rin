@@ -2,14 +2,21 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   adminProcedure,
-  authedProcedure,
   parentProcedure,
   protectedProcedure,
   publicProcedure,
   router,
+  sessionProcedure,
   tutorProcedure,
 } from "./init";
-import { OnboardingStep } from "@b2c/kernel/contracts";
+import {
+  BoardNotFoundError,
+  chooseBoard,
+  listBoards,
+  whoami,
+  withBoardBySlug,
+} from "../services/session_boards";
+import { OnboardingStep, Role } from "@b2c/kernel/contracts";
 import {
   complete as completeOnboarding,
   getState as getOnboardingState,
@@ -28,7 +35,19 @@ import {
   listChaptersForAdmin,
   TopicsMdInvalidError,
 } from "../services/admin_ingest";
-import { NotWhitelistedError, resolveMembership } from "../services/membership";
+import {
+  CannotChangeOwnRoleError,
+  findByEmail,
+  InvalidLinkError,
+  linkStudent,
+  listLinks,
+  listPeople,
+  setRole,
+  unlinkStudent,
+  UserNotFoundError,
+} from "../services/admin_users";
+import { eq } from "drizzle-orm";
+import { appUser } from "@b2c/kernel/schema";
 import {
   checkAnswer,
   getChapterNav,
@@ -194,22 +213,90 @@ export const appRouter = router({
   // S0 contract: health → { ok: true }.
   health: publicProcedure.query(() => ({ ok: true as const })),
 
-  // S1 contract: me → { user, board, role }. Resolves the Better Auth identity
-  // into the spine (app_user by email) + checks the board whitelist, creating
-  // the membership on first entry. Runs inside the board-scoped tx (authed).
-  me: authedProcedure.query(async ({ ctx }) => {
-    try {
-      return await resolveMembership(ctx.tx, {
-        email: ctx.realUser.email,
-        name: ctx.realUser.name,
-        board: ctx.board,
-      });
-    } catch (e) {
-      if (e instanceof NotWhitelistedError) {
-        throw new TRPCError({ code: "FORBIDDEN", message: e.code });
-      }
-      throw e;
-    }
+  // S1 contract: me → { user, board, role }.
+  //
+  // 🔑 SLICE E — THE KEY INVERSION. `me` used to be an `authedProcedure` that
+  // CALLED `resolveMembership`, so merely reading "who am I" CREATED a
+  // membership on whatever board the `x-board` header happened to carry. With
+  // the FE hard-coding `cbse`, every new student was silently enrolled on CBSE
+  // before they had ever seen a picker — which is exactly what the board pick
+  // is meant to prevent. So `me` is now a pure READ on `protectedProcedure`,
+  // and `session.chooseBoard` is the sole creation path.
+  //
+  // ⚠️ ATOMIC FE+BE DEPLOY. An older FE bundle boots straight into `me` with a
+  // hard-coded board and no membership; against this build that is a FORBIDDEN
+  // (NO_MEMBERSHIP) rather than an auto-enrol, so the old bundle dead-ends at
+  // its loading gate. The FE half of this slice MUST ship in the same deploy.
+  //
+  // Slice C (S110): the NOT_WHITELISTED catch is GONE with the gate itself.
+  // Any error reaching here now is a genuine fault and must surface as a 500,
+  // not be laundered into a 403.
+  me: protectedProcedure.query(async ({ ctx }) => {
+    // Reads the SPINE's name, not `ctx.realUser.name`. The old `me` upserted
+    // app_user on every login and so refreshed the name from Better Auth each
+    // time; a pure read must not, because `admin.setRole` deliberately
+    // preserves a spine name the auth provider does not have (S111). app_user
+    // is global (no RLS), so this is safe inside the board-scoped tx.
+    const [u] = await ctx.tx
+      .select({ id: appUser.id, email: appUser.email, name: appUser.name })
+      .from(appUser)
+      .where(eq(appUser.id, ctx.membership.userId))
+      .limit(1);
+    if (!u) throw new Error("membership references a missing app_user");
+    return { user: u, board: ctx.board, role: ctx.membership.role };
+  }),
+
+  // Slice E — the ONLY namespace that runs before a board exists. See
+  // `sessionProcedure` (init.ts) and `services/session_boards.ts` for why it
+  // has to, and why it must stay small.
+  session: router({
+    // Where this identity already belongs. `memberships: []` ⇒ the student has
+    // never picked, so the FE shows the picker; otherwise it enters at
+    // `preferred`. Never creates anything — a read that enrolled people is the
+    // exact bug this slice fixes.
+    whoami: sessionProcedure.query(({ ctx }) => whoami(ctx.realUser.email)),
+
+    // Only boards with a real catalogue (see the service): offering an empty
+    // board strands the student on `— no classes set up yet —` with no back.
+    listBoards: sessionProcedure.query(() => listBoards()),
+
+    // The chicken-and-egg break itself: the board's real grades, read WITHOUT a
+    // membership on it. Reuses `listGradeOptions` verbatim so the chips a
+    // student picks from before joining are the same ones onboarding validates
+    // against after — two implementations here would drift into a closed-set
+    // rejection at save time.
+    listGradesForBoard: sessionProcedure
+      .input(z.object({ board: z.string().min(1) }))
+      .query(async ({ input }) => {
+        try {
+          return await withBoardBySlug(input.board, (tx) => listGradeOptions(tx));
+        } catch (e) {
+          if (e instanceof BoardNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // The sole membership-creation path. Idempotent, and non-demoting: it
+    // delegates to `resolveMembership`, whose read-before-write means a tutor
+    // re-picking their own board keeps their role (the S110b invariant).
+    chooseBoard: sessionProcedure
+      .input(z.object({ board: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await chooseBoard({
+            slug: input.board,
+            email: ctx.realUser.email,
+            name: ctx.realUser.name,
+          });
+        } catch (e) {
+          if (e instanceof BoardNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
   }),
 
   // Slice ONB-1 — the conversational welcome. Its own namespace, deliberately
@@ -2071,6 +2158,81 @@ export const appRouter = router({
           throw e;
         }
       }),
+
+    // ─────────────── Slice D — the PEOPLE surface ───────────────
+    // Replaces the operational capability the whitelist provided: with the gate
+    // open (Slice C) everyone who signs in is a student, and this is the only
+    // way anyone becomes a tutor, parent or admin. All board-scoped via RLS.
+
+    /** Everyone with a membership on this board. */
+    listPeople: adminProcedure.query(({ ctx }) => listPeople(ctx.tx)),
+
+    /**
+     * Exact-email lookup across the GLOBAL identity tables — finds a person who
+     * signed up on another board and therefore is not in `listPeople`.
+     */
+    findByEmail: adminProcedure
+      .input(z.object({ email: z.string().email() }))
+      .query(({ ctx, input }) => findByEmail(ctx.tx, input.email)),
+
+    /**
+     * THE role-grant path (M11: delegates to `grantRole`, same as every seed).
+     * USER_NOT_FOUND ⇒ never signed in — the founder's "no pre-invite" rule.
+     */
+    setRole: adminProcedure
+      .input(z.object({ email: z.string().email(), role: Role }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setRole(ctx.tx, {
+            board: ctx.board,
+            actorUserId: ctx.membership.userId,
+            email: input.email,
+            role: input.role,
+          });
+        } catch (e) {
+          if (e instanceof UserNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof CannotChangeOwnRoleError) {
+            throw new TRPCError({ code: "FORBIDDEN", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    /** Every tutor→student and parent→child link on this board. */
+    listLinks: adminProcedure.query(({ ctx }) => listLinks(ctx.tx)),
+
+    /** First write path to tutor_student / parent_child outside the seeds. */
+    linkStudent: adminProcedure
+      .input(
+        z.object({
+          kind: z.enum(["tutor", "parent"]),
+          adultEmail: z.string().email(),
+          studentEmail: z.string().email(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await linkStudent(ctx.tx, { boardId: ctx.board.id, ...input });
+        } catch (e) {
+          if (e instanceof InvalidLinkError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    /** Removes the join row only — never a membership or any student data. */
+    unlinkStudent: adminProcedure
+      .input(
+        z.object({
+          kind: z.enum(["tutor", "parent"]),
+          adultUserId: z.string().uuid(),
+          studentUserId: z.string().uuid(),
+        }),
+      )
+      .mutation(({ ctx, input }) => unlinkStudent(ctx.tx, input)),
   }),
 });
 

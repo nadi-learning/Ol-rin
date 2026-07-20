@@ -44,11 +44,10 @@ import {
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import {
   getLandingState,
   recordVisit,
@@ -112,12 +111,8 @@ async function main() {
   // Students A (the caller) + B (the leak control) via the real flow.
   const emailA = `pland-a-${tag}@example.com`;
   const emailB = `pland-b-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailA, role: "student" });
-    await tx.insert(whitelist).values({ boardId: P.id, email: emailB, role: "student" });
-  });
-  const A = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailA, name: "Stu A", board: P }));
-  const B = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailB, name: "Stu B", board: P }));
+  const A = await withBoard(P.id, (tx) => grantRole(tx, { email: emailA, name: "Stu A", board: P, role: "student" }));
+  const B = await withBoard(P.id, (tx) => grantRole(tx, { email: emailB, name: "Stu B", board: P, role: "student" }));
   const selfA = { studentId: A.user.id, name: "Stu A", email: emailA };
   const selfB = { studentId: B.user.id, name: "Stu B", email: emailB };
 
@@ -257,7 +252,6 @@ async function main() {
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailA));
   await db.delete(appUser).where(eq(appUser.email, emailB));

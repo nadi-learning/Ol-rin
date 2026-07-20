@@ -18,7 +18,7 @@
  *      proves each caller sees only their rows.
  *   4. OWNERSHIP: W's numbers are NOT inflated by X (W.completed=1 not 2;
  *      W.time=15000 not 115000).
- *   5. empty member Z (whitelisted, never practised) → all zeros.
+ *   5. empty member Z (enrolled, never practised) → all zeros.
  *   6. cross-board RLS: W's summary under a Q claim → all zeros (P rows invisible).
  *   7. HTTP: dashboard.getStudentSummary no session → 401 (soft).
  */
@@ -29,19 +29,20 @@ import {
   attempt,
   board,
   chapter,
+  eventLog,
   membership,
   practiceSession,
   question,
   subTopic,
   subject,
   topic,
-  whitelist,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { skip, startSession, submitAttempt } from "../src/services/practice";
-import { resolveMembership } from "../src/services/membership";
+import { grantRole } from "../src/services/membership";
 import { getStudentSummary } from "../src/services/dashboard";
+import { recordVisit as recordRevisionVisit } from "../src/services/revision";
 import { env } from "../src/config/env";
 
 type Tx = PgTransaction<any, any, any>;
@@ -84,17 +85,16 @@ async function main() {
   const emailW = `dsh-w-${tag}@example.com`;
   const emailX = `dsh-x-${tag}@example.com`;
   const emailZ = `dsh-z-${tag}@example.com`;
-  await withBoard(P.id, async (tx: Tx) => {
-    for (const email of [emailW, emailX, emailZ]) {
-      await tx.insert(whitelist).values({ boardId: P.id, email, role: "student" });
-    }
-  });
-  const W = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailW, name: "W", board: P }));
-  const X = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailX, name: "X", board: P }));
-  const Z = await withBoard(P.id, (tx) => resolveMembership(tx, { email: emailZ, name: "Z", board: P }));
+  // V exists only to prove the READ-ONLY path: opens a lesson, never practises.
+  const emailV = `dsh-v-${tag}@example.com`;
+  const W = await withBoard(P.id, (tx) => grantRole(tx, { email: emailW, name: "W", board: P, role: "student" }));
+  const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: P, role: "student" }));
+  const Z = await withBoard(P.id, (tx) => grantRole(tx, { email: emailZ, name: "Z", board: P, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
+  const V = await withBoard(P.id, (tx) => grantRole(tx, { email: emailV, name: "V", board: P, role: "student" }));
   const userZ = Z.user.id;
+  const userV = V.user.id;
 
   // ── W's practice: one COMPLETED session (submit q1 10s, skip q2) ──
   const w1 = await withBoard(P.id, (tx) => startSession(tx, { boardId: P.id, appUserId: userW, subTopicId: fx.subTopicA }));
@@ -129,6 +129,41 @@ async function main() {
   const sumZ = await withBoard(P.id, (tx) => getStudentSummary(tx, { appUserId: userZ }));
   check("Z (never practised): all zeros", sumZ.completedSessions === 0 && sumZ.activeSessions === 0 && sumZ.totalTimeMs === 0 && sumZ.answeredAttempts === 0);
 
+  // 5b. DASH-FR — `hasStarted` is the ONE flag the first-run landing hangs off
+  // (Olórin's welcome instead of three zeros, "Start" instead of "Continue",
+  // the "Start here" marker). Both directions asserted, because a flag that is
+  // always false passes a false-only test just as green (M39).
+  check("Z (never practised): hasStarted === false → the welcome shows", sumZ.hasStarted === false);
+  check("W (has practised): hasStarted === true → the welcome is gone", sumW.hasStarted === true);
+  check("X (completed only, no active): hasStarted === true", sumX.hasStarted === true);
+  // The first-run state must end at the FIRST session, not the first COMPLETED
+  // one — the founder's rule is "until they start their first lesson", so a
+  // student mid-way through lesson one must not still be told where to begin.
+  const yOnlyActive = await withBoard(P.id, (tx) =>
+    startSession(tx, { boardId: P.id, appUserId: userZ, subTopicId: fx.subTopicA }),
+  );
+  const sumZafter = await withBoard(P.id, (tx) => getStudentSummary(tx, { appUserId: userZ }));
+  check(
+    "STARTING a practice session (no attempt, no completion) already ends first-run",
+    Boolean(yOnlyActive.sessionId) && sumZafter.hasStarted === true && sumZafter.completedSessions === 0,
+  );
+
+  // 🔑 THE CASE THE PRACTICE TABLES CANNOT SEE. Opening a lesson to READ it
+  // writes a revision_visit event and NO practice row whatsoever — caught by
+  // clicking the real CTA and watching the welcome refuse to go away. A student
+  // who has read chapters must not still be told where to begin.
+  const sumV0 = await withBoard(P.id, (tx) => getStudentSummary(tx, { appUserId: userV }));
+  check("V (untouched): hasStarted === false", sumV0.hasStarted === false);
+  await withBoard(P.id, (tx) => recordRevisionVisit(tx, { boardId: P.id, appUserId: userV, subTopicId: fx.subTopicA }));
+  const sumV1 = await withBoard(P.id, (tx) => getStudentSummary(tx, { appUserId: userV }));
+  check(
+    "OPENING a lesson to read it ends first-run, with zero practice rows",
+    sumV1.hasStarted === true &&
+      sumV1.completedSessions === 0 &&
+      sumV1.activeSessions === 0 &&
+      sumV1.answeredAttempts === 0,
+  );
+
   // 6. cross-board RLS — W's summary under a Q claim → all zeros (P rows invisible)
   const sumWunderQ = await withBoard(Q.id, (tx) => getStudentSummary(tx, { appUserId: userW }));
   check("RLS: W's summary under board Q → all zeros", sumWunderQ.completedSessions === 0 && sumWunderQ.activeSessions === 0 && sumWunderQ.totalTimeMs === 0 && sumWunderQ.answeredAttempts === 0);
@@ -145,13 +180,15 @@ async function main() {
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(attempt).where(eq(attempt.boardId, P.id));
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
+    // Before sub_topic — the revision-visit rows this probe now writes point at
+    // it, and event_log's FK is NO ACTION like every other one here.
+    await tx.delete(eventLog).where(eq(eventLog.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
     await tx.delete(membership).where(eq(membership.boardId, P.id));
-    await tx.delete(whitelist).where(eq(whitelist.boardId, P.id));
   });
   for (const email of [emailW, emailX, emailZ]) {
     await db.delete(appUser).where(eq(appUser.email, email));

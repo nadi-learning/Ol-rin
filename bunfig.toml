@@ -1,0 +1,22 @@
+# Bun runtime config.
+#
+# S117 (Slice J) — the loader map exists to stop an INTERMITTENT crash, not to
+# add a capability. `probe_echo_guard` is the only probe that imports
+# `onboarding.copy.ts`, which imports the hero/pet art; with no explicit mapping
+# Bun 1.3.8 sometimes resolved those assets with the default JS loader and tried
+# to PARSE the PNG, dying before the probe's first check with:
+#
+#   1 | <PNG>
+#   error: Unexpected <PNG>  at frontend/src/assets/pets/owl.png:1:1
+#
+# ...and no summary line, no failing leg, exit 1 — i.e. it looks exactly like a
+# silent death, which is the same signature S113/S116 logged for
+# probe:assessment_session "in-suite only". Worth re-testing that open item
+# against this, since a race would fire more often under suite load.
+#
+# Verified: 8/8 clean runs with this file, after 7/8 crashes without it.
+[loader]
+".png" = "file"
+".jpg" = "file"
+".jpeg" = "file"
+".svg" = "file"

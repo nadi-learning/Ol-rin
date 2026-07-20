@@ -8,8 +8,9 @@
  * Two access boundaries, both load-bearing:
  *  - ROLE gate (M11): only a membership with role='tutor' may reach these reads.
  *    The CHECK side is `assertTutor` (used by tutorProcedure); the SET side is the
- *    real whitelist(role='tutor') → resolveMembership flow (seed_tutor / the
- *    probe drive it, never insert a tutor membership directly).
+ *    real `grantRole(…, role: 'tutor')` flow (seed_tutor / the probe /
+ *    admin.setRole drive it, never insert a tutor membership directly). Nobody
+ *    is pre-invited: a tutor signs in as a student and is promoted afterwards.
  *  - OWNERSHIP guard (D-L-5 pattern): RLS scopes by board, NOT by user, so a
  *    tutor sharing a board with another tutor's students could otherwise read
  *    them. Every per-student read asserts a tutor_student link first; a student

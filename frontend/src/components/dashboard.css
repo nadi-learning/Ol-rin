@@ -2,10 +2,66 @@
    (revision-shell.css global-leak hygiene). TAITOR tokens from theme/tokens.css. */
 
 .dash {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 22px;
   max-width: 1040px;
+}
+
+/* --- DASH-GUARD: the gutter sentinels ---
+   The reading column is capped, so wide screens leave dead space either side.
+   Two scans of the same statue flank it — the Argonath read: the student goes
+   BETWEEN them, they are not ornament in a corner. Anchored off `.dash` and
+   pushed out past its edge (`right: 100%` / `left: 100%`), so they track the
+   column wherever it centres instead of guessing at viewport maths.
+
+   Hidden below 1600px: the gutter is (canvasW - 920)/2 - 32 wide, so 1600 is
+   the first viewport where 240px + its 24px margin clears the column without
+   colliding with the canvas edge. Under that the gutter is too narrow and
+   they would either clip or press on the cards. This is a wide-screen grace
+   note, not layout — nothing below it depends on them being visible. */
+.dash-sentinel {
+  position: absolute;
+  top: 12px;
+  width: 240px;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+  display: none;
+
+  /* Same treatment as the welcome-card cast (S108): grey it out, drop it to a
+     watermark, and multiply so the scan's paper melts into the canvas instead
+     of printing a white block on it. */
+  filter: grayscale(1) contrast(1.04);
+  opacity: 0.26;
+  mix-blend-mode: multiply;
+
+  /* Both axes must reach transparent or the scan's edge prints a hard
+     rectangle — the standing edge rule for every scene scan (S102). The right
+     edge fades hardest on the left statue (and vice-versa via the mirror), so
+     the sketch dissolves as it approaches the text rather than stopping at it. */
+  mask-image:
+    linear-gradient(to right, transparent 0, black 26%, black 74%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 18%, black 66%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.dash-sentinel--left {
+  right: 100%;
+  margin-right: 24px;
+}
+/* Mirrored so the pair faces inward across the column, like the real gate. */
+.dash-sentinel--right {
+  left: 100%;
+  margin-left: 24px;
+  transform: scaleX(-1);
+}
+
+@media (min-width: 1600px) {
+  .dash-sentinel {
+    display: block;
+  }
 }
 
 /* --- heading --- */
@@ -313,5 +369,209 @@
   }
   .dash-lesson-row {
     flex-wrap: wrap;
+  }
+}
+
+/* --- Slice H: the first-run tour ---
+   Replaces DASH-FR's Olórin welcome card (and the stat row it already stood in
+   for — three zeros summarise nothing and read as failure). The companion the
+   student chose speaks one line, then the product rises in behind it as pressable
+   tiles. Same card language as the rest of the dashboard. */
+.dash-tour {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 22px 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
+/* The sticker and the sentence are ONE unit — the pet is the speaker, so they
+   share a baseline rather than sitting in separate blocks. */
+.dash-tour-say {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* M63 — the companions span 0.46 (owl) to 1.40 (direwolf) aspect, so the box is
+   driven by HEIGHT with the width free to follow and merely capped. Pinning
+   width instead renders the owl ~2.4x taller than the direwolf. Same rule as the
+   voice avatar and the practice banner (Slice G) — every companion slot in the
+   product sizes this way. */
+.dash-tour-pet {
+  flex: 0 0 auto;
+  height: 72px;
+  width: auto;
+  max-width: 96px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 6px rgba(20, 22, 40, 0.18));
+}
+
+/* <p> carries the UA's `margin: 1em 0`, which would stack on top of the flex
+   gap. There is no global reset in this app, so each card zeroes its own. */
+.dash-tour-line {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+/* Matches the onboarding caret so the two typewriters read as one character. */
+.dash-tour-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--ink);
+  vertical-align: -0.14em;
+  animation: dash-tour-blink 1s steps(2, start) infinite;
+}
+@keyframes dash-tour-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.dash-tour-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 18px;
+  background: var(--yellow);
+  color: var(--ink);
+  border: 0;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 120ms ease, transform 120ms ease;
+}
+.dash-tour-cta:hover {
+  background: var(--yellow-hover);
+  transform: translateX(1px);
+}
+
+/* Five tiles, and five is the awkward number: at a 168px minimum the card fits
+   exactly four tracks, so Journal orphaned onto a second row beside a run of dead
+   space. Grid cannot avoid a gap unless the count divides the track count, so the
+   track floor is set low enough that all five sit in ONE row on a desktop card —
+   which is also what they mean ("here are the five places in the app"). Narrower
+   viewports fall to 3+2 and then to a single column, both of which read as
+   deliberate in a way that 4+1 did not. Measured, not guessed: the walk asserts
+   the row count at each width. */
+.dash-tour-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The stagger is a transition-delay driven by --i, NOT an @keyframes carrying a
+   `both` fill mode (M60: that leaves the transform applied forever, which
+   silently switches off blend modes on the whole subtree). The settled state
+   below is `transform: none` — nothing lingers.
+   (The forbidden property is not spelled out here on purpose: the echo-guard
+   greps this sheet for it, and a comment naming it reads as a reintroduction.) */
+.dash-tour-tile-wrap {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 260ms ease,
+    transform 260ms ease;
+}
+.dash-tour-tiles.is-in .dash-tour-tile-wrap {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(var(--i) * 70ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-tour-tile-wrap {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+.dash-tour-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+button.dash-tour-tile:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+/* Slice J — `.dash-tour-tile--soon` deleted. Journal was its only user and it
+   navigates now; a rule matching nothing reports no failure and would have sat
+   here looking load-bearing (M59). Verified by grep across src + scripts before
+   removing, not assumed from the diff. */
+.dash-tour-tile-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.dash-tour-tile-line {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+/* Slice J — `.dash-tour-soon` (the pill) deleted with the branch that rendered
+   it. Same check, same reason as above. */
+
+/* "Start here" — one chapter, first run only. */
+.dash-lesson--starthere {
+  border-color: var(--primary);
+}
+.dash-starthere {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+@media (max-width: 720px) {
+  .dash-tour {
+    padding: 18px 16px;
+  }
+  /* At 390 the grid's 168px minimum would still fit two columns inside a
+     ~358px content box only by squeezing the label against the "soon" chip.
+     One column is the honest answer on a phone. */
+  .dash-tour-tiles {
+    grid-template-columns: 1fr;
+  }
+  /* The sentence needs the width more than the sticker does, and a 72px pet
+     beside two wrapped lines is the composition that actually fits. */
+  .dash-tour-pet {
+    height: 58px;
+    max-width: 76px;
+  }
+  .dash-tour-line {
+    font-size: 15px;
   }
 }
