@@ -1,0 +1,228 @@
+/* S125 — the /admin front door. Mirrors the student lane's treatment (flowing
+   wave canvas + a two-part phrase: quote pinned top, bold title pinned bottom)
+   in the Loki emerald the founder picked for admin. Everything scoped to
+   .ag-root so nothing here touches the landing lanes or the app theme — same
+   discipline as `.adm-` / `.par-` / `.tut-`. Class shapes deliberately parallel
+   landing.css's `.or-` lane so the two cards read as siblings. */
+.ag-root {
+  --paper: #eef6f1;
+  --ink: #14201b;
+  --ink-soft: #4c5c53;
+  --line: rgba(20, 32, 27, 0.1);
+  --emerald: #12805c;
+  --emerald-deep: #06251c;
+  --font: "Outfit", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --settle: cubic-bezier(0.34, 1.28, 0.5, 1);
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--paper);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.ag-root,
+.ag-root * {
+  box-sizing: border-box;
+}
+
+/* ============ HERO (Loki emerald, waves) ============ */
+.ag-hero {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: clamp(26px, 4.5vh, 56px) clamp(26px, 3vw, 54px);
+  /* Light emerald wash — the green mirror of the student lane's blue field, so
+     the dark quote and bold title read the same way they do there. */
+  background:
+    radial-gradient(62% 30% at 22% 5%, rgba(18, 128, 92, 0.16), transparent 72%),
+    linear-gradient(180deg, #eaf5ef 0%, #dcefe4 100%);
+}
+
+/* the silky flowing backdrop (canvas painted in AdminGate.tsx) */
+.ag-flow {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  /* Blur the composited bitmap once on the GPU instead of per-path in the draw
+     loop — same look, a fraction of the cost (landing.css note). */
+  filter: blur(3px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 3%, #000 17%, #000 66%, transparent 90%);
+          mask-image: linear-gradient(180deg, transparent 3%, #000 17%, #000 66%, transparent 90%);
+}
+
+/* TOP — the quote (parallels `.or-phrase`) */
+.ag-phrase {
+  position: absolute;
+  z-index: 4;
+  top: clamp(88px, 16vh, 180px);
+  left: clamp(26px, 3vw, 54px);
+  right: 40%;
+}
+.ag-belt {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.ag-belt i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--emerald);
+  opacity: 0.85;
+}
+.ag-belt i:nth-child(2) {
+  width: 9px;
+  height: 9px;
+  margin-top: -1px;
+}
+.ag-quote {
+  margin: 0;
+  font-size: clamp(34px, 3.6vw, 58px);
+  font-weight: 400;
+  line-height: 1.16;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  max-width: 18ch;
+  text-wrap: balance;
+}
+.ag-sign {
+  display: inline-block;
+  margin-top: 18px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--emerald);
+}
+
+/* BOTTOM — the bold title (parallels `.or-textblock`) */
+.ag-textblock {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ag-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.82;
+}
+.ag-title {
+  margin: 0;
+  font-size: clamp(40px, 4.6vw, 80px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+.ag-pitch {
+  margin: 0;
+  max-width: 42ch;
+  font-size: clamp(17px, 1.3vw, 21px);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+/* ============ SIGN-IN PANEL (parallels `.or-login`) ============ */
+.ag-panel {
+  flex: 0 0 clamp(340px, 34vw, 460px);
+  min-width: 0;
+  background: #fffdfa;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(32px, 5vw, 60px) clamp(28px, 3vw, 46px);
+}
+.ag-panel-inner {
+  width: 100%;
+  max-width: 340px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+.ag-brand span {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: 17px;
+}
+.ag-welcome {
+  margin: 0;
+  font-size: clamp(25px, 2.2vw, 31px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+.ag-welcome b {
+  color: var(--emerald);
+}
+.ag-sub {
+  margin: 0;
+  max-width: 32ch;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.ag-gbtn {
+  width: 100%;
+  padding: 15px 18px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--emerald);
+  color: #fff;
+  font-family: var(--font);
+  font-size: 15.5px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 2px;
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out, filter 0.15s ease-out;
+}
+.ag-gbtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(18, 128, 92, 0.3);
+  filter: brightness(1.04);
+}
+.ag-gbtn:focus-visible {
+  outline: 2px solid var(--emerald);
+  outline-offset: 3px;
+}
+.ag-note {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 820px) {
+  .ag-phrase {
+    display: none;
+  }
+  .ag-root {
+    flex-direction: column;
+  }
+  .ag-hero {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .ag-panel {
+    flex: 0 0 auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}

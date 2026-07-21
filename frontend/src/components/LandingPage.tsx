@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // `import.meta.env.DEV` branch, so Vite drops both the call and the import from
 // production builds (verified by bundle grep, S123).
 import { signIn, devLogin } from "../lib/auth";
-import { setPersona } from "../trpc";
+import { setPersona, getPersona, clearPersona } from "../trpc";
 import "./landing.css";
 
 // Orion persona-select front door (logged-out). Ported from design artifact
@@ -56,6 +56,25 @@ function markSplashSeen(): void {
   }
 }
 
+/**
+ * S125 — the persona this browser last picked, if it is one of the three lanes.
+ *
+ * Seeds `chosen` so that clicking a card, leaving the tab, and coming back (a
+ * mobile browser evicting a backgrounded tab reloads it) restores the EXPANDED
+ * card the person chose, not the collapsed picker. `splashSeen` already survives
+ * that reload; the selection did not, because it lived only in React state — so
+ * a returning visitor was dropped back to the front door they thought they had
+ * already walked through.
+ *
+ * Guarded to the three lanes: `getPersona()` can also be "admin" (set per
+ * request by the URL, never stored — see trpc.ts), and even a stray value must
+ * never expand a lane that does not exist.
+ */
+function initialChosen(): Persona | null {
+  const p = getPersona();
+  return p === "student" || p === "parent" || p === "tutor" ? p : null;
+}
+
 const EnterArrow = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M5 12h14M13 6l6 6-6 6" />
@@ -71,7 +90,9 @@ export function LandingPage() {
   // frame on a return visit.
   const doneRef = useRef(splashSeen());
   const [revealed, setRevealed] = useState(splashSeen);
-  const [chosen, setChosen] = useState<Persona | null>(null);
+  // Seeded from the persisted persona (S125): a returning visitor re-opens on
+  // the expanded card they picked, rather than being bounced to the picker.
+  const [chosen, setChosen] = useState<Persona | null>(initialChosen);
   // S122 — `email` and `busy` went with the dev-login form. `err` stays: the
   // Google path still has failures worth showing.
   const [err, setErr] = useState<string | null>(null);
@@ -391,7 +412,20 @@ export function LandingPage() {
               </div>
             )}
             {err && <p className="or-err">{err}</p>}
-            <button className="or-back" type="button" onClick={() => setChosen(null)}>
+            <button
+              className="or-back"
+              type="button"
+              onClick={() => {
+                // Clear the stored persona too (S125): `chosen` is now SEEDED
+                // from it, so leaving it set would re-expand this very card on
+                // the next reload — the "different role" the person asked for
+                // would not stick. Safe here: on the signed-out landing the
+                // persona only matters for the next sign-in, and this is that
+                // choice being remade.
+                clearPersona();
+                setChosen(null);
+              }}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 6l-6 6 6 6" /></svg> Choose a different role
             </button>
           </div>

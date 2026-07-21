@@ -117,7 +117,24 @@ export const trpc = createTRPCClient<AppRouter>({
       // landing page after this client is constructed.
       headers: () => {
         const b = getBoard();
-        const p = getPersona();
+        // S125 — THE URL IS THE ADMIN PROFILE SELECTOR. While the tab is on
+        // `/admin`, every call carries `x-profile: admin` regardless of the
+        // stored persona, so `me` (and every `admin.*` call) resolves the admin
+        // membership instead of the student one a founder also holds.
+        //
+        // 🔴 URL-SCOPED, NOT PERSISTED. This deliberately does NOT `setPersona`.
+        // Writing "admin" to localStorage would make `/` resolve admin too and
+        // bounce the founder — who is also a student — out of the student app
+        // for the rest of the session. Reading the pathname per-request keeps the
+        // admin profile alive ONLY while physically on `/admin`; leaving the URL
+        // restores the persona with no cleanup.
+        //
+        // ⚠️ It SELECTS, it does not grant (context.ts): a non-admin sending this
+        // asks for a row they do not hold and gets NO_MEMBERSHIP. App.tsx's boot
+        // never fires the `me` fetch for such a visitor — it renders the same
+        // not-found door an off-list admin gets — so that 403 is never reached.
+        const onAdmin = window.location.pathname.replace(/\/+$/, "") === "/admin";
+        const p = onAdmin ? "admin" : getPersona();
         return {
           ...(b ? { "x-board": b } : {}),
           ...(p ? { "x-profile": p } : {}),

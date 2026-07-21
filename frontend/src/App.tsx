@@ -4,6 +4,7 @@ import { trpc, clearBoard, setBoard, getPersona, setPersona } from "./trpc";
 import { isAdminEmail } from "@b2c/kernel/contracts";
 import { AppShell, type AppView } from "./components/AppShell";
 import { LandingPage } from "./components/LandingPage";
+import { AdminGate } from "./components/AdminGate";
 import { DashboardPage } from "./components/DashboardPage";
 import { JournalPage } from "./components/JournalPage";
 import { CrewPage } from "./components/CrewPage";
@@ -71,6 +72,11 @@ export function App() {
   // offer a way out of a stale claim. See the `heldRoles` block at the
   // AccessPending call site for why a dead end was the bug worth fixing.
   const [heldRoles, setHeldRoles] = useState<string[]>([]);
+  // S125 — signed in, standing at `/admin`, holding no admin membership row.
+  // Set by boot so App renders the not-found door WITHOUT fetching `me` (which,
+  // under the forced `x-profile: admin`, would 403 and trip the stale-board
+  // retry). Only ever meaningful when `isAdminRoute` is true.
+  const [deniedAdmin, setDeniedAdmin] = useState(false);
   // Deep-link target for "Continue lesson" — the sub_topic the dashboard wants
   // Revision to open at. Cleared (null) means Revision opens at its default.
   const [revisionTarget, setRevisionTarget] = useState<string | null>(null);
@@ -124,6 +130,42 @@ export function App() {
     async function boot(retry: boolean) {
       const who = await trpc.session.whoami.query();
       if (cancelled) return;
+
+      // 🔑 S125 — THE ADMIN DOOR IS RESOLVED HERE, ABOVE THE PERSONA MACHINERY.
+      // At `/admin` the active profile is not the stored persona but a fixed
+      // "admin" (trpc forces `x-profile: admin` while the URL is /admin), so the
+      // persona validation below does not apply. whoami already carries the one
+      // fact this needs: does the identity hold an admin row at all.
+      //
+      // 🔴 A NON-ADMIN MUST NOT FALL THROUGH TO THE `me` FETCH. Under the forced
+      // admin profile `me` would 403 NO_MEMBERSHIP — indistinguishable from the
+      // stale-board case the retry below heals, which would clear a good board
+      // and end on an error page instead of a clean door. So a visitor with no
+      // admin row is answered right here with `deniedAdmin` (the SAME not-found
+      // page an off-list admin gets), and `me` is never called.
+      if (isAdminRoute) {
+        const adminMembership = who.memberships.find((m) => m.role === "admin");
+        if (!adminMembership) {
+          setNeedsBoard(false);
+          setMe(null);
+          setDeniedAdmin(true);
+          setError(null);
+          return;
+        }
+        // Holds admin → enter on that board and fetch `me` under the forced admin
+        // profile. No retry wrapper: holding the row means the fetch cannot
+        // NO_MEMBERSHIP, and any other failure is a real error worth surfacing.
+        // An off-list admin still resolves role=admin here and is refused by the
+        // whitelist at the render branch below — not by this boot.
+        setBoard(adminMembership.slug);
+        setNeedsBoard(false);
+        setDeniedAdmin(false);
+        const r = await trpc.me.query();
+        if (cancelled) return;
+        setMe(r);
+        setError(null);
+        return;
+      }
 
       // 🔑 S123 — THE BUG THIS SLICE EXISTS FOR. Validate the claimed profile
       // against the profiles this identity ACTUALLY holds, before `me` is
@@ -222,6 +264,14 @@ export function App() {
 
   if (isPending) return <Gate>Checking…</Gate>;
 
+  // S125 — the admin front door, signed-out. Only at `/admin`, and reachable no
+  // other way (nothing links to it). A student at `/` gets the persona picker;
+  // only someone who typed `/admin` sees this. Above the general `!session`
+  // branch so the admin URL never falls through to the public landing page.
+  if (isAdminRoute && !session) {
+    return <AdminGate />;
+  }
+
   if (!session) {
     return <LandingPage />;
   }
@@ -234,6 +284,16 @@ export function App() {
   // the alternative is flashing a board picker at a student who already has one.
   if (needsBoard === undefined) {
     return <Gate>{error ? <p className="gate-error">{error}</p> : "Loading…"}</Gate>;
+  }
+
+  // S125 — the admin door's deny state (boot: signed in, at `/admin`, no admin
+  // row). Rendered before the `me` loading gate below, because boot deliberately
+  // skipped the `me` fetch for this visitor — there is nothing to wait for.
+  // Identical NotFound to the off-list admin further down, so a plain non-admin
+  // and an off-list admin cannot tell their refusals apart (S124's rule: the
+  // surface must not confirm to anyone that there is something to enter).
+  if (isAdminRoute && deniedAdmin) {
+    return <NotFound onSignOut={() => signOut()} />;
   }
 
   // 🔑 S123 — THE FOUNDER'S REPORT, ANSWERED. They hold memberships, but not the
