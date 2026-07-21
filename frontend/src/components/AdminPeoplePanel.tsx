@@ -172,7 +172,7 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
           <label className="adm-label">People</label>
           <p className="adm-hint">
             Every profile across the app. Grant someone a role — they must have signed in
-            once first.
+            once or completed onboarding first.
           </p>
           {people === null ? (
             <p className="adm-muted">Loading…</p>
@@ -330,9 +330,12 @@ function PersonRow({
 
   // Both blocks are refusals the SERVER also enforces. Stating them here means
   // the admin reads a reason instead of an error.
+  // Onboarded users are actionable even without a Better Auth row yet (their auth
+  // row is minted on next sign-in). Only a profile that is NEITHER signed in NOR
+  // onboarded is a true never-seen shell the server would refuse (USER_NOT_FOUND).
   const blocked = isSelf
     ? "You can't change your own role."
-    : !person.hasSignedIn
+    : !person.hasSignedIn && !person.onboarded
       ? "Hasn't signed in yet."
       : null;
 

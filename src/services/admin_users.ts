@@ -41,6 +41,7 @@ import {
   appUser,
   masteryState,
   observation,
+  onboarding,
   parent,
   student,
   tutor,
@@ -98,17 +99,27 @@ export type Person = {
   role: string;
   /** false ⇒ has a profile but no Better Auth identity (seeded, never logged in). */
   hasSignedIn: boolean;
+  /**
+   * true ⇒ this profile has COMPLETED onboarding. An onboarded profile is a real,
+   * existing user even without a Better Auth row yet (e.g. the S139 restore
+   * re-created onboarded students whose auth row is minted on their next Google
+   * sign-in). The admin can act on them — the greying + the `setRole` gate both
+   * treat onboarded as sufficient existence, not only a Better Auth row.
+   */
+  onboarded: boolean;
 };
 
 /**
  * EVERY profile, newest first (GLOBAL — see the header). One row per app_user, so
  * one person's email can appear up to four times (student/tutor/parent/admin),
- * each its own id. `hasSignedIn` is a LEFT join to `users` by email: it is a
- * property of the identity, so all of a person's profiles share it.
+ * each its own id. `hasSignedIn` is a LEFT join to `users` by email (a property
+ * of the identity). `onboarded` is a LEFT join to `onboarding` by user_id (a
+ * property of THIS profile — only the student profile carries a completed row).
  *
- * Surfaced rather than filtered: seeds legitimately mint profiles for people who
- * have never logged in, and hiding them would make the list disagree with the DB.
- * `setRole` is what enforces the "must have signed in" rule.
+ * Surfaced rather than filtered: seeds + the restore legitimately mint profiles
+ * for people who have never logged in, and hiding them would make the list
+ * disagree with the DB. `setRole` enforces existence — now "signed in OR
+ * onboarded", so a restored/onboarded user is actionable, not gated.
  */
 export async function listPeople(tx: Tx): Promise<Person[]> {
   const rows = await tx
@@ -118,9 +129,11 @@ export async function listPeople(tx: Tx): Promise<Person[]> {
       name: appUser.name,
       role: appUser.userType,
       authId: users.id,
+      onbStatus: onboarding.status,
     })
     .from(appUser)
     .leftJoin(users, sql`lower(${users.email}) = lower(${appUser.email})`)
+    .leftJoin(onboarding, eq(onboarding.userId, appUser.id))
     .orderBy(desc(appUser.createdAt));
 
   return rows.map((r) => ({
@@ -129,6 +142,7 @@ export async function listPeople(tx: Tx): Promise<Person[]> {
     name: r.name,
     role: r.role,
     hasSignedIn: r.authId != null,
+    onboarded: r.onbStatus === "completed",
   }));
 }
 
@@ -236,26 +250,49 @@ export async function setRole(
   // Refuse self-change before any write (lockout guard). Identity = email.
   if (needle === actorEmail.trim().toLowerCase()) throw new CannotChangeOwnRoleError();
 
-  // Must have a Better Auth identity — the "no pre-invite" rule (see the header).
+  // "No pre-invite" — the person must EXIST, but existence is now "signed in OR
+  // onboarded", not only a Better Auth row. A restored/onboarded user (S139) has
+  // a real profile whose auth row is minted on their next sign-in; refusing to
+  // grant them a role would strand them. Prefer the Better Auth identity for the
+  // canonical email/name; fall back to the onboarded app_user profile.
   const [authRow] = await tx
     .select({ email: users.email, name: users.name })
     .from(users)
     .where(sql`lower(${users.email}) = ${needle}`)
     .limit(1);
-  if (!authRow) throw new UserNotFoundError(email);
+
+  let grantEmail: string;
+  let grantName: string | null;
+  if (authRow) {
+    grantEmail = authRow.email;
+    grantName = authRow.name;
+  } else {
+    const [onb] = await tx
+      .select({ email: appUser.email, name: appUser.name })
+      .from(appUser)
+      .innerJoin(
+        onboarding,
+        and(eq(onboarding.userId, appUser.id), eq(onboarding.status, "completed")),
+      )
+      .where(sql`lower(${appUser.email}) = ${needle}`)
+      .limit(1);
+    if (!onb) throw new UserNotFoundError(email);
+    grantEmail = onb.email;
+    grantName = onb.name;
+  }
 
   // Preserve a spine name the auth provider lacks: `grantRole` upserts
-  // app_user.name, so passing a null auth name would wipe a display name the
-  // profile already holds. Read the existing (email, role) profile's name first.
+  // app_user.name, so passing a null name would wipe a display name the profile
+  // already holds. Read the existing (email, role) profile's name first.
   const [existing] = await tx
     .select({ name: appUser.name })
     .from(appUser)
-    .where(and(eq(appUser.email, authRow.email), eq(appUser.userType, role)))
+    .where(and(eq(appUser.email, grantEmail), eq(appUser.userType, role)))
     .limit(1);
 
   const granted = await grantRole(tx, {
-    email: authRow.email,
-    name: authRow.name ?? existing?.name ?? null,
+    email: grantEmail,
+    name: grantName ?? existing?.name ?? null,
     board,
     role,
   });
@@ -265,7 +302,8 @@ export async function setRole(
     email: granted.user.email,
     name: granted.user.name,
     role: granted.role,
-    hasSignedIn: true,
+    hasSignedIn: authRow != null,
+    onboarded: true,
   };
 }
 

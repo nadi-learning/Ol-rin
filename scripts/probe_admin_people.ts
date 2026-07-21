@@ -31,7 +31,7 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board, student, tutor, tutorAssignment, users } from "@b2c/kernel/schema";
+import { appUser, board, onboarding, student, tutor, tutorAssignment, users } from "@b2c/kernel/schema";
 import type { Role } from "@b2c/kernel/contracts";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -180,6 +180,38 @@ async function main() {
   );
   const ghostTutor = await profileId(ghostEmail, "tutor");
   check("…and the refusal WROTE NOTHING (no tutor profile minted for the ghost)", ghostTutor === null);
+
+  // ── 3b. ADM-CH: an ONBOARDED profile with NO Better Auth row is ACTIONABLE ──
+  // The S139 restore re-created onboarded students whose auth row is minted only
+  // on their next sign-in. Existence is now "signed in OR onboarded", so the
+  // admin can grant them a role and the People list must not grey them out.
+  const onbEmail = `admp-onboarded-${tag}@example.com`; // onboarded, NO users row
+  const [onbUser] = await db
+    .insert(appUser)
+    .values({ email: onbEmail, name: "Onboarded O", userType: "student" })
+    .returning({ id: appUser.id });
+  // student is RLS-forced → the insert needs a board claim (withBoard); app_user
+  // + onboarding are global.
+  await withBoard(A.id, (tx) =>
+    tx.insert(student).values({ userId: onbUser!.id, boardId: A.id, class: "9" }),
+  );
+  await db
+    .insert(onboarding)
+    .values({ userId: onbUser!.id, state: "done", status: "completed", endAt: new Date() });
+
+  const peopleForOnb = await withBoard(A.id, (tx) => listPeople(tx));
+  const onbRow = peopleForOnb.find((p) => p.email === onbEmail && p.role === "student");
+  check(
+    `listPeople marks the onboarded student onboarded=true, hasSignedIn=false (got onb=${onbRow?.onboarded}, auth=${onbRow?.hasSignedIn})`,
+    onbRow?.onboarded === true && onbRow?.hasSignedIn === false,
+  );
+
+  const onbGranted = await withBoard(A.id, (tx) =>
+    setRole(tx, { board: A, actorEmail: adminEmail, email: onbEmail, role: "tutor" }),
+  );
+  check("🔑 setRole on an ONBOARDED (never-signed-in) person → succeeds", onbGranted.role === "tutor");
+  check("…and reports hasSignedIn false (onboarded, not auth-backed)", onbGranted.hasSignedIn === false);
+  check("…and the tutor profile was actually minted", (await profileId(onbEmail, "tutor")) !== null);
 
   // ── 4. self-change refused (by email) ──
   let selfRefused = false;
@@ -442,6 +474,7 @@ async function main() {
     studentBEmail,
     offBoardTutorEmail,
     ghostEmail,
+    onbEmail,
     strangerEmail,
     multiEmail,
     namelessEmail,

@@ -77,7 +77,119 @@ export async function listChaptersForAdmin(tx: Tx): Promise<AdminChapter[]> {
   }));
 }
 
+// ───────────────── subject + chapter authoring (write) ─────────────────
+// Slice ADM-CH — the admin can seed a board's curriculum spine before any
+// topics.md ingest: create/pick a subject, then append chapters to it. Every
+// call is board-scoped via ctx.tx (RLS) + ctx.board.id; the board itself is
+// chosen by the FE board switcher (x-board), NOT inferred. Chapters made here
+// are empty shells (no topics.md, no topic rows) — the ingest tool fills each
+// one's spine afterwards. Idempotent by slug so a re-submit never dupes.
+
+export type AdminSubject = {
+  subjectId: string;
+  name: string;
+  grade: string;
+  slug: string;
+  chapterCount: number;
+};
+
+/** Board-scoped subjects (with chapter counts) for the add-chapter picker. */
+export async function listSubjectsForAdmin(tx: Tx): Promise<AdminSubject[]> {
+  const rows = await tx
+    .select({
+      subjectId: subject.id,
+      name: subject.name,
+      grade: subject.grade,
+      slug: subject.slug,
+      chapterCount: sql<number>`count(${chapter.id})::int`,
+    })
+    .from(subject)
+    .leftJoin(chapter, eq(chapter.subjectId, subject.id))
+    .groupBy(subject.id, subject.name, subject.grade, subject.slug)
+    .orderBy(subject.name, subject.grade);
+  return rows.map((r) => ({ ...r, chapterCount: Number(r.chapterCount) }));
+}
+
+/** Create (or return the existing) subject on this board. Idempotent by (board, slug, grade). */
+export async function createSubjectForAdmin(
+  tx: Tx,
+  input: { boardId: string; name: string; grade: string },
+): Promise<AdminSubject> {
+  const name = input.name.trim();
+  const slug = slugify(name);
+  if (!slug) throw new AdminInputError("subject name must contain letters or digits");
+  if (!input.grade.trim()) throw new AdminInputError("grade is required");
+  const row = await getOrCreate(
+    tx,
+    subject,
+    and(eq(subject.boardId, input.boardId), eq(subject.slug, slug), eq(subject.grade, input.grade)),
+    { boardId: input.boardId, slug, name, grade: input.grade },
+  );
+  return { subjectId: row.id, name: row.name, grade: row.grade, slug: row.slug, chapterCount: 0 };
+}
+
+/**
+ * Append chapters to a subject: each name → slug + the next ordinal (after the
+ * subject's current max). Idempotent — a name whose slug already exists under
+ * this subject is SKIPPED (not duped, not an error), so the whole submit is
+ * safe to retry. Returns what was created vs skipped.
+ */
+export async function addChaptersForAdmin(
+  tx: Tx,
+  input: { boardId: string; subjectId: string; names: string[] },
+): Promise<{ created: { chapterId: string; name: string }[]; skipped: string[] }> {
+  // subject must be visible under THIS board (RLS scopes the read → cross-board
+  // subjectId resolves to nothing and 404s, never leaks or writes off-board).
+  const subj = (await tx.select().from(subject).where(eq(subject.id, input.subjectId)))[0];
+  if (!subj) throw new SubjectNotFoundError(input.subjectId);
+
+  const existing = await tx
+    .select({ slug: chapter.slug, ordinal: chapter.ordinal })
+    .from(chapter)
+    .where(eq(chapter.subjectId, input.subjectId));
+  const seen = new Set(existing.map((c) => c.slug));
+  let ordinal = existing.reduce((m, c) => Math.max(m, c.ordinal), 0);
+
+  const created: { chapterId: string; name: string }[] = [];
+  const skipped: string[] = [];
+  for (const rawName of input.names) {
+    const name = rawName.trim();
+    if (!name) continue; // blank line
+    const slug = slugify(name);
+    if (!slug || seen.has(slug)) {
+      skipped.push(name);
+      continue;
+    }
+    seen.add(slug);
+    ordinal += 1;
+    const [row] = await tx
+      .insert(chapter)
+      .values({ boardId: input.boardId, subjectId: input.subjectId, slug, name, ordinal })
+      .returning({ id: chapter.id });
+    created.push({ chapterId: row!.id, name });
+  }
+  return { created, skipped };
+}
+
 // ───────────────────────── errors ─────────────────────────
+
+/** Bad admin input (empty name, blank grade, …) → BAD_REQUEST. */
+export class AdminInputError extends Error {
+  readonly code = "ADMIN_INPUT";
+  constructor(message: string) {
+    super(message);
+    this.name = "AdminInputError";
+  }
+}
+
+/** Subject not visible under this board → NOT_FOUND (RLS or wrong id). */
+export class SubjectNotFoundError extends Error {
+  readonly code = "SUBJECT_NOT_FOUND";
+  constructor(subjectId: string) {
+    super(`subject ${subjectId} not found in this board`);
+    this.name = "SubjectNotFoundError";
+  }
+}
 
 /** ROLE gate — the CHECK side (M11). adminProcedure calls this. */
 export class AdminOnlyError extends Error {

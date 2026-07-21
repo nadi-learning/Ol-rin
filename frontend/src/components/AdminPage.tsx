@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
-import { trpc } from "../trpc";
+import { getAdminBoard, setAdminBoard, trpc } from "../trpc";
 import { AdminPeoplePanel } from "./AdminPeoplePanel";
+import { AdminChaptersPanel } from "./AdminChaptersPanel";
 import "./admin.css";
+
+type BoardOption = Awaited<ReturnType<typeof trpc.session.listBoards.query>>[number];
 
 // Slice QA3-b — the ADMIN topics.md ingest tool (D-QA3-6): the sole prod write
 // path for a chapter's curriculum spine + raw topics.md. Flow (D-QA3-b-1):
@@ -27,7 +30,14 @@ export function AdminPage({
   // admin arrives for; people is the new capability the whitelist's death
   // requires. Local state, not a route — AdminPage is already reached by role
   // routing, not by URL, so a router would be the only URL-aware thing here.
-  const [tab, setTab] = useState<"ingest" | "people">("ingest");
+  const [tab, setTab] = useState<"ingest" | "chapters" | "people">("ingest");
+
+  // ADM-CH — the admin's board. Every admin.* call is board-scoped (x-board),
+  // but the founder is admin-only with no student board to borrow → without this
+  // switcher every content call fails "no board". Defaults to the first offered
+  // board on mount so all three tabs work immediately.
+  const [boards, setBoards] = useState<BoardOption[] | null>(null);
+  const [board, setBoardState] = useState<string | null>(getAdminBoard());
 
   const [chapters, setChapters] = useState<Chapter[] | null>(null);
   const [chapterId, setChapterId] = useState<string>("");
@@ -50,13 +60,36 @@ export function AdminPage({
     return () => clearInterval(id);
   }, [busy]);
 
+  // Load the offered boards once; default the switcher to the first if unset.
+  useEffect(() => {
+    trpc.session.listBoards
+      .query()
+      .then((bs) => {
+        setBoards(bs);
+        if (!getAdminBoard() && bs[0]) {
+          setAdminBoard(bs[0].slug);
+          setBoardState(bs[0].slug);
+        }
+      })
+      .catch((e) => setError(String(e?.message ?? e)));
+  }, []);
+
+  function onPickBoard(slug: string) {
+    setAdminBoard(slug);
+    setBoardState(slug);
+    setError(null);
+    setCommitted(null);
+  }
+
   function loadChapters() {
+    if (!board) return; // no board → the call would 400 "no board"; wait for the switcher
     trpc.admin.listChapters
       .query()
       .then(setChapters)
       .catch((e) => setError(String(e?.message ?? e)));
   }
-  useEffect(loadChapters, []);
+  // Re-fetch on board change — chapters are board-scoped.
+  useEffect(loadChapters, [board]);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -115,13 +148,30 @@ export function AdminPage({
       <header className="adm-header">
         <div>
           <div className="adm-eyebrow">
-            Admin · {tab === "ingest" ? "topics.md ingest" : "people"}
+            Admin · {tab === "ingest" ? "topics.md ingest" : tab === "chapters" ? "add chapters" : "people"}
           </div>
           <h1 className="adm-title">{adminName}</h1>
         </div>
-        <button className="adm-signout" onClick={onSignOut}>
-          Sign out
-        </button>
+        <div className="adm-header-right">
+          <label className="adm-board-switch">
+            <span>Board</span>
+            <select
+              className="adm-select adm-board-select"
+              value={board ?? ""}
+              onChange={(e) => onPickBoard(e.target.value)}
+            >
+              {board === null && <option value="">- board -</option>}
+              {(boards ?? []).map((b) => (
+                <option key={b.slug} value={b.slug}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="adm-signout" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       <nav className="adm-tabs">
@@ -132,6 +182,12 @@ export function AdminPage({
           Content
         </button>
         <button
+          className={`adm-tab${tab === "chapters" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("chapters")}
+        >
+          Chapters
+        </button>
+        <button
           className={`adm-tab${tab === "people" ? " adm-tab-on" : ""}`}
           onClick={() => setTab("people")}
         >
@@ -139,7 +195,15 @@ export function AdminPage({
         </button>
       </nav>
 
-      {tab === "people" ? <AdminPeoplePanel adminEmail={adminEmail} /> : (
+      {tab === "people" ? (
+        <AdminPeoplePanel adminEmail={adminEmail} />
+      ) : tab === "chapters" ? (
+        board ? (
+          <AdminChaptersPanel board={board} />
+        ) : (
+          <p className="adm-muted">Pick a board to add chapters.</p>
+        )
+      ) : (
       <>
       {error && <p className="adm-error">{error}</p>}
       {committed && <p className="adm-ok">{committed}</p>}

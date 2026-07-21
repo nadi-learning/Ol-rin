@@ -48,6 +48,33 @@ export function clearBoard(): void {
 }
 
 /**
+ * ADM-CH — the ADMIN'S board, chosen by the board switcher on `/admin`, kept in
+ * a SEPARATE key from the student board. Admin content is board-scoped (ingest,
+ * add-chapter), but the founder is admin-only and has no student board to
+ * borrow; before this, `x-board` was simply absent → "no board" on every admin
+ * content call. This is scoped to `/admin` exactly like `x-profile: admin`
+ * (below): reading it only while on `/admin` keeps it from ever polluting the
+ * student board key a founder-who-is-also-a-student relies on at `/`.
+ */
+const ADMIN_BOARD_KEY = "b2c.admin.board";
+
+export function getAdminBoard(): string | null {
+  try {
+    return localStorage.getItem(ADMIN_BOARD_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAdminBoard(slug: string): void {
+  try {
+    localStorage.setItem(ADMIN_BOARD_KEY, slug);
+  } catch {
+    /* see getBoard */
+  }
+}
+
+/**
  * What the person said they were on the landing page — the persona card,
  * which the founder made load-bearing this session (it used to only prefill a
  * dev-login email).
@@ -135,8 +162,11 @@ export const trpc = createTRPCClient<AppRouter>({
         // not-found door an off-list admin gets — so that 403 is never reached.
         const onAdmin = window.location.pathname.replace(/\/+$/, "") === "/admin";
         const p = onAdmin ? "admin" : getPersona();
+        // ADM-CH — on `/admin` the board comes from the admin switcher, not the
+        // student board key. Same URL-scoping rationale as `x-profile: admin`.
+        const board = onAdmin ? getAdminBoard() : b;
         return {
-          ...(b ? { "x-board": b } : {}),
+          ...(board ? { "x-board": board } : {}),
           ...(p ? { "x-profile": p } : {}),
         };
       },

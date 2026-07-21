@@ -29,12 +29,17 @@ import {
   type OnboardingState,
 } from "../services/onboarding";
 import {
+  addChaptersForAdmin,
+  AdminInputError,
   ChapterHasDependentDataError,
   ChapterNotFoundError,
   commitTopicsMd,
+  createSubjectForAdmin,
   extractedTopicsMdSchema,
   extractTopicsMd,
   listChaptersForAdmin,
+  listSubjectsForAdmin,
+  SubjectNotFoundError,
   TopicsMdInvalidError,
 } from "../services/admin_ingest";
 import {
@@ -2156,6 +2161,47 @@ export const appRouter = router({
   admin: router({
     // Chapter picker for the ingest UI (board-scoped via RLS).
     listChapters: adminProcedure.query(({ ctx }) => listChaptersForAdmin(ctx.tx)),
+
+    // ─────────────── Slice ADM-CH — seed the curriculum spine ───────────────
+    // The board comes from x-board (the FE board switcher), NOT inferred. These
+    // let an admin create a subject and append empty chapter shells before any
+    // topics.md ingest — the fix for "a board with no chapters can't be filled".
+
+    /** Subjects on the current board (with chapter counts) — the add-chapter picker. */
+    listSubjects: adminProcedure.query(({ ctx }) => listSubjectsForAdmin(ctx.tx)),
+
+    /** Create (or return existing) a subject on this board. Idempotent by (board, slug, grade). */
+    createSubject: adminProcedure
+      .input(z.object({ name: z.string().min(1), grade: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await createSubjectForAdmin(ctx.tx, { boardId: ctx.board.id, ...input });
+        } catch (e) {
+          if (e instanceof AdminInputError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    /** Append chapters (one name per entry) to a subject. Idempotent by slug. */
+    addChapters: adminProcedure
+      .input(
+        z.object({
+          subjectId: z.string().uuid(),
+          names: z.array(z.string().min(1)).min(1),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await addChaptersForAdmin(ctx.tx, { boardId: ctx.board.id, ...input });
+        } catch (e) {
+          if (e instanceof SubjectNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
 
     // A MUTATION (one AI call, not cacheable). Runs INLINE — the admin waits for
     // the extraction, then reviews the preview before committing (D-QA3-b-1). Does
