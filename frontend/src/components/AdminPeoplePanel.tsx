@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { trpc } from "../trpc";
 
 // Slice D — the admin PEOPLE surface. Replaces the operational capability the
@@ -18,6 +18,15 @@ import { trpc } from "../trpc";
 type Person = Awaited<ReturnType<typeof trpc.admin.listPeople.query>>[number];
 type Link = Awaited<ReturnType<typeof trpc.admin.listLinks.query>>[number];
 type Found = Awaited<ReturnType<typeof trpc.admin.findByEmail.query>>;
+
+/** One tutor (or parent) with the students linked to them, for the grouped view. */
+type AssignGroup = {
+  kind: "tutor" | "parent";
+  adultUserId: string;
+  adultEmail: string;
+  adultName: string | null;
+  students: Link[];
+};
 
 const ROLES = ["student", "tutor", "parent", "admin"] as const;
 type Role = (typeof ROLES)[number];
@@ -113,6 +122,60 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
     });
   }
 
+  // Group the flat link list BY the adult (tutor or parent) so the admin reads
+  // "who has how many students", not an undifferentiated pile. Tutors/parents
+  // with ZERO students are seeded from `people` so a teacher's count shows even
+  // at 0 — that is the "manage how many students each teacher has" ask. Each
+  // student stays a full `Link` so `onUnlink` is unchanged. useMemo so the group
+  // shape (and the sort) is stable across the render that a busy toggle causes.
+  const groups = useMemo<AssignGroup[]>(() => {
+    const map = new Map<string, AssignGroup>();
+    const keyOf = (kind: string, id: string) => `${kind}:${id}`;
+
+    // Seed 0-count tutors/parents so an unassigned teacher still lists (count 0).
+    for (const p of people ?? []) {
+      if (p.role === "tutor" || p.role === "parent") {
+        const k = keyOf(p.role, p.userId);
+        if (!map.has(k)) {
+          map.set(k, {
+            kind: p.role,
+            adultUserId: p.userId,
+            adultEmail: p.email,
+            adultName: p.name,
+            students: [],
+          });
+        }
+      }
+    }
+
+    // Fill from the links. An adult in a link but not in `people` (shouldn't
+    // happen — a link requires a membership — but cheap to be safe) still lists.
+    for (const l of links ?? []) {
+      const k = keyOf(l.kind, l.adultUserId);
+      let g = map.get(k);
+      if (!g) {
+        g = {
+          kind: l.kind,
+          adultUserId: l.adultUserId,
+          adultEmail: l.adultEmail,
+          adultName: l.adultName,
+          students: [],
+        };
+        map.set(k, g);
+      }
+      g.students.push(l);
+    }
+
+    const arr = [...map.values()];
+    // Tutors before parents, then by email — a stable order so a group can't
+    // reshuffle between render and a per-row Remove click (listLinks' own reason).
+    arr.sort((a, b) =>
+      a.kind === b.kind ? a.adultEmail.localeCompare(b.adultEmail) : a.kind === "tutor" ? -1 : 1,
+    );
+    for (const g of arr) g.students.sort((a, b) => a.studentEmail.localeCompare(b.studentEmail));
+    return arr;
+  }, [people, links]);
+
   return (
     <>
       {error && <p className="adm-error">{error}</p>}
@@ -136,7 +199,11 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
               <tbody>
                 {people.map((p) => (
                   <PersonRow
-                    key={p.userId}
+                    // Since S123 one person can hold several roles on a board
+                    // (student + tutor + parent), so listPeople returns multiple
+                    // rows per userId. Key on userId+role or React collapses them
+                    // and an admin's control for a role silently vanishes.
+                    key={`${p.userId}:${p.role}`}
                     person={p}
                     isSelf={p.email.toLowerCase() === adminEmail.toLowerCase()}
                     busy={busy === `role:${p.email}`}
@@ -250,30 +317,47 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
           </button>
 
           <label className="adm-label" style={{ marginTop: 14 }}>
-            Existing links
+            Assignments by tutor / parent
           </label>
-          {links === null ? (
+          {links === null || people === null ? (
             <p className="adm-muted">Loading…</p>
-          ) : links.length === 0 ? (
-            <p className="adm-muted">No links yet.</p>
+          ) : groups.length === 0 ? (
+            <p className="adm-muted">No tutors or parents yet.</p>
           ) : (
-            <ul className="adm-links">
-              {links.map((l) => (
-                <li key={`${l.kind}:${l.adultUserId}:${l.studentUserId}`}>
-                  <span className={`adm-kind adm-kind-${l.kind}`}>{l.kind}</span>
-                  <span className="adm-link-people">
-                    {l.adultName ?? l.adultEmail} → {l.studentName ?? l.studentEmail}
-                  </span>
-                  <button
-                    className="adm-unlink"
-                    disabled={busy !== null}
-                    onClick={() => onUnlink(l)}
-                  >
-                    Remove
-                  </button>
-                </li>
+            <div className="adm-groups">
+              {groups.map((g) => (
+                <div className="adm-group" key={`${g.kind}:${g.adultUserId}`}>
+                  <div className="adm-group-head">
+                    <span className={`adm-kind adm-kind-${g.kind}`}>{g.kind}</span>
+                    <span className="adm-group-name">{g.adultName ?? g.adultEmail}</span>
+                    <span className="adm-group-count">{countLabel(g)}</span>
+                  </div>
+                  {g.adultName && <div className="adm-group-email">{g.adultEmail}</div>}
+                  {g.students.length === 0 ? (
+                    <p className="adm-muted adm-group-empty">
+                      No {g.kind === "tutor" ? "students" : "children"} assigned yet.
+                    </p>
+                  ) : (
+                    <ul className="adm-links">
+                      {g.students.map((l) => (
+                        <li key={l.studentUserId}>
+                          <span className="adm-link-people">
+                            {l.studentName ?? l.studentEmail}
+                          </span>
+                          <button
+                            className="adm-unlink"
+                            disabled={busy !== null}
+                            onClick={() => onUnlink(l)}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </section>
       </div>
@@ -340,6 +424,14 @@ function PersonRow({
       </td>
     </tr>
   );
+}
+
+/** "4 students" / "1 child" — the per-teacher count the admin manages. */
+function countLabel(g: AssignGroup): string {
+  const n = g.students.length;
+  const noun = g.kind === "tutor" ? "student" : "child";
+  const plural = g.kind === "tutor" ? "students" : "children";
+  return `${n} ${n === 1 ? noun : plural}`;
 }
 
 /** tRPC surfaces the server's error CODE; turn the two expected ones into English. */

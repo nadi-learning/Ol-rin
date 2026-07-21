@@ -106,7 +106,7 @@ async function allBoards(): Promise<{ id: string; slug: string; name: string }[]
  *
  * Order is the order the chips render.
  */
-const SUPPORTED_BOARDS: readonly string[] = ["cbse", "igcse", "cambridge"];
+const SUPPORTED_BOARDS: readonly string[] = ["cbse", "cambridge"];
 
 export async function listBoards(): Promise<BoardOption[]> {
   const boards = await allBoards();

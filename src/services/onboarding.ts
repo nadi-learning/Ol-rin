@@ -103,7 +103,7 @@ export function nextStep(step: OnboardingStep): OnboardingStep {
  * re-validates a stored grade — the check below runs on WRITE only — so they
  * are unaffected until they re-answer the beat, at which point they re-pick.
  */
-export const SUPPORTED_GRADES: readonly string[] = ["9", "10"];
+export const SUPPORTED_GRADES: readonly string[] = ["8", "9", "10", "11"];
 
 export async function listGradeOptions(_tx: Tx): Promise<string[]> {
   return [...SUPPORTED_GRADES];

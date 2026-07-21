@@ -381,6 +381,50 @@
 .adm-unlink:hover { background: #fdecec; border-color: #f3b4b4; }
 .adm-unlink:disabled { opacity: 0.5; cursor: default; }
 
+/* Assignments grouped by the tutor/parent — the "how many students each teacher
+   has" view. Each group is a small card: a head row (kind badge · name · count)
+   over the student rows (which stay `.adm-links li` for the walk + Remove). */
+.adm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.adm-group {
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: #fff;
+}
+.adm-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-group-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 13.5px;
+  word-break: break-word;
+}
+.adm-group-count {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft, #6b6459);
+  background: var(--wash, #f6f2ea);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+.adm-group-email {
+  font-size: 12px;
+  color: var(--ink-soft, #6b6459);
+  margin: 2px 0 0;
+  word-break: break-all;
+}
+.adm-group .adm-links { margin-top: 6px; }
+.adm-group-empty { margin: 6px 0 0; }
+
 @media (max-width: 560px) {
   .adm-row { flex-wrap: wrap; }
   .adm-table td:last-child { white-space: normal; }
