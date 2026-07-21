@@ -34,14 +34,13 @@ import {
   chapter,
   eventLog,
   masteryState,
-  membership,
   observation,
   practiceSession,
   question,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -130,10 +129,13 @@ async function main() {
   check("real flow: tutor membership role = 'tutor' (M11 SET side)", T.role === "tutor");
   check("real flow: student membership role = 'student'", S1.role === "student");
 
-  // link T → S1 only (S2 deliberately UNLINKED)
-  await withBoard(P.id, (tx) =>
-    tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userT, studentId: userS1 }),
-  );
+  // Operational `student` rows (ID-4: grantRole mints only the profile shell; the
+  // student row is onboarding's job — here it's a fixture). The tutor↔student link
+  // is the single pointer `student.tutor_id`: S1 → T, S2 UNLINKED (tutor_id null).
+  await withBoard(P.id, async (tx: Tx) => {
+    await tx.insert(student).values({ userId: userS1, boardId: P.id, class: "9", tutorId: userT });
+    await tx.insert(student).values({ userId: userS2, boardId: P.id, class: "9" });
+  });
 
   // Stage-1 observations + mastery to drive the worklist cutoff (D-T-2).
   await withBoard(P.id, async (tx: Tx) => {
@@ -349,12 +351,12 @@ async function main() {
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    // student rows FK to app_user (user_id / tutor_id) — drop before appUser below.
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailT));
   await db.delete(appUser).where(eq(appUser.email, emailS1));

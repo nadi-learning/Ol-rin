@@ -30,13 +30,12 @@ import {
   attempt,
   attemptImage,
   board as boardTable,
-  tutorStudent,
+  student,
   uploadToken,
 } from "@b2c/kernel/schema";
 import { db } from "../db/client";
 import { withBoard } from "../db/with-board";
 import { ImageError, type ResolvedImage } from "./image_serve";
-import { NoMembershipError, requireMembership } from "./membership";
 import { getObject } from "./object_storage";
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -54,11 +53,22 @@ function mimeFromKey(key: string): string {
   return MIME_BY_EXT[ext] ?? "application/octet-stream";
 }
 
-/** Board (by slug) + app_user (by email), or the matching ImageError. Shared
- *  head of both resolvers — 401 no session, 404 unknown board, 403 unknown user. */
+/**
+ * Board (by slug) + the caller's app_user PROFILE of a given kind, or the matching
+ * ImageError. Shared head of all three resolvers — 401 no session, 404 unknown
+ * board, 403 unknown profile.
+ *
+ * ID-4: one email now holds up to four profiles (student/tutor/parent/admin), so
+ * resolving by email alone would arbitrarily pick one — the same-email ambiguity
+ * the identity redesign removes everywhere else. Each route names WHICH profile it
+ * means: the owner-scoped photo routes resolve the caller's `student` profile
+ * (an answer photo is a student's own work); the tutor recall route resolves the
+ * `tutor` profile. `userId` is that specific profile's id.
+ */
 async function resolveBoardAndUser(
   boardSlug: string,
   email: string | null,
+  userType: "student" | "tutor",
 ): Promise<{ boardId: string; boardSlug: string; userId: string; email: string }> {
   if (!email) throw new ImageError(401, "NOT_AUTHENTICATED");
 
@@ -72,7 +82,7 @@ async function resolveBoardAndUser(
   const [user] = await db
     .select({ id: appUser.id })
     .from(appUser)
-    .where(eq(appUser.email, email))
+    .where(and(eq(appUser.email, email), eq(appUser.userType, userType)))
     .limit(1);
   if (!user) throw new ImageError(403, "NO_MEMBERSHIP");
 
@@ -90,7 +100,11 @@ export async function resolveUploadPreviewBytes(args: {
   boardSlug: string;
   email: string | null;
 }): Promise<ResolvedImage> {
-  const { boardId, userId } = await resolveBoardAndUser(args.boardSlug, args.email);
+  const { boardId, userId } = await resolveBoardAndUser(
+    args.boardSlug,
+    args.email,
+    "student",
+  );
 
   // upload_token is GLOBAL (not RLS) — read by the token string, then owner+board
   // check in code. Mirrors mint/consume, which also read it without a claim.
@@ -133,19 +147,19 @@ export async function resolveAnswerPhotoBytes(args: {
   boardSlug: string;
   email: string | null;
 }): Promise<ResolvedImage> {
-  const { boardId, boardSlug, userId, email } = await resolveBoardAndUser(
+  const { boardId, userId } = await resolveBoardAndUser(
     args.boardSlug,
     args.email,
+    "student",
   );
 
+  // ID-4: no separate membership gate. resolveBoardAndUser already pins the
+  // caller's `student` profile, and the two checks below are strictly stronger
+  // than board membership — the attempt_image is read under withBoard (RLS scopes
+  // it to this board; a cross-board image is invisible → 404) AND the owner check
+  // requires it be THIS student's own attempt. Only the owner, on the claimed
+  // board, gets bytes.
   return withBoard(boardId, async (tx) => {
-    try {
-      await requireMembership(tx, { email, board: { id: boardId, slug: boardSlug } });
-    } catch (e) {
-      if (e instanceof NoMembershipError) throw new ImageError(403, "NO_MEMBERSHIP");
-      throw e;
-    }
-
     const [img] = await tx
       .select({
         storageKey: attemptImage.storageKey,
@@ -184,19 +198,22 @@ export async function resolveTutorAnswerPhotoBytes(args: {
   boardSlug: string;
   email: string | null;
 }): Promise<ResolvedImage> {
-  const { boardId, boardSlug, userId, email } = await resolveBoardAndUser(
-    args.boardSlug,
-    args.email,
-  );
+  // Resolve the caller's TUTOR profile. A caller with no tutor profile (a plain
+  // student, an unauth'd request that got this far) isn't a tutor — surface that
+  // as 404, not 403: revealing "you're not a tutor" here would still let a
+  // board-mate probe image existence. 401 (no session) passes through untouched.
+  let resolved;
+  try {
+    resolved = await resolveBoardAndUser(args.boardSlug, args.email, "tutor");
+  } catch (e) {
+    if (e instanceof ImageError && e.status === 403) {
+      throw new ImageError(404, "ANSWER_PHOTO_NOT_FOUND");
+    }
+    throw e;
+  }
+  const { boardId, userId } = resolved;
 
   return withBoard(boardId, async (tx) => {
-    try {
-      await requireMembership(tx, { email, board: { id: boardId, slug: boardSlug } });
-    } catch (e) {
-      if (e instanceof NoMembershipError) throw new ImageError(403, "NO_MEMBERSHIP");
-      throw e;
-    }
-
     const [img] = await tx
       .select({
         storageKey: attemptImage.storageKey,
@@ -209,16 +226,16 @@ export async function resolveTutorAnswerPhotoBytes(args: {
       .limit(1);
     if (!img) throw new ImageError(404, "ANSWER_PHOTO_NOT_FOUND");
 
-    // The caller must tutor the student who owns this attempt (same board via RLS).
+    // ID-4: the tutor→student link is `student.tutor_id`. The owner (img.ownerId =
+    // the attempt's student) must be a student whose tutor_id points at THIS
+    // tutor. Read under withBoard, so the `student` row is RLS-scoped to this
+    // board — a cross-board owner is invisible and resolves to 404. This inverts
+    // the owner check of the durable route: the caller must NOT be the owner, they
+    // must be the owner's tutor. No self-link, no cross-tutor, no leak.
     const [link] = await tx
-      .select({ id: tutorStudent.id })
-      .from(tutorStudent)
-      .where(
-        and(
-          eq(tutorStudent.tutorId, userId),
-          eq(tutorStudent.studentId, img.ownerId),
-        ),
-      )
+      .select({ userId: student.userId })
+      .from(student)
+      .where(and(eq(student.userId, img.ownerId), eq(student.tutorId, userId)))
       .limit(1);
     if (!link) throw new ImageError(404, "ANSWER_PHOTO_NOT_FOUND");
 

@@ -156,7 +156,7 @@ async function main() {
   if (!P) throw new Error("board seed failed");
   const [student] = await db
     .insert(appUser)
-    .values({ email: `vpc-s-${tag}@example.com`, name: "Probe Asha" })
+    .values({ email: `vpc-s-${tag}@example.com`, name: "Probe Asha", userType: "student" })
     .returning();
   if (!student) throw new Error("student seed failed");
 

@@ -17,6 +17,37 @@ export type Role = z.infer<typeof Role>;
 export const DEFAULT_ROLE: Role = "student";
 
 /**
+ * user_type — the identity axis on app_user (ID-0, S127 redesign). Same four
+ * values as ROLES; membership is absorbed, so a person's "role" is now the
+ * user_type of the profile they signed in as. Kept as its own name because the
+ * COLUMN is `user_type` and the concept (which profile) is distinct from the
+ * old per-board membership role, even though the value set is identical.
+ * The DB CHECK on app_user.user_type is generated from this list.
+ */
+export const USER_TYPES = ["student", "tutor", "parent", "admin"] as const;
+export const UserType = z.enum(USER_TYPES);
+export type UserType = z.infer<typeof UserType>;
+
+/**
+ * A 7-char alphanumeric referral code, minted per profile at signup (founder
+ * ask 2026-07-21). Every app_user profile gets one; the column is UNIQUE, so
+ * the write path (login-upsert, ID-1) retries on the rare collision.
+ *
+ * The alphabet excludes visually ambiguous glyphs (0/O, 1/I/L) so a human can
+ * read a code off a screen and type it back without confusion — a referral
+ * code is a share-it-out-loud artifact, not an internal id.
+ */
+export const REFERRAL_CODE_LENGTH = 7;
+const REFERRAL_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
+export function generateReferralCode(): string {
+  let out = "";
+  for (let i = 0; i < REFERRAL_CODE_LENGTH; i++) {
+    out += REFERRAL_ALPHABET[Math.floor(Math.random() * REFERRAL_ALPHABET.length)];
+  }
+  return out;
+}
+
+/**
  * The roles a person may CLAIM for themselves at signup — the landing persona,
  * founder's call this session.
  *

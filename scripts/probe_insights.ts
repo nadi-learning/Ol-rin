@@ -36,7 +36,7 @@ import {
   chapter,
   masteryHistory,
   masteryState,
-  membership,
+  student,
   practiceSession,
   question,
   subTopic,
@@ -200,7 +200,7 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
   for (const email of [emailW, emailX, emailZ]) {
     await db.delete(appUser).where(eq(appUser.email, email));

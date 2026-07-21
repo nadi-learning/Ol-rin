@@ -308,11 +308,11 @@ export function OnboardingPage({
 
   // 🔑 THE CHICKEN-AND-EGG, on the client. The grade chips are board-scoped, so
   // WHERE they come from depends on whether a board is committed:
-  //   boarded   → onboarding.listGradeOptions (protected; uses the x-board header)
-  //   pre-board → session.listGradesForBoard  (no membership, board named explicitly)
-  // Calling the protected one pre-board is a guaranteed FORBIDDEN, which would
-  // surface as "— no classes set up yet —" and read like missing content rather
-  // than a bug, so the guard is load-bearing rather than an optimisation.
+  //   boarded   → onboarding.listGradeOptions (authed; uses the x-board header)
+  //   pre-board → session.listGradesForBoard  (no board committed, named explicitly)
+  // Calling the board-scoped one pre-board is a guaranteed BAD_REQUEST (no
+  // x-board), which would surface as "— no classes set up yet —" and read like
+  // missing content rather than a bug, so the guard is load-bearing.
   useEffect(() => {
     if (boarded) {
       trpc.onboarding.listGradeOptions
@@ -519,12 +519,12 @@ export function OnboardingPage({
       );
 
       // 🔑 SLICE E — the beats BEFORE the board pick advance locally.
-      // `saveStep` is a protectedProcedure, so a student who has not yet chosen
-      // a board cannot call it; `greet` is the only beat in that window and it
-      // is talk-only, so there is nothing to lose. This is safe because the
-      // onboarding row is born on the first real ANSWER, not on `greet`:
-      // `saveAboutYou` upserts unconditionally and sets `current_step` itself,
-      // so the row that appears a moment later is identical either way.
+      // `saveStep` is an authedProcedure that needs the x-board header, so a
+      // student who has not yet chosen a board cannot call it; `greet` is the
+      // only beat in that window and it is talk-only, so there is nothing to
+      // lose. This is safe because the operational student row + onboarding
+      // header are born on the first real ANSWER (ID-3: `saveAboutYou` mints the
+      // student row and sets `state` itself), not on `greet`.
       //
       // ⚠️ If a beat that PERSISTS is ever moved ahead of `about_you`, this
       // silently drops its answer. Refuse loudly instead of guessing.

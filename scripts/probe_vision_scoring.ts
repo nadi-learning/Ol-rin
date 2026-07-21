@@ -141,7 +141,7 @@ async function main() {
   if (!P || !Q) throw new Error("board seed failed");
 
   const email = `q32-stu-${tag}@example.com`;
-  const [stu] = await db.insert(appUser).values({ email, name: "Stu" }).returning();
+  const [stu] = await db.insert(appUser).values({ email, name: "Stu", userType: "student" }).returning();
   if (!stu) throw new Error("app_user seed failed");
 
   // Fixture under P: spine + LOs (both axes) + a procedural and a conceptual

@@ -1,31 +1,37 @@
 /**
- * Slice ONB-1 — the conversational welcome.
+ * Onboarding — the conversational welcome, rebuilt on the profile model (ID-3,
+ * S127 redesign).
  *
- * Runs on first LOGIN, not signup. Nobody is gated (Slice C / S110): anyone who
- * signs in gets an app_user + a membership at 'student' from resolveMembership,
- * so by the time a student reaches this flow we already know who they are and
- * which board they belong to — not because they were pre-invited, but because
- * login itself created that identity. It is a welcome, not a registration —
- * that is why nothing here can reject a user, only ask them things.
+ * 🔑 THE MODEL SHIFT. Onboarding used to store every answer as a COLUMN on a
+ * board-scoped `onboarding` row. It no longer does. In the new identity model:
+ *   - `onboarding` is a GLOBAL state-machine HEADER — `state` (the resume beat),
+ *     `status`, `endAt` — keyed by the student's `app_user` profile id. One row
+ *     per student, no board_id, no RLS. `onboarding_flow_log` is its append-only
+ *     transition trail.
+ *   - The ANSWERS land where they belong: class/pronoun/hero/pet on the STUDENT
+ *     row (board-scoped, RLS), phone on `app_user`. hero/pet are per-student
+ *     INSTANCES created here.
+ *   - 🔑 `about_you` is where the OPERATIONAL `student` row is BORN (board_id +
+ *     class + pronoun). Before it, a student is a board-less profile SHELL — which
+ *     is exactly why onboarding runs on `authedProcedure`, NOT `protectedProcedure`:
+ *     `requireMembership` now THROWS for a student with no `student` row, so the
+ *     surface that CREATES that row cannot sit behind the gate that demands it.
  *
- * Load-bearing decisions realized here:
- *  - D-ONB-1  WRITE-PER-ANSWER. Each beat commits on answer and advances
- *             current_step, so closing the tab at beat 4 resumes at beat 4.
- *             A client-side buffer committed once at the end loses everything
- *             to a refresh — for a child on a phone that is the common case.
- *  - D-ONB-2  GRADE IS CHIPS DERIVED FROM REAL subject.grade. Free text yields
- *             "10th" / "X" / "tenth" and the one field with a consumer waiting
- *             becomes unparseable. The options are whatever the BOARD actually
- *             has, so they cannot drift from the catalogue.
- *  - FAIL-OPEN. getState never throws on a missing/º broken row: a student is
- *             never locked out of the product by a broken welcome. Same stance
- *             as D-AVAIL-1's `availIds: null` (G3 spirit).
+ * Runs on first LOGIN, not signup. Nobody is gated (S110): anyone who signs in
+ * gets a student profile shell from `session.enter`, and onboarding turns that
+ * shell into an operational student. It is a welcome, not a registration — it
+ * can only ask, never reject.
  *
- * Tutors/parents/admins are EXEMPT, not forbidden — getState reports
- * needsOnboarding:false for them rather than erroring. Onboarding is a student
- * surface; a tutor hitting it should be a no-op, not a 403.
+ * Load-bearing decisions kept from ONB-1:
+ *  - D-ONB-1  WRITE-PER-ANSWER. Each beat commits + advances `state`, so closing
+ *             the tab at beat N resumes at beat N.
+ *  - FAIL-OPEN. getState never throws a student out of the product (router catch).
+ *  - Tutors/parents/admins are EXEMPT, not forbidden (needsOnboarding:false).
+ *
+ * M11: the SET side a probe drives is the SET side the app drives — the beats
+ * write through these functions, never a direct table insert in a probe.
  */
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   FAV_CHARACTERS,
@@ -37,7 +43,8 @@ import {
   resolveOnboardingStep,
   type OnboardingStep,
 } from "@b2c/kernel/contracts";
-import { onboarding, subject } from "@b2c/kernel/schema";
+import { appUser, hero, onboarding, onboardingFlowLog, pet, student } from "@b2c/kernel/schema";
+import { ensureProfile } from "./membership";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -63,6 +70,13 @@ export type OnboardingState = {
 };
 
 const FIRST_STEP: OnboardingStep = ONBOARDING_STEPS[0];
+const EMPTY_ANSWERS: OnboardingState["answers"] = {
+  grade: null,
+  pronoun: null,
+  favCharacter: null,
+  pet: null,
+  phone: null,
+};
 
 /** The beat after `step`; `done` is terminal and is its own successor. */
 export function nextStep(step: OnboardingStep): OnboardingStep {
@@ -72,36 +86,12 @@ export function nextStep(step: OnboardingStep): OnboardingStep {
 }
 
 /**
- * 🔑 Slice M (founder) — THE GRADES WE SUPPORT, NOT THE GRADES THE CATALOGUE
- * HAPPENS TO HOLD. This **supersedes D-ONB-2**, which derived the chips from
- * `selectDistinct(subject.grade)`.
- *
- * Why the derivation had to go, and it is not cosmetic. The founder's call is
- * that the product offers Class 9 and Class 10. Filtering the derived list to
- * those two would have been the small change — and it would have TRAPPED
- * students. Grade is required to finish onboarding on BOTH sides (the CTA at
- * `OnboardingPage.tsx:730` and `saveAboutYou` below, which validates against
- * this very function), and cambridge's catalogue grades are `IGCSE`/`Grade8`.
- * So a filtered derivation returns [] for cambridge, the row renders
- * "— no classes set up yet —", the button never enables, and that student can
- * never enter the app at all — not even to be told we are still setting it up.
- *
- * A constant set has no empty case, so no board can strand anyone. A board with
- * nothing published now behaves the way the founder asked for it to: the
- * student finishes onboarding, gets in, and meets the "still setting this up"
- * screen (`revision-landing.copy.ts`), which is a product state rather than a
- * dead control.
- *
- * ⚠️ THE VALUES ARE "9"/"10", NOT "Class 9". They are written to
- * `student_onboarding.grade` and read back against `subject.grade`, where
- * cbse's real rows already say "9"/"10". Prettifying the stored value would
- * silently unjoin every existing cbse student from their own subjects. The
- * label the child reads is the ROW's ("I'm in class"), so the chip only ever
- * has to carry the number.
- *
- * ⚠️ Pre-existing cambridge students hold `IGCSE` in that column. Nothing
- * re-validates a stored grade — the check below runs on WRITE only — so they
- * are unaffected until they re-answer the beat, at which point they re-pick.
+ * 🔑 Slice M (founder) — THE GRADES WE SUPPORT, not the grades the catalogue
+ * happens to hold. A constant has no empty case, so no board can strand a student
+ * on "— no classes set up yet —" with a button that never enables. The VALUES are
+ * plain numbers ("9"), written to `student.class` and read back against
+ * `subject.grade` where cbse's rows already say "9"/"10" — prettifying to
+ * "Class 9" would silently unjoin every student from their subjects.
  */
 export const SUPPORTED_GRADES: readonly string[] = ["8", "9", "10", "11"];
 
@@ -110,78 +100,141 @@ export async function listGradeOptions(_tx: Tx): Promise<string[]> {
 }
 
 /**
- * Read-only (a tRPC query must not write). No row yet = "needs it, start at the
- * top" rather than provisioning one — the row is born on the first ANSWER, so a
- * student who never engages leaves no trace.
+ * The student's `app_user` profile id, READ-ONLY (a tRPC query must not write).
+ * Null if no student profile exists yet — treated by getState as "fresh start".
+ */
+async function readStudentProfileId(tx: Tx, email: string): Promise<string | null> {
+  const [p] = await tx
+    .select({ id: appUser.id })
+    .from(appUser)
+    .where(and(eq(appUser.email, email), eq(appUser.userType, "student")))
+    .limit(1);
+  return p?.id ?? null;
+}
+
+/**
+ * Read-only. Assembles the flow state from the GLOBAL onboarding header + the
+ * answers scattered across student / hero / pet / app_user. No row yet =
+ * "needs it, start at the top" — nothing is provisioned by a read.
+ *
+ * `role` is the request's `x-profile`: a tutor/parent/admin is EXEMPT (a student
+ * surface, so a no-op for them, not a 403). The student row is read under the
+ * board-scoped tx, so its answers appear only for the board being onboarded into.
  */
 export async function getState(
   tx: Tx,
-  args: { userId: string; boardId: string; role: string },
+  args: { email: string; boardId: string; role: string },
 ): Promise<OnboardingState> {
-  // `school` (S90) and the fun-fact pair (S91) are deliberately absent: the
-  // columns still exist, but the beats are gone and nothing reads them, so the
-  // state stops carrying them. State tracks the FLOW, not the table.
-  const empty = {
-    grade: null,
-    pronoun: null,
-    favCharacter: null,
-    pet: null,
-    phone: null,
-  };
-
   // Exempt, not forbidden.
   if (args.role !== "student") {
-    return { needsOnboarding: false, status: "completed", currentStep: "done", answers: empty };
+    return { needsOnboarding: false, status: "completed", currentStep: "done", answers: EMPTY_ANSWERS };
   }
 
-  const [row] = await tx
-    .select()
+  const userId = await readStudentProfileId(tx, args.email);
+  if (!userId) {
+    return { needsOnboarding: true, status: "in_progress", currentStep: FIRST_STEP, answers: EMPTY_ANSWERS };
+  }
+
+  const [head] = await tx
+    .select({ status: onboarding.status, state: onboarding.state })
     .from(onboarding)
-    .where(and(eq(onboarding.userId, args.userId), eq(onboarding.boardId, args.boardId)))
+    .where(eq(onboarding.userId, userId))
     .limit(1);
 
-  if (!row) {
-    return { needsOnboarding: true, status: "in_progress", currentStep: FIRST_STEP, answers: empty };
+  const answers = await readAnswers(tx, userId);
+
+  if (!head) {
+    // A profile shell with no header: onboarding not started. (A seeded student
+    // row with no header still reads "needs it" — seeds that want a done student
+    // create the header too; that is a fixture, not the product's path.)
+    return { needsOnboarding: true, status: "in_progress", currentStep: FIRST_STEP, answers };
   }
 
   return {
-    needsOnboarding: row.status !== "completed",
-    status: row.status as "in_progress" | "completed",
-    // S96 — resolve, don't cast. Real rows hold `pikachu` (S91–S95 walks) and
-    // ONB-5 removed that beat; a bare cast would hand the client a step no beat
-    // answers to, which the walker treats as "copy file doesn't know this" and
-    // skips the student straight out of onboarding. Retired steps map to their
-    // successor instead. The cast lied about a value the DB does not constrain.
-    currentStep: resolveOnboardingStep(row.currentStep),
-    answers: {
-      grade: row.grade,
-      pronoun: row.pronoun,
-      favCharacter: row.favCharacter,
-      pet: row.pet,
-      phone: row.phone,
-    },
+    needsOnboarding: head.status !== "completed",
+    status: head.status as "in_progress" | "completed",
+    // Resolve, don't cast: real rows can hold a retired step id (`pikachu`,
+    // `lore`); a bare cast would hand the client a beat no copy answers to and
+    // skip the student straight out of the story. Retired steps map forward.
+    currentStep: resolveOnboardingStep(head.state),
+    answers,
+  };
+}
+
+/** The current answers, gathered from the tables they now live on. */
+async function readAnswers(tx: Tx, userId: string): Promise<OnboardingState["answers"]> {
+  const [s] = await tx
+    .select({ class: student.class, pronoun: student.pronoun, heroId: student.heroId, petId: student.petId })
+    .from(student)
+    .where(eq(student.userId, userId))
+    .limit(1);
+
+  const [u] = await tx
+    .select({ phone: appUser.phone })
+    .from(appUser)
+    .where(eq(appUser.id, userId))
+    .limit(1);
+
+  let favCharacter: string | null = null;
+  if (s?.heroId) {
+    const [h] = await tx.select({ type: hero.heroType }).from(hero).where(eq(hero.heroId, s.heroId)).limit(1);
+    favCharacter = h?.type ?? null;
+  }
+  let petType: string | null = null;
+  if (s?.petId) {
+    const [pt] = await tx.select({ type: pet.petType }).from(pet).where(eq(pet.petId, s.petId)).limit(1);
+    petType = pt?.type ?? null;
+  }
+
+  return {
+    grade: s?.class ?? null,
+    pronoun: s?.pronoun ?? null,
+    favCharacter,
+    pet: petType,
+    phone: u?.phone ?? null,
   };
 }
 
 /**
- * S92 — the `about_you` beat: class + pronoun, committed together because they
- * are asked on one screen (founder). It gets its own mutation rather than
- * bending saveStep, which is one-step-one-column by design; generalising that
- * to n-columns for a single caller would be machinery nobody else wants.
- *
- * BOTH are required and both are closed sets: grade because it is the one
- * answer with a consumer waiting (D-ONB-2, subject filtering), pronoun because
- * every option — including "just use my name" — is one we authored.
- *
- * It writes both in ONE upsert: a half-written screen (class saved, pronoun
- * not) would resume with the beat already answered and the student unable to
- * finish it.
+ * Advance the header to `state` (upsert on the student profile) and append a
+ * flow-log row. `onboarding` is GLOBAL, so this runs fine under the board tx.
+ * On completion, `endAt` is stamped once and kept (COALESCE) — re-completing
+ * must not rewrite when the student actually finished.
+ */
+async function advance(
+  tx: Tx,
+  userId: string,
+  state: OnboardingStep,
+  opts?: { status?: "in_progress" | "completed"; end?: boolean },
+): Promise<void> {
+  const status = opts?.status ?? "in_progress";
+  const [row] = await tx
+    .insert(onboarding)
+    .values({ userId, state, status, ...(opts?.end ? { endAt: sql`now()` } : {}) })
+    .onConflictDoUpdate({
+      target: onboarding.userId,
+      set: {
+        state,
+        status,
+        ...(opts?.end ? { endAt: sql`COALESCE(${onboarding.endAt}, now())` } : {}),
+      },
+    })
+    .returning({ id: onboarding.id });
+
+  await tx.insert(onboardingFlowLog).values({ onboardingId: row!.id, state, status });
+}
+
+/**
+ * The `about_you` beat: class + pronoun, committed together (one screen). 🔑 THIS
+ * is where the operational `student` row is minted (board_id + class + pronoun) —
+ * the profile shell becomes an enrolled student. Both fields are required + closed
+ * sets. Idempotent (upsert on student.userId + one header per profile).
  */
 export async function saveAboutYou(
   tx: Tx,
-  args: { userId: string; boardId: string; grade: string | null; pronoun: string | null },
+  args: { email: string; boardId: string; grade: string | null; pronoun: string | null },
 ): Promise<OnboardingState> {
-  const { userId, boardId } = args;
+  const { email, boardId } = args;
   const grade = args.grade?.trim() || null;
   const pronoun = args.pronoun?.trim() || null;
 
@@ -189,105 +242,66 @@ export async function saveAboutYou(
   const options = await listGradeOptions(tx);
   if (!options.includes(grade)) {
     throw new OnboardingValidationError(
-      `grade '${grade}' is not a grade on this board (${options.join(", ") || "none"})`,
+      `grade '${grade}' is not a supported class (${options.join(", ") || "none"})`,
     );
   }
-
   if (!pronoun) throw new OnboardingValidationError("pronoun is required");
   if (!(PRONOUNS as readonly string[]).includes(pronoun)) {
     throw new OnboardingValidationError(`pronoun must be one of: ${PRONOUNS.join(", ")}`);
   }
 
-  const advanced = nextStep("about_you");
-  await tx
-    .insert(onboarding)
-    .values({ userId, boardId, currentStep: advanced, grade, pronoun })
-    .onConflictDoUpdate({
-      target: [onboarding.userId, onboarding.boardId],
-      set: { currentStep: advanced, grade, pronoun },
-    });
+  const { id: userId } = await ensureProfile(tx, { email, name: null, userType: "student" });
 
-  return getState(tx, { userId, boardId, role: "student" });
+  // Mint (or update) the operational student row. board_id + class are notNull;
+  // on re-answer keep the board and overwrite class/pronoun.
+  await tx
+    .insert(student)
+    .values({ userId, boardId, class: grade, pronoun })
+    .onConflictDoUpdate({ target: student.userId, set: { class: grade, pronoun } });
+
+  await advance(tx, userId, nextStep("about_you"));
+  return getState(tx, { email, boardId, role: "student" });
 }
 
 /**
  * Commit ONE beat and advance (D-ONB-1). `value` is null for a talk-only beat
- * (greet/pikachu/lore) and for a skipped optional answer — both simply move
- * current_step on.
- *
- * Idempotent: re-saving the same step overwrites its answer rather than
- * inserting a second row (UNIQUE(user_id, board_id) + upsert), so a double-tap
- * or a retried request can't fork the flow.
+ * (greet). fav_character → a per-student `hero` instance; pet → a per-student
+ * `pet` instance; phone → `app_user.phone`. Idempotent: re-saving a beat updates
+ * the same instance rather than creating a second.
  */
 export async function saveStep(
   tx: Tx,
-  args: {
-    userId: string;
-    boardId: string;
-    step: OnboardingStep;
-    value: string | null;
-  },
+  args: { email: string; boardId: string; step: OnboardingStep; value: string | null },
 ): Promise<OnboardingState> {
-  const { userId, boardId, step } = args;
-  let value = args.value?.trim() ? args.value.trim() : null;
+  const { email, boardId, step } = args;
+  const value = args.value?.trim() ? args.value.trim() : null;
 
-  const column = (ONBOARDING_ANSWER_COLUMNS as Record<string, string | undefined>)[step];
-
-  if (!column && value !== null) {
+  const takesAnswer = step in ONBOARDING_ANSWER_COLUMNS;
+  if (!takesAnswer && value !== null) {
     throw new OnboardingValidationError(`step '${step}' does not take an answer`);
   }
 
-  // S92 — about_you writes TWO columns, so it cannot come through here: this
-  // path would silently drop one of them. Loud rejection, not a partial write.
   if (step === "about_you") {
     throw new OnboardingValidationError("use saveAboutYou() for the 'about_you' beat");
   }
+  if (step === "done") {
+    throw new OnboardingValidationError("use complete() to finish onboarding");
+  }
 
-  // S91 — fav_character is chips, so it is closed-set and required. Two
-  // reasons, and the second is the load-bearing one:
-  //  - every id maps to a reaction we authored; an unknown id would leave
-  //    Olórin with nothing to say and Pikachu shouting a raw string;
-  //  - it is the flow's loudest echo. Rejecting anything off-list is what makes
-  //    "Pikachu can only say something we wrote" true rather than hoped-for.
-  // Unreachable from the UI (there is no text input left here) — this fires
-  // only on a hand-rolled request, which is precisely when it should.
+  // Closed-set validation (chips). fav_character/pet: reject anything off-list so
+  // a hand-rolled request can't introduce a pick Olórin has no line/art for.
   if (step === "fav_character") {
     if (!value) throw new OnboardingValidationError("fav_character is required");
     if (!(FAV_CHARACTERS as readonly string[]).includes(value)) {
-      throw new OnboardingValidationError(
-        `fav_character must be one of: ${FAV_CHARACTERS.join(", ")}`,
-      );
+      throw new OnboardingValidationError(`fav_character must be one of: ${FAV_CHARACTERS.join(", ")}`);
     }
   }
-
-  // Slice L — pet is now CLOSED-SET, mirroring fav_character above. It was the
-  // last free-text answer in the flow: S91 left it open because the "something
-  // else" chip opened a text field and that free text WAS the answer (the
-  // "2-3 dayssss" promise). Both are deleted, so an off-list pet can no longer
-  // come from the UI — and, exactly as with fav_character, the value of
-  // checking here is that a hand-rolled request cannot reintroduce a pet
-  // Olórin has no line for and no art to hand over.
-  //
-  // ⚠️ This validates WRITES only. Rows written before this slice hold free
-  // text and are read every day; loaderPetImg/loaderPetAlt/loaderSay fall back
-  // to the stand-in owl for them. Do not "clean up" those fallbacks.
   if (step === "pet") {
     if (!value) throw new OnboardingValidationError("pet is required");
     if (!(PETS as readonly string[]).includes(value)) {
       throw new OnboardingValidationError(`pet must be one of: ${PETS.join(", ")}`);
     }
   }
-
-  // Founder, this session — phone is REQUIRED and shaped. Until now it fell
-  // through to the generic write below with no check on either side: the client
-  // had no pattern and the server had no rule, so `saveStep(phone, "banana")`
-  // stored "banana". The Skip button is gone, so a null no longer means "they
-  // chose not to" — it means the request did not come from our form.
-  //
-  // Same closed-set discipline as fav_character/pet above, one layer stricter:
-  // those reject values we have no ART for, this rejects values we cannot CALL.
-  // `isValidPhone` is the kernel's, shared with the input and its submit button
-  // (D-M2's lesson: one definition, or the two rules drift).
   if (step === "phone") {
     if (!value) throw new OnboardingValidationError("phone is required");
     if (!isValidPhone(value)) {
@@ -297,52 +311,61 @@ export async function saveStep(
     }
   }
 
-  if (step === "done") {
-    throw new OnboardingValidationError("use complete() to finish onboarding");
+  const { id: userId } = await ensureProfile(tx, { email, name: null, userType: "student" });
+
+  // The answer-bearing beats all need the operational student row (born at
+  // about_you). If it is absent the flow ran out of order — refuse loudly rather
+  // than write a hero/pet nothing can own.
+  if (step === "fav_character" || step === "pet") {
+    const [s] = await tx
+      .select({ heroId: student.heroId, petId: student.petId })
+      .from(student)
+      .where(eq(student.userId, userId))
+      .limit(1);
+    if (!s) throw new OnboardingValidationError("finish the about-you step first");
+
+    if (step === "fav_character") {
+      if (s.heroId) {
+        await tx.update(hero).set({ heroType: value }).where(eq(hero.heroId, s.heroId));
+      } else {
+        const [h] = await tx
+          .insert(hero)
+          .values({ heroType: value, status: "active" })
+          .returning({ heroId: hero.heroId });
+        await tx.update(student).set({ heroId: h!.heroId }).where(eq(student.userId, userId));
+      }
+    } else {
+      if (s.petId) {
+        await tx.update(pet).set({ petType: value }).where(eq(pet.petId, s.petId));
+      } else {
+        const [pt] = await tx
+          .insert(pet)
+          .values({ petType: value, status: "active" })
+          .returning({ petId: pet.petId });
+        await tx.update(student).set({ petId: pt!.petId }).where(eq(student.userId, userId));
+      }
+    }
+  } else if (step === "phone") {
+    // phone → the student profile. app_user is global; the (email,phone,type)
+    // unique cannot conflict here (it is the same row being updated).
+    await tx.update(appUser).set({ phone: value }).where(eq(appUser.id, userId));
   }
+  // greet: talk-only, nothing to write beyond the advance.
 
-  const advanced = nextStep(step);
-  const set: Record<string, unknown> = { currentStep: advanced };
-  if (column) set[column] = value;
-
-  await tx
-    .insert(onboarding)
-    .values({
-      userId,
-      boardId,
-      currentStep: advanced,
-      ...(column ? { [column]: value } : {}),
-    })
-    .onConflictDoUpdate({
-      target: [onboarding.userId, onboarding.boardId],
-      set,
-    });
-
-  return getState(tx, { userId, boardId, role: "student" });
+  await advance(tx, userId, nextStep(step));
+  return getState(tx, { email, boardId, role: "student" });
 }
 
 /**
- * Finish. Flips the flag the FE gates on; the loader beat covers the latency.
- * Idempotent — completing twice keeps the FIRST completed_at (re-running the
- * flow should not rewrite when the student actually finished).
+ * Finish. Flips the header to completed (the flag the FE gates on) and stamps
+ * `endAt` once. Idempotent — completing twice keeps the first `endAt`.
  */
 export async function complete(
   tx: Tx,
-  args: { userId: string; boardId: string },
+  args: { email: string; boardId: string },
 ): Promise<OnboardingState> {
-  const { userId, boardId } = args;
-
-  await tx
-    .insert(onboarding)
-    .values({ userId, boardId, currentStep: "done", status: "completed", completedAt: new Date() })
-    .onConflictDoUpdate({
-      target: [onboarding.userId, onboarding.boardId],
-      set: {
-        status: "completed",
-        currentStep: "done",
-        completedAt: sql`COALESCE(${onboarding.completedAt}, now())`,
-      },
-    });
-
-  return getState(tx, { userId, boardId, role: "student" });
+  const { email, boardId } = args;
+  const { id: userId } = await ensureProfile(tx, { email, name: null, userType: "student" });
+  await advance(tx, userId, "done", { status: "completed", end: true });
+  return getState(tx, { email, boardId, role: "student" });
 }

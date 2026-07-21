@@ -36,15 +36,13 @@ import {
   chapter,
   eventLog,
   masteryState,
-  membership,
-  parentChild,
   practiceSession,
   question,
   report,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -116,8 +114,7 @@ async function main() {
 
   // link TU→ST and PA→ST (TU2 + PA2 deliberately UNLINKED).
   await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userTU, studentId: userST });
-    await tx.insert(parentChild).values({ boardId: P.id, parentId: userPA, studentId: userST });
+    await tx.insert(student).values({ userId: userST, boardId: P.id, class: "9", tutorId: userTU, parentId: userPA });
   });
 
   // live mastery (with the log sentinel) + 1 answered attempt for metrics.
@@ -299,13 +296,11 @@ async function main() {
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
-    await tx.delete(parentChild).where(eq(parentChild.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   for (const email of [emailTU, emailTU2, emailPA, emailPA2, emailST]) {
     await db.delete(appUser).where(eq(appUser.email, email));

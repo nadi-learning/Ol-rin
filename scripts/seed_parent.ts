@@ -19,9 +19,9 @@
  *
  * Usage: bun scripts/seed_parent.ts
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board, parentChild } from "@b2c/kernel/schema";
+import { appUser, board, student } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { grantRole } from "../src/services/membership";
@@ -57,16 +57,17 @@ async function main() {
       role: "parent",
     });
 
-    // 2. resolve the student's app_user (global). Must already exist — they're
-    // created on first login / by the practice seed flow.
-    const [student] = await tx
+    // 2. resolve the student PROFILE (email + user_type='student' — one email may
+    // hold several profiles now). Must already exist — created on first login /
+    // by onboarding, which mints the operational `student` row (ID-3).
+    const [studentProfile] = await tx
       .select({ id: appUser.id })
       .from(appUser)
-      .where(eq(appUser.email, STUDENT_EMAIL))
+      .where(and(eq(appUser.email, STUDENT_EMAIL), eq(appUser.userType, "student")))
       .limit(1);
-    if (!student) {
+    if (!studentProfile) {
       console.warn(
-        `[seed:parent] student '${STUDENT_EMAIL}' has no app_user yet — log in as the student once (dev login) first, then re-run. The parent role is granted; the link is skipped.`,
+        `[seed:parent] student '${STUDENT_EMAIL}' has no student profile yet — log in as the student once (dev login) first, then re-run. The parent role is granted; the link is skipped.`,
       );
       console.log(
         `[seed:parent] cbse / parent=${PARENT_EMAIL} (role=parent, user=${parent.user.id}). Link to ${STUDENT_EMAIL}: SKIPPED (student not found).`,
@@ -74,21 +75,23 @@ async function main() {
       return;
     }
 
-    // 3. link parent → child (idempotent on the unique (board,parent,student) —
-    // boardId joined that unique in S109, so the target must name it too).
-    await tx
-      .insert(parentChild)
-      .values({
-        boardId: b.id,
-        parentId: parent.user.id,
-        studentId: student.id,
-      })
-      .onConflictDoNothing({
-        target: [parentChild.boardId, parentChild.parentId, parentChild.studentId],
-      });
+    // 3. link parent → child via the single pointer `student.parent_id` (ID-4 —
+    // parent_child is dropped). RLS-scoped to cbse; a no-op if the student has no
+    // operational row on this board yet (they haven't onboarded).
+    const linked = await tx
+      .update(student)
+      .set({ parentId: parent.user.id })
+      .where(eq(student.userId, studentProfile.id))
+      .returning({ userId: student.userId });
+    if (linked.length === 0) {
+      console.warn(
+        `[seed:parent] student '${STUDENT_EMAIL}' has no operational \`student\` row on cbse yet (not onboarded). Parent role granted; link SKIPPED.`,
+      );
+      return;
+    }
 
     console.log(
-      `[seed:parent] cbse / parent=${PARENT_EMAIL} (role=parent) → child=${STUDENT_EMAIL}. parent_id=${parent.user.id} child_id=${student.id}`,
+      `[seed:parent] cbse / parent=${PARENT_EMAIL} (role=parent) → child=${STUDENT_EMAIL}. parent_id=${parent.user.id} child_id=${studentProfile.id}`,
     );
   });
 

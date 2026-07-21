@@ -20,7 +20,7 @@
 import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
-  board, chapter, question, subTopic, subject, topic, tutorStudent,
+  board, chapter, question, student, subTopic, subject, topic,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -60,8 +60,8 @@ async function main() {
   const tu = await withBoard(b.id, (tx) => grantRole(tx, { email: TUTOR, name: "Demo Tutor", board: b, role: "tutor" }));
   const st = await withBoard(b.id, (tx) => grantRole(tx, { email: STUDENT, name: "Demo Student", board: b, role: "student" }));
   await withBoard(b.id, async (tx: Tx) => {
-    const [link] = await tx.select().from(tutorStudent).where(and(eq(tutorStudent.tutorId, tu.user.id), eq(tutorStudent.studentId, st.user.id))).limit(1);
-    if (!link) await tx.insert(tutorStudent).values({ boardId: b.id, tutorId: tu.user.id, studentId: st.user.id });
+    const [link] = await tx.select().from(student).where(eq(student.userId, st.user.id)).limit(1);
+    if (!link) await tx.insert(student).values({ userId: st.user.id, boardId: b.id, class: "9", tutorId: tu.user.id });
   });
 
   console.log(`[seed:asgdemo] cbse · tutor=${TUTOR} (tutor) ↔ student=${STUDENT} (student); "Motion (demo)" chapter w/ 2 sub-topics × 2 questions. Dev-login either to eyeball Slice ASG.`);

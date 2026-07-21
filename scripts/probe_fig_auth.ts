@@ -26,10 +26,10 @@ import {
   observation,
   question,
   questionImage,
+  student,
   subject,
   subTopic,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -83,10 +83,10 @@ async function main() {
   const [Q] = await db.insert(board).values({ slug: `fig-q-${tag}`, name: "Fig Q" }).returning();
   if (!P || !Q) throw new Error("board seed failed");
 
-  const [tut] = await db.insert(appUser).values({ email: `fig-tut-${tag}@example.com`, name: "Tutor" }).returning();
-  const [tut2] = await db.insert(appUser).values({ email: `fig-tut2-${tag}@example.com`, name: "Other Tutor" }).returning();
-  const [stuA] = await db.insert(appUser).values({ email: `fig-a-${tag}@example.com`, name: "Student A" }).returning();
-  const [stuB] = await db.insert(appUser).values({ email: `fig-b-${tag}@example.com`, name: "Student B" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `fig-tut-${tag}@example.com`, name: "Tutor", userType: "tutor" }).returning();
+  const [tut2] = await db.insert(appUser).values({ email: `fig-tut2-${tag}@example.com`, name: "Other Tutor", userType: "tutor" }).returning();
+  const [stuA] = await db.insert(appUser).values({ email: `fig-a-${tag}@example.com`, name: "Student A", userType: "student" }).returning();
+  const [stuB] = await db.insert(appUser).values({ email: `fig-b-${tag}@example.com`, name: "Student B", userType: "student" }).returning();
   if (!tut || !tut2 || !stuA || !stuB) throw new Error("app_user seed failed");
 
   const fx = await withBoard(P.id, async (tx: Tx) => {
@@ -95,8 +95,8 @@ async function main() {
     const [tp] = await tx.insert(topic).values({ boardId: P.id, chapterId: chap!.id, slug: "speed", name: "Speed", ordinal: 1 }).returning();
     const [st] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp!.id, slug: "accel", name: "Acceleration", ordinal: 1 }).returning();
     await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", code: "C1", description: "Reasons about geometric relationships." });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stuA.id });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stuB.id });
+    await tx.insert(student).values({ userId: stuA.id, boardId: P.id, class: "9", tutorId: tut.id });
+    await tx.insert(student).values({ userId: stuB.id, boardId: P.id, class: "9", tutorId: tut.id });
     // ONE canonical (shared, approved-by-default) question at ordinal 0.
     await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Canonical Q", referenceAnswer: "ref", ordinal: 0, source: "seed" });
     await tx.insert(masteryState).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, conceptualLevel: 3, proceduralLevel: 2, description: "solid", log: "internal" });

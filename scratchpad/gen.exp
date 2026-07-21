@@ -1,0 +1,9 @@
+#!/usr/bin/expect -f
+set timeout 120
+spawn bun run db:generate
+expect {
+  -re {created or renamed from another} { send "\r"; exp_continue }
+  -re {created or renamed} { send "\r"; exp_continue }
+  -re {(?i)columns.*rename} { send "\r"; exp_continue }
+  eof
+}

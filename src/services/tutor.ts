@@ -37,12 +37,12 @@ import {
   masteryState,
   observation,
   question,
+  student,
   studentChapterInsight,
   studentSubjectInsight,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { getPlan } from "./pace";
 import type { PacePlanView } from "./pace";
@@ -152,33 +152,39 @@ export async function assertTutorsStudent(
   tutorUserId: string,
   studentId: string,
 ): Promise<void> {
-  const [link] = await tx
-    .select({ id: tutorStudent.id })
-    .from(tutorStudent)
-    .where(
-      and(
-        eq(tutorStudent.tutorId, tutorUserId),
-        eq(tutorStudent.studentId, studentId),
-      ),
-    )
+  // ID-4: the tutor→student link is the single pointer `student.tutor_id` (one
+  // tutor per student by construction — the dropped `tutor_student` join is gone).
+  // The `student` row is RLS-scoped to the active board, so a student on ANOTHER
+  // board reads absent here and correctly resolves to NOT_FOUND — this same guard
+  // is the cross-board wall the tutor probe asserts (§8). A student the caller
+  // does not tutor is reported as NOT_FOUND (no existence leak).
+  const [s] = await tx
+    .select({ userId: student.userId })
+    .from(student)
+    .where(and(eq(student.userId, studentId), eq(student.tutorId, tutorUserId)))
     .limit(1);
-  if (!link) throw new StudentNotFoundError(studentId);
+  if (!s) throw new StudentNotFoundError(studentId);
 }
 
-/** The caller's students (RLS-scoped to the board via tutor_student). */
+/**
+ * The caller's students — every student whose `tutor_id` points at this tutor
+ * (ID-4). RLS scopes `student` to the active board, so the same query under a
+ * board the tutor doesn't serve returns empty. Joined to app_user for the display
+ * name/email (those live only on the profile).
+ */
 export async function listStudents(
   tx: Tx,
   tutorUserId: string,
 ): Promise<StudentSummary[]> {
   return tx
     .select({
-      studentId: appUser.id,
+      studentId: student.userId,
       name: appUser.name,
       email: appUser.email,
     })
-    .from(tutorStudent)
-    .innerJoin(appUser, eq(appUser.id, tutorStudent.studentId))
-    .where(eq(tutorStudent.tutorId, tutorUserId))
+    .from(student)
+    .innerJoin(appUser, eq(appUser.id, student.userId))
+    .where(eq(student.tutorId, tutorUserId))
     .orderBy(asc(appUser.email));
 }
 

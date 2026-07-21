@@ -28,10 +28,10 @@ import {
   observation,
   practiceSession,
   question,
+  student,
   subject,
   subTopic,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -94,11 +94,11 @@ async function main() {
   const [Q] = await db.insert(board).values({ slug: `achat-q-${tag}`, name: "Probe Q" }).returning();
   if (!P || !Q) throw new Error("board seed failed");
 
-  const [tut] = await db.insert(appUser).values({ email: `achat-tut-${tag}@example.com`, name: "Tutor" }).returning();
-  const [tut2] = await db.insert(appUser).values({ email: `achat-tut2-${tag}@example.com`, name: "Other Tutor" }).returning();
-  const [stuA] = await db.insert(appUser).values({ email: `achat-a-${tag}@example.com`, name: "Student A" }).returning();
-  const [stuB] = await db.insert(appUser).values({ email: `achat-b-${tag}@example.com`, name: "Student B" }).returning();
-  const [stuC] = await db.insert(appUser).values({ email: `achat-c-${tag}@example.com`, name: "Student C (unlinked)" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `achat-tut-${tag}@example.com`, name: "Tutor", userType: "tutor" }).returning();
+  const [tut2] = await db.insert(appUser).values({ email: `achat-tut2-${tag}@example.com`, name: "Other Tutor", userType: "tutor" }).returning();
+  const [stuA] = await db.insert(appUser).values({ email: `achat-a-${tag}@example.com`, name: "Student A", userType: "student" }).returning();
+  const [stuB] = await db.insert(appUser).values({ email: `achat-b-${tag}@example.com`, name: "Student B", userType: "student" }).returning();
+  const [stuC] = await db.insert(appUser).values({ email: `achat-c-${tag}@example.com`, name: "Student C (unlinked)", userType: "student" }).returning();
   if (!tut || !tut2 || !stuA || !stuB || !stuC) throw new Error("app_user seed failed");
 
   // Fixture under P: spine + 2 LOs + tutor_student links (A,B linked; C NOT) +
@@ -119,8 +119,8 @@ async function main() {
     const [chap2] = await tx.insert(chapter).values({ boardId: P.id, subjectId: subj!.id, slug: "forces", name: "Forces", ordinal: 2 }).returning();
     const [tp2] = await tx.insert(topic).values({ boardId: P.id, chapterId: chap2!.id, slug: "newton", name: "Newton's Laws", ordinal: 1 }).returning();
     const [st3] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp2!.id, slug: "n2", name: "F = ma", ordinal: 1 }).returning();
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stuA.id });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stuB.id });
+    await tx.insert(student).values({ userId: stuA.id, boardId: P.id, class: "9", tutorId: tut.id });
+    await tx.insert(student).values({ userId: stuB.id, boardId: P.id, class: "9", tutorId: tut.id });
     // canonical (shared) question — target null.
     await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Canonical Q", referenceAnswer: "ref", ordinal: 0, source: "seed" });
     await tx.insert(masteryState).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, conceptualLevel: 3, proceduralLevel: 2, description: "Solid on the idea of rate-of-change; shaky converting units under time pressure.", log: "internal" });
@@ -336,7 +336,7 @@ async function main() {
     await tx.delete(observation).where(eq(observation.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(learningObjective).where(eq(learningObjective.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));

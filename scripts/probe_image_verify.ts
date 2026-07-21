@@ -46,7 +46,6 @@ import {
   appUser,
   board,
   chapter,
-  membership,
   question,
   questionImage,
   subTopic,

@@ -34,10 +34,9 @@ import {
   chapter,
   masteryHistory,
   masteryState,
-  membership,
-  parentChild,
   practiceSession,
   question,
+  student,
   subTopic,
   subject,
   topic,
@@ -124,10 +123,13 @@ async function main() {
   check("real flow: parent membership role = 'parent' (M11 SET side)", PA.role === "parent");
   check("real flow: child membership role = 'student'", CH1.role === "student");
 
-  // link PA → CH1 only (CH2 deliberately UNLINKED)
-  await withBoard(P.id, (tx) =>
-    tx.insert(parentChild).values({ boardId: P.id, parentId: userPA, studentId: userCH1 }),
-  );
+  // Operational `student` rows (ID-4: grantRole mints only the profile shell; the
+  // student row is onboarding's job — here it's a fixture). The parent↔child link
+  // is the single pointer `student.parent_id`: CH1 → PA, CH2 UNLINKED (null).
+  await withBoard(P.id, async (tx: Tx) => {
+    await tx.insert(student).values({ userId: userCH1, boardId: P.id, class: "9", parentId: userPA });
+    await tx.insert(student).values({ userId: userCH2, boardId: P.id, class: "9" });
+  });
 
   // mastery_state (current) + mastery_history (prior) + attempts for CH1.
   await withBoard(P.id, async (tx: Tx) => {
@@ -250,12 +252,12 @@ async function main() {
     await tx.delete(question).where(eq(question.boardId, P.id));
     await tx.delete(masteryHistory).where(eq(masteryHistory.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
-    await tx.delete(parentChild).where(eq(parentChild.boardId, P.id));
+    // student rows FK to app_user (user_id / parent_id) — drop before appUser below.
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailPA));
   await db.delete(appUser).where(eq(appUser.email, emailCH1));

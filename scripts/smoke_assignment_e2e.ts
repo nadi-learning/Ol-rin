@@ -8,8 +8,8 @@
 import { eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
-  appUser, assignment, attempt, board, chapter, membership,
-  practiceSession, question, subTopic, subject, topic, tutorStudent,
+  appUser, assignment, attempt, board, chapter,
+  practiceSession, question, student, subTopic, subject, topic,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -33,8 +33,12 @@ async function signUpCookie(email: string): Promise<string> {
 /** Single (non-batch) tRPC call over HTTP with superjson envelopes. */
 async function call(
   kind: "query" | "mutation", path: string, cookie: string, slug: string, input?: unknown,
+  profile?: string,
 ): Promise<any> {
   const headers: Record<string, string> = { cookie, "x-board": slug };
+  // Multi-profile identity (ID-1): protectedProcedure resolves WHICH profile from
+  // x-profile; absent ⇒ student. A tutor's calls must claim the tutor persona.
+  if (profile) headers["x-profile"] = profile;
   let url = `${BASE}/trpc/${path}`;
   let init: RequestInit = { headers };
   if (kind === "query") {
@@ -73,34 +77,38 @@ async function main() {
 
   const emailTU = `smkasg-tu-${tag}@example.com`;
   const emailST = `smkasg-st-${tag}@example.com`;
-  // The tutor role is granted up front via `grantRole` (the M11 SET side, the
-  // same helper admin.setRole drives) — nothing else can mint a role above
-  // student. The STUDENT needs no pre-enablement: the platform is ungated, so
-  // `me` creates their membership at 'student' on its own.
-  await withBoard(Z.id, (tx) =>
+  // Roles are granted up front via `grantRole` (the M11 SET side, the same helper
+  // admin.setRole drives): the tutor gets its detail row, the student gets its
+  // profile shell. `me` is now a pure read (ID-4) — it no longer mints anything —
+  // so the student's OPERATIONAL row (onboarding's output) is a fixture here,
+  // minted before its `me` call and linked to the tutor.
+  const TU = await withBoard(Z.id, (tx: Tx) =>
     grantRole(tx, { email: emailTU, name: "Tutor", board: Z, role: "tutor" }),
   );
+  const S = await withBoard(Z.id, (tx: Tx) =>
+    grantRole(tx, { email: emailST, name: "Student", board: Z, role: "student" }),
+  );
+  await withBoard(Z.id, (tx: Tx) => tx.insert(student).values({ userId: S.user.id, boardId: Z.id, class: "9", tutorId: TU.user.id }));
   const cookieT = await signUpCookie(emailTU);
   const cookieS = await signUpCookie(emailST);
-  // `me` over the wire resolves the membership — creating the student's, and
-  // returning (never downgrading) the tutor's.
-  const meT = await call("query", "me", cookieT, Z.slug, {});
+  // `me` over the wire is a pure read: it returns the tutor's role and the now-
+  // enrolled student's, and never downgrades either.
+  const meT = await call("query", "me", cookieT, Z.slug, {}, "tutor");
   const meS = await call("query", "me", cookieS, Z.slug, {});
   check("tutor me → role tutor (wire)", meT?.role === "tutor");
   check("student me → role student (wire)", meS?.role === "student");
-  await withBoard(Z.id, (tx) => tx.insert(tutorStudent).values({ boardId: Z.id, tutorId: meT.user.id, studentId: meS.user.id }));
 
   // tutor: see student, compose→assign (blocked, the chapter, both sub_topics).
-  const students = await call("query", "tutor.listStudents", cookieT, Z.slug);
+  const students = await call("query", "tutor.listStudents", cookieT, Z.slug, undefined, "tutor");
   check("tutor.listStudents → includes the student", Array.isArray(students) && students.some((s: any) => s.studentId === meS.user.id));
 
   const created = await call("mutation", "tutor.createAssignment", cookieT, Z.slug, {
     studentId: meS.user.id, mode: "blocked", chapterId: fx.c, subTopicIds: [fx.SA, fx.SB],
-  });
+  }, "tutor");
   check("tutor.createAssignment (blocked) → mode/total/2 not_started (wire)",
     created?.mode === "blocked" && created?.total === 2 && created?.completedCount === 0);
 
-  const tutorList = await call("query", "tutor.listAssignments", cookieT, Z.slug, { studentId: meS.user.id });
+  const tutorList = await call("query", "tutor.listAssignments", cookieT, Z.slug, { studentId: meS.user.id }, "tutor");
   check("tutor.listAssignments → 1 (wire)", Array.isArray(tutorList) && tutorList.length === 1 && tutorList[0].id === created.id);
 
   // student: the assignment is visible; start the first sub_topic with the link.
@@ -130,12 +138,11 @@ async function main() {
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, Z.id));
     await tx.delete(assignment).where(eq(assignment.boardId, Z.id));
     await tx.delete(question).where(eq(question.boardId, Z.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, Z.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, Z.id));
     await tx.delete(topic).where(eq(topic.boardId, Z.id));
     await tx.delete(chapter).where(eq(chapter.boardId, Z.id));
     await tx.delete(subject).where(eq(subject.boardId, Z.id));
-    await tx.delete(membership).where(eq(membership.boardId, Z.id));
+    await tx.delete(student).where(eq(student.boardId, Z.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailTU));
   await db.delete(appUser).where(eq(appUser.email, emailST));

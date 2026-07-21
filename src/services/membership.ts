@@ -1,60 +1,51 @@
 /**
- * Membership resolution — the b2c side of login (Option B / F3-B).
+ * Identity resolution — the b2c side of login (ID-1, S127/S128 redesign).
  *
- * Better Auth authenticates an identity (users row, by email). This service
- * links that identity into the spine:
- *   1. upsert app_user by email (the spine's identity key — global table)
- *   2. read the EXISTING membership(user, board) and return its role if present
- *   3. else create one at DEFAULT_ROLE ('student')
+ * ⚠️ FILENAME KEPT ON PURPOSE. The plan renames this "membership → identity",
+ * but ~8 call sites that still belong to later slices (ID-2 admin, ID-3
+ * onboarding, ID-4 tutor/parent) import from `./membership` and read the old
+ * table. Renaming the file (or the exported symbols) now would churn code this
+ * slice does not own and cannot yet compile. The rename is a cosmetic pass once
+ * the tree is green (ID-4). The SEMANTICS below are already the new model.
  *
- * Slice C (S110, founder call): **the platform is no longer gated.** The
- * whitelist is gone; anyone who signs in becomes a student. Roles above student
- * are granted afterwards by an admin via `grantRole` — never pre-invited.
+ * THE NEW MODEL (there is no `membership` table any more):
+ *   - A person's identity is an `app_user` PROFILE, keyed (email, phone,
+ *     user_type). The same email holds up to four distinct profiles
+ *     (student/tutor/parent/admin), each its own id, each its own evidence.
+ *   - "role" is the `user_type` of the profile the request signed in as — the
+ *     `x-profile` header names it (ctx.profile). There is no per-board role row.
+ *   - Being an OPERATIONAL tutor/parent/student needs the role-DETAIL row
+ *     (tutor.boards[] / parent / student.board_id). Those are created by an
+ *     admin (ID-2) or by onboarding (ID-3, the student), never here. A profile
+ *     whose detail row is absent is a WAITING ROOM, not a capability — the exact
+ *     "claim ≠ grant" line S123 drew, now enforced by row existence rather than
+ *     an `enabled` flag.
  *
- * 🔴 STEP 2 IS LOAD-BEARING. This runs on EVERY login. A blind upsert to
- * 'student' here would silently demote every tutor, parent and admin the first
- * time they signed in again — the single worst regression this slice can cause,
- * and one that nothing downstream would catch (they would simply see the
- * student surface and assume a routing bug). Read first, create only if absent.
- * `probe_auth_membership`'s no-downgrade leg exists solely to hold this line.
+ * BOARD-BELONGING falls out of the schema, differently per role:
+ *   - student: `student.board_id` is the ONE RLS-scoped identity column. A read
+ *     under withBoard(ctx.board) sees the student row ONLY when its board_id
+ *     matches — so "does this student belong on this board" is answered by RLS
+ *     for free (no board column to compare by hand). Absent ⇒ not their board.
+ *   - tutor: the `tutor` table is GLOBAL (a tutor spans boards); belonging is
+ *     `ctx.board ∈ tutor.boards[]`, checked in code.
+ *   - parent/admin: board-agnostic. A parent's board is transitively their
+ *     child's; an admin is gated by the email whitelist, not a board.
  *
- * Runs INSIDE withBoard(boardId) so the RLS board claim is set: the membership
- * read and write both require board_id = claim. app_user is global (no RLS) so
- * its upsert is unaffected.
- *
- * M11 (ai-build-miss): this is the REAL enablement path for a student's own
- * membership. The probe must NOT seed membership directly — it must drive
- * resolveMembership so the checked side (protectedProcedure) and the set side
- * (here) are exercised by the same flow. For roles ABOVE student the real set
- * side is `grantRole`, which `admin.setRole` and every seed/probe also drive.
+ * M11 (ai-build-miss): the SET side a probe drives must be the SET side the app
+ * drives. Shell-mint is `ensureProfile` (login/`session.enter`); the role-detail
+ * SET side is `grantRole` (admin/seeds) and, for a student, ID-3's onboarding —
+ * never a direct table insert in a probe.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, membership } from "@b2c/kernel/schema";
-import { DEFAULT_ROLE, isSelfAssignableRole, type Role } from "@b2c/kernel/contracts";
+import { appUser, student, tutor, parent } from "@b2c/kernel/schema";
+import {
+  DEFAULT_ROLE,
+  generateReferralCode,
+  type Role,
+} from "@b2c/kernel/contracts";
 
-/**
- * The tie-break when a request does NOT name a profile (S123).
- *
- * One email can now hold several roles on one board, so every membership read
- * needs a defined answer for "which one" even with no `x-profile`. Student
- * first: it is the role almost everyone has, the only one minted automatically,
- * and the least privileged — so an unlabelled request resolves to the SMALLEST
- * capability the person holds, never the largest. `created_at` then `id` break
- * remaining ties so the result is stable across replicas and restarts.
- *
- * 🔴 This is a DETERMINISM guarantee, not an authorisation one. It exists so
- * that two identical requests cannot disagree; it is not a substitute for the
- * role filter above.
- */
-function profileOrder() {
-  return sql`case ${membership.role}
-    when 'student' then 0
-    when 'parent'  then 1
-    when 'tutor'   then 2
-    when 'admin'   then 3
-    else 4 end, ${membership.createdAt} asc, ${membership.id} asc`;
-}
+type Tx = PgTransaction<any, any, any>;
 
 export class NoMembershipError extends Error {
   readonly code = "NO_MEMBERSHIP";
@@ -68,162 +59,195 @@ export type ResolvedMembership = {
   user: { id: string; email: string; name: string | null };
   board: { id: string; slug: string };
   role: string;
-  /** False only for a self-assigned parent/tutor still waiting on an admin. */
+  /**
+   * The profile is OPERATIONAL — its role-detail row exists (and, for a tutor,
+   * includes this board). False = the waiting room: the profile shell exists but
+   * an admin has not set it up. Students are enabled the moment their `student`
+   * row exists (ID-3); there is nobody to wait for.
+   */
   enabled: boolean;
 };
 
-export async function resolveMembership(
-  tx: PgTransaction<any, any, any>,
-  args: {
-    email: string;
-    name: string | null;
-    board: { id: string; slug: string };
-    /**
-     * WHICH PROFILE the person is asking for (the landing persona).
-     *
-     * 🔴 S123 CHANGED THIS FROM A CLAIM INTO A SELECTOR, on the founder's call:
-     * "there is no construct like self promote." It used to MINT the role it
-     * named (disabled, pending an admin). It no longer mints anything but a
-     * student — a tutor or parent row can be created ONLY by `grantRole`.
-     *
-     * So this now means: look up MY row for this role. Found → that is the
-     * session. Absent → NoMembershipError, and the FE shows the waiting-room
-     * signboard. Nothing is written on the way past.
-     */
-    intendedRole?: string | null;
-  },
-): Promise<ResolvedMembership> {
-  const { email, name, board, intendedRole } = args;
+/**
+ * Mint (or fetch) the board-less PROFILE SHELL for (email, userType). This is
+ * decision 1's "login upserts app_user" — an identity shell, NOT an enrolment:
+ * no board, no role-detail row, so it can never resurrect the "a read enrolled
+ * the student on cbse" bug (that bug wrote a board-scoped row; this writes none).
+ *
+ * 🔴 READ-FIRST, DO NOT `onConflictDoUpdate` ON THE PROFILE UNIQUE. The unique
+ * is (email, phone, user_type) NULLS NOT DISTINCT, and login always sends phone
+ * NULL. Once onboarding fills the phone, the row is (email, '99…', user_type); a
+ * later phone-NULL upsert would NOT conflict with it (null ≠ '99…') and would
+ * INSERT A SECOND student profile. So we look the profile up by (email,
+ * user_type) — the pair that is really unique per person — and only insert when
+ * it is genuinely absent.
+ *
+ * `app_user` is GLOBAL (no RLS), so this needs no board claim; callers pass the
+ * plain `db` transaction.
+ *
+ * referral_code: minted on first insert. A collision on the 7-char code (unique)
+ * is astronomically unlikely at our scale (~31^7) and is NOT retried inside the
+ * tx — a failed INSERT poisons a Postgres transaction, so a savepoint dance would
+ * be the only way, and it is not worth it: the login errors, and the next attempt
+ * mints a fresh code. Log-and-throw if it ever fires.
+ */
+export async function ensureProfile(
+  tx: Tx,
+  args: { email: string; name: string | null; userType: Role },
+): Promise<{ id: string; email: string; name: string | null }> {
+  const { email, name, userType } = args;
 
-  // 1. upsert app_user by email (global; insert-or-fetch). On re-login keep the
-  // existing row; backfill name if it was null.
-  const [user] = await tx
-    .insert(appUser)
-    .values({ email, name })
-    .onConflictDoUpdate({
-      target: appUser.email,
-      set: { name },
-    })
-    .returning();
-  if (!user) throw new Error("app_user upsert returned no row");
-
-  // 2. 🔴 READ the existing membership FIRST and keep its role. See the header:
-  // this is what stops every login from demoting a tutor/parent/admin back to
-  // 'student'. RLS-scoped to the active board, so a membership on another board
-  // is invisible here and correctly counts as absent.
-  //
-  // S123: scoped to the REQUESTED profile. Without this filter the widened
-  // unique would let a returning tutor's read match their student row (or the
-  // reverse — the exact report that opened S123), because the pick among
-  // several matching rows was arbitrary. `profileOrder` keeps the unfiltered
-  // case (no persona sent) deterministic rather than accidental.
-  // 🔴 ASKED-FOR vs NOT-ASKED are different questions, and collapsing them was a
-  // real bug in the first cut of this slice. Defaulting `wanted` to 'student'
-  // when no persona arrived meant a tutor logging in found no STUDENT row, fell
-  // to the mint branch, and was handed a freshly-created student membership —
-  // silently manufacturing a second profile on every login, and landing them on
-  // the student app. That is the S123 report wearing a different hat.
-  //
-  //   named a profile  → that row exactly, or a miss (no substitute)
-  //   named nothing    → whichever profile they already hold (profileOrder)
-  const wanted: Role | null = isSelfAssignableRole(intendedRole) ? intendedRole : null;
   const [existing] = await tx
-    .select({ role: membership.role, enabled: membership.enabled })
-    .from(membership)
-    .where(
-      and(
-        eq(membership.userId, user.id),
-        eq(membership.boardId, board.id),
-        ...(wanted ? [eq(membership.role, wanted)] : []),
-      ),
-    )
-    .orderBy(profileOrder())
+    .select({ id: appUser.id, email: appUser.email, name: appUser.name })
+    .from(appUser)
+    .where(and(eq(appUser.email, email), eq(appUser.userType, userType)))
     .limit(1);
-
-  let role: string;
-  let enabled: boolean;
   if (existing) {
-    role = existing.role;
-    enabled = existing.enabled;
-  } else if (wanted && wanted !== DEFAULT_ROLE) {
-    // 🔴 NO SELF-PROMOTE (founder, S123). Asking for a tutor/parent profile you
-    // do not hold creates NOTHING — not even the disabled placeholder row the
-    // pre-S123 code minted. It is a miss, and the waiting-room signboard is the
-    // answer to a miss.
-    //
-    // Minting a disabled row here would look harmless and is not: it becomes a
-    // real membership that `whoami` lists and the admin People page shows, so a
-    // curious click would manufacture a pending tutor application. That is how
-    // the founder ended up holding a disabled tutor row they never asked for.
-    throw new NoMembershipError(email, board.slug);
-  } else {
-    // 3. First entry on this board — mint it. DoNothing on conflict covers the
-    // concurrent-login race (two tabs, one new user): the loser's insert is a
-    // no-op rather than an error, and both return the same answer the winner
-    // wrote, so the result is still correct.
-    //
-    // S123: the ONLY role this path can create is `student`. The branch above
-    // returned for everything else, so there is no longer a claim to honour
-    // here — `wanted === DEFAULT_ROLE` is an invariant of reaching this line,
-    // and a student is enabled on arrival because there is nobody to wait for.
-    role = DEFAULT_ROLE;
-    enabled = true;
-    await tx
-      .insert(membership)
-      .values({ userId: user.id, boardId: board.id, role, enabled })
-      .onConflictDoNothing({
-        // Must match the S123 unique exactly. Left at (user, board) this would
-        // name a constraint that no longer exists and throw at runtime — and
-        // only on the concurrent-login race, i.e. almost never in a probe.
-        target: [membership.userId, membership.boardId, membership.role],
-      });
-    // 🔴 Re-read after a DoNothing. On the losing side of the race the insert
-    // wrote nothing, so the local `role`/`enabled` describe a row that does not
-    // exist — and if the two tabs claimed different personas, returning the
-    // loser's claim would hand back a role the database disagrees with.
-    const [settled] = await tx
-      .select({ role: membership.role, enabled: membership.enabled })
-      .from(membership)
-      .where(
-        and(
-          eq(membership.userId, user.id),
-          eq(membership.boardId, board.id),
-          eq(membership.role, role),
-        ),
-      )
-      .limit(1);
-    if (settled) {
-      role = settled.role;
-      enabled = settled.enabled;
+    // Backfill a name the shell was created without (a probe/seed may insert
+    // email-only). Never overwrite an existing name — admin.setRole (S111)
+    // deliberately preserves a spine name the auth provider does not have.
+    if (!existing.name && name) {
+      await tx.update(appUser).set({ name }).where(eq(appUser.id, existing.id));
+      return { ...existing, name };
     }
+    return existing;
   }
 
-  return {
-    user: { id: user.id, email: user.email, name: user.name },
-    board,
-    role,
-    enabled,
-  };
+  const [row] = await tx
+    .insert(appUser)
+    .values({ email, name, userType, referralCode: generateReferralCode() })
+    // Covers the concurrent-first-login race (two tabs): the loser's insert is a
+    // no-op on the profile unique rather than an error. Target must name the
+    // real unique exactly (NULLS NOT DISTINCT), or it throws at runtime.
+    .onConflictDoNothing({
+      target: [appUser.email, appUser.phone, appUser.userType],
+    })
+    .returning({ id: appUser.id, email: appUser.email, name: appUser.name });
+  if (row) return row;
+
+  // Lost the race (DoNothing wrote nothing) — the winner's row is now there.
+  const [settled] = await tx
+    .select({ id: appUser.id, email: appUser.email, name: appUser.name })
+    .from(appUser)
+    .where(and(eq(appUser.email, email), eq(appUser.userType, userType)))
+    .limit(1);
+  if (!settled) throw new Error(`ensureProfile: no row after conflict for ${email}/${userType}`);
+  return settled;
 }
 
 /**
- * The SET side for a role — S109. Upserts the person and FORCE-SETS their role
- * on this board, last writer wins.
+ * The CHECK side of the access gate (M11), consumed by protectedProcedure and
+ * the voice-relay HTTP path. Resolves the profile named by `profile` (the
+ * `x-profile` header) and answers "does this identity belong on this board, and
+ * is the profile operational". Runs INSIDE withBoard(board.id) — the student read
+ * below is RLS-scoped to the active board, which is what makes board-belonging
+ * free.
  *
- * This is the replacement for `insert(whitelist) → resolveMembership`, which
- * was the only way to mint a tutor/parent/admin. Every seed and probe that used
- * that pair now calls this instead, and so does `admin.setRole` — so the M11
- * discipline survives the whitelist's death: the enablement path a probe drives
- * is the same one the admin UI drives, not a look-alike.
+ * Throws NoMembershipError when the request is not OPERATIONAL on this board:
+ *   - the named profile shell does not exist,
+ *   - a student has no `student` row visible on this board (wrong board / not yet
+ *     onboarded) — for a student, board-belonging IS membership,
+ *   - a tutor whose `tutor.boards[]` does not include this board (preserves the
+ *     old "a tutor off their board is 403'd" behaviour; the membership table used
+ *     to enforce this by having no row there), or
+ *   - a parent with no `parent` detail row.
  *
- * Returns `ResolvedMembership` deliberately — identical to `resolveMembership`,
- * so the ~34 call sites keep reading `.user.id` off the result unchanged.
+ * 🔑 THE WAITING ROOM IS NOT DECIDED HERE. A signed-in tutor/parent with a shell
+ * but no detail row is board-LESS, so they never reach this function (they have
+ * no `x-board` to send, and `me` is only fetched once boot has an operational
+ * board). The FE renders AccessPending straight from `whoami`, which carries the
+ * per-profile `enabled` flag. So this function only ever runs for a profile that
+ * should be operational, and a non-operational result here is a genuine
+ * mismatch (wrong board) that SHOULD 403 — not a waiting room to render.
+ * `enabled` in the return is therefore always true; it is kept for the
+ * ResolvedMembership/`me` shape and as a belt to the whoami braces.
+ */
+export async function requireMembership(
+  tx: Tx,
+  args: {
+    email: string;
+    board: { id: string; slug: string };
+    /** WHICH profile this request means (ctx.profile). Absent ⇒ student. */
+    profile?: Role | null;
+  },
+): Promise<{ userId: string; role: string; enabled: boolean }> {
+  const { email, board } = args;
+  const role: Role = args.profile ?? DEFAULT_ROLE;
+
+  const [p] = await tx
+    .select({ id: appUser.id })
+    .from(appUser)
+    .where(and(eq(appUser.email, email), eq(appUser.userType, role)))
+    .limit(1);
+  if (!p) throw new NoMembershipError(email, board.slug);
+
+  if (role === "student") {
+    // RLS-scoped: the student row is visible only if board_id = ctx.board. A
+    // student on another board (or one who has not onboarded, so has no row at
+    // all) reads absent here and correctly does not belong.
+    const [s] = await tx
+      .select({ userId: student.userId })
+      .from(student)
+      .where(eq(student.userId, p.id))
+      .limit(1);
+    if (!s) throw new NoMembershipError(email, board.slug);
+    return { userId: p.id, role, enabled: true };
+  }
+
+  if (role === "tutor") {
+    // GLOBAL table — readable under any board tx. Operational = a tutor detail
+    // row that is active AND serves THIS board; anything else is off-board and
+    // 403s (the old membership table 403'd it by simply having no row there).
+    const [t] = await tx
+      .select({ boards: tutor.boards, status: tutor.status })
+      .from(tutor)
+      .where(eq(tutor.userId, p.id))
+      .limit(1);
+    const boards = Array.isArray(t?.boards) ? (t!.boards as string[]) : [];
+    if (!t || t.status !== "active" || !boards.includes(board.id)) {
+      throw new NoMembershipError(email, board.slug);
+    }
+    return { userId: p.id, role, enabled: true };
+  }
+
+  if (role === "parent") {
+    const [pr] = await tx
+      .select({ status: parent.status })
+      .from(parent)
+      .where(eq(parent.userId, p.id))
+      .limit(1);
+    if (!pr || pr.status !== "active") throw new NoMembershipError(email, board.slug);
+    return { userId: p.id, role, enabled: true };
+  }
+
+  // admin: the profile shell existing is enough to resolve identity here; the
+  // whitelist (the real second lock) is re-checked in adminProcedure. Board is
+  // irrelevant to an admin.
+  return { userId: p.id, role, enabled: true };
+}
+
+/**
+ * The SET side for a role (admin People + seeds) — grants a profile its
+ * role-DETAIL row, the only way out of the waiting room. Upserts the profile
+ * shell, then creates/activates the detail row for the role:
+ *   - tutor  → tutor row, this board appended to boards[] (idempotent)
+ *   - parent → parent row
+ *   - admin  → shell only (admin has no board-scoped detail; the whitelist gates)
+ *   - student→ NOT created here: a student row needs class/pronoun/hero/pet, all
+ *     captured by onboarding (ID-3). grantRole(student) mints only the shell; the
+ *     operational student row is onboarding's job. (Seeds that need a ready-made
+ *     student create the `student` row directly with a class — that is a fixture,
+ *     not the product's path.)
  *
- * Runs inside withBoard(board.id): the membership write needs the RLS claim.
- * `app_user` is global (no RLS), so its upsert is unaffected.
+ * Returns ResolvedMembership (enabled=true) so the ~1 call site (admin_users)
+ * keeps reading `.user.id` unchanged.
+ *
+ * Runs inside withBoard(board.id): tutor/parent are GLOBAL so the claim is not
+ * needed for them, but the caller already opened one and passing the scoped tx is
+ * harmless.
  */
 export async function grantRole(
-  tx: PgTransaction<any, any, any>,
+  tx: Tx,
   args: {
     email: string;
     name: string | null;
@@ -232,37 +256,33 @@ export async function grantRole(
   },
 ): Promise<ResolvedMembership> {
   const { email, name, board, role } = args;
+  const user = await ensureProfile(tx, { email, name, userType: role });
 
-  const [user] = await tx
-    .insert(appUser)
-    .values({ email, name })
-    .onConflictDoUpdate({ target: appUser.email, set: { name } })
-    .returning();
-  if (!user) throw new Error("app_user upsert returned no row");
-
-  // 🔴 S123 CHANGED WHAT THIS FUNCTION DOES, and the change is the point of the
-  // slice. Targeting the new (user, board, ROLE) unique means granting `tutor`
-  // to someone who is already a `student` now ADDS a second profile beside the
-  // first instead of overwriting it. That is the founder's construct: one email,
-  // several profiles, different content in each.
-  //
-  // It also means this is no longer a way to REMOVE a role — granting student to
-  // a tutor leaves the tutor row standing. Taking a profile away is a delete,
-  // and deliberately does not live behind an upsert.
-  //
-  // 🔑 ENABLED travels with the grant, and must. This is the ONLY way out of
-  // the waiting room a parent/tutor sits in — an admin setting the role without
-  // switching it on would leave them staring at the same "reach out to us"
-  // board they were already looking at. Granting a role IS agreeing to it;
-  // there is no third state. Since S123 it is also the only way a non-student
-  // row comes into existence at all.
-  await tx
-    .insert(membership)
-    .values({ userId: user.id, boardId: board.id, role, enabled: true })
-    .onConflictDoUpdate({
-      target: [membership.userId, membership.boardId, membership.role],
-      set: { role, enabled: true },
-    });
+  if (role === "tutor") {
+    // Append this board to boards[] without dropping any the tutor already
+    // serves. Read-modify-write (the array is a jsonb blob, not a relation);
+    // upsert the row on first grant.
+    const [t] = await tx
+      .select({ boards: tutor.boards })
+      .from(tutor)
+      .where(eq(tutor.userId, user.id))
+      .limit(1);
+    const boards = new Set(Array.isArray(t?.boards) ? (t!.boards as string[]) : []);
+    boards.add(board.id);
+    await tx
+      .insert(tutor)
+      .values({ userId: user.id, boards: [...boards], status: "active" })
+      .onConflictDoUpdate({
+        target: tutor.userId,
+        set: { boards: [...boards], status: "active" },
+      });
+  } else if (role === "parent") {
+    await tx
+      .insert(parent)
+      .values({ userId: user.id, status: "active" })
+      .onConflictDoUpdate({ target: parent.userId, set: { status: "active" } });
+  }
+  // admin / student: shell only (see the header).
 
   return {
     user: { id: user.id, email: user.email, name: user.name },
@@ -273,64 +293,39 @@ export async function grantRole(
 }
 
 /**
- * The CHECK side of the access gate (M11) — asserts an ALREADY-EXISTING
- * membership for (email, board). Used by protectedProcedure for post-onboarding
- * surfaces (e.g. revision.getSlide); unlike `me` it never creates one. Runs
- * inside withBoard, so the membership read is RLS-scoped to the active board:
- * a membership on another board is invisible and counts as absent.
+ * The board-pick entry point (session.chooseBoard). Since ID-1 the student's
+ * OPERATIONAL row (student.board_id + class) is minted by onboarding (ID-3, at
+ * the about_you beat where the class is finally known), NOT here — so this
+ * shrank to: validate the board (the caller already did) and ensure the profile
+ * shell exists. It stays a distinct entry point because the FE onboarding flow
+ * still calls it before about_you, and a working shell keeps that flow from 500ing
+ * while ID-3 is unbuilt.
  *
- * app_user is global (resolve the id by email); membership is board-scoped.
+ * Keeps the name `resolveMembership` and the ResolvedMembership return so the one
+ * caller (session_boards.chooseBoard) is unchanged.
  */
-export async function requireMembership(
-  tx: PgTransaction<any, any, any>,
+export async function resolveMembership(
+  tx: Tx,
   args: {
     email: string;
+    name: string | null;
     board: { id: string; slug: string };
-    /**
-     * WHICH profile this request means (`ctx.profile`, from `x-profile`).
-     *
-     * 🔴 THE FILTER IS THE WHOLE SAFETY STORY OF S123. Since the unique widened
-     * to (user, board, role) this query can match several rows, and it used to
-     * take `.limit(1)` with no ORDER BY — i.e. an arbitrary one. Passing the
-     * profile makes the answer exact.
-     *
-     * When ABSENT (probes, older clients, anything pre-S123) we do NOT fall back
-     * to an arbitrary row: `profileOrder` picks by explicit precedence, so the
-     * answer stays deterministic either way. Absent means "you didn't say", not
-     * "any will do".
-     */
-    profile?: Role | null;
+    /** The landing persona. Only self-assignable roles reach here; defaults to student. */
+    intendedRole?: string | null;
   },
-): Promise<{ userId: string; role: string; enabled: boolean }> {
-  const { email, board, profile } = args;
-  const [user] = await tx
-    .select({ id: appUser.id })
-    .from(appUser)
-    .where(eq(appUser.email, email))
-    .limit(1);
-  if (!user) throw new NoMembershipError(email, board.slug);
-
-  const [m] = await tx
-    .select({ role: membership.role, enabled: membership.enabled })
-    .from(membership)
-    .where(
-      and(
-        eq(membership.userId, user.id),
-        eq(membership.boardId, board.id),
-        // Asked for a specific profile → that row or nothing. Not "that row, or
-        // else something else": silently serving a student their tutor surface
-        // (or the reverse — the S123 report) is the bug being fixed.
-        ...(profile ? [eq(membership.role, profile)] : []),
-      ),
-    )
-    .orderBy(profileOrder())
-    .limit(1);
-  if (!m) throw new NoMembershipError(email, board.slug);
-
-  // ⚠️ Returned, NOT enforced. This function answers "do they belong here",
-  // and a disabled parent still belongs — they are waiting, not rejected.
-  // Throwing here would 403 them out of the very screen that tells them who to
-  // call. The gate is a RENDER decision (App.tsx), which is why it travels as
-  // data rather than as an exception.
-  return { userId: user.id, role: m.role, enabled: m.enabled };
+): Promise<ResolvedMembership> {
+  const { email, name, board, intendedRole } = args;
+  const role: Role =
+    intendedRole === "tutor" || intendedRole === "parent" ? intendedRole : DEFAULT_ROLE;
+  const user = await ensureProfile(tx, { email, name, userType: role });
+  return {
+    user: { id: user.id, email: user.email, name: user.name },
+    board,
+    role,
+    // A freshly-picked board does not make a student operational on its own — the
+    // student row is ID-3's. But chooseBoard's historical contract returned
+    // enabled for a student, and the FE reads it only to decide the waiting room,
+    // which students never see. Report the honest role-detail state.
+    enabled: role === DEFAULT_ROLE,
+  };
 }

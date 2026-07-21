@@ -83,7 +83,7 @@ async function main() {
   if (!P || !Q) throw new Error("board seed failed");
 
   const tutorEmail = `auth-tut-${tag}@example.com`;
-  const [tut] = await db.insert(appUser).values({ email: tutorEmail, name: "Tutor" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: tutorEmail, name: "Tutor", userType: "tutor" }).returning();
   if (!tut) throw new Error("app_user seed failed");
 
   // fixture under P: spine + LOs + ONE pre-existing question at ordinal 2 (so the

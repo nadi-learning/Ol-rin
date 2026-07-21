@@ -28,7 +28,7 @@ import {
   contentUnit,
   contentVersion,
   appUser,
-  membership,
+  student,
   subTopic,
   subject,
   topic,
@@ -169,8 +169,13 @@ async function main() {
   }
   check("gate: non-member → NoMembershipError", noMembership);
 
-  await withBoard(P.id, (tx) =>
+  // grantRole mints only the profile shell (ID-4); requireMembership('student')
+  // now needs the operational student row, so insert it (onboarding's output).
+  const W = await withBoard(P.id, (tx) =>
     grantRole(tx, { email: emailW, name: "Probe W", board: P, role: "student" }),
+  );
+  await withBoard(P.id, (tx: Tx) =>
+    tx.insert(student).values({ userId: W.user.id, boardId: P.id, class: "9" }),
   );
   const gateRole = await withBoard(P.id, (tx) =>
     requireMembership(tx, { email: emailW, board: P }),
@@ -197,7 +202,7 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(board).where(eq(board.id, P.id));

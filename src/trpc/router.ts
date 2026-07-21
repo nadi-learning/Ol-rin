@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   adminProcedure,
+  authedProcedure,
   parentProcedure,
   protectedProcedure,
   publicProcedure,
@@ -12,6 +13,7 @@ import {
 import {
   BoardNotFoundError,
   chooseBoard,
+  enterProfile,
   listBoards,
   whoami,
   withBoardBySlug,
@@ -37,9 +39,9 @@ import {
 } from "../services/admin_ingest";
 import {
   CannotChangeOwnRoleError,
-  findByEmail,
   InvalidLinkError,
   linkStudent,
+  listLinkCandidates,
   listLinks,
   listPeople,
   setRole,
@@ -255,10 +257,24 @@ export const appRouter = router({
   // `sessionProcedure` (init.ts) and `services/session_boards.ts` for why it
   // has to, and why it must stay small.
   session: router({
-    // Where this identity already belongs. `memberships: []` ⇒ the student has
-    // never picked, so the FE shows the picker; otherwise it enters at
-    // `preferred`. Never creates anything — a read that enrolled people is the
-    // exact bug this slice fixes.
+    // ID-1 — the boot handshake. Mints the board-less PROFILE SHELL for the
+    // landing persona (decision 1's "login upserts app_user"), then returns
+    // whoami. A shell is NOT an enrolment (no board, no role-detail), so this
+    // cannot resurrect the "a read enrolled the student on cbse" bug — that bug
+    // wrote a board-scoped row; a shell writes none. `x-profile` chooses which
+    // profile is minted; a non-self-assignable persona (admin) mints nothing but
+    // still reads back whatever profiles the person legitimately holds.
+    enter: sessionProcedure.mutation(({ ctx }) =>
+      enterProfile({
+        email: ctx.realUser.email,
+        name: ctx.realUser.name,
+        persona: ctx.profile,
+      }),
+    ),
+
+    // The pure READ half — every profile the identity holds, with its operational
+    // flag + board(s). Never creates anything (that is `enter`). Kept distinct so
+    // any non-boot caller can ask "who is this" without a write.
     whoami: sessionProcedure.query(({ ctx }) => whoami(ctx.realUser.email)),
 
     // Only boards with a real catalogue (see the service): offering an empty
@@ -327,12 +343,18 @@ export const appRouter = router({
     // so tsc widens the return to a UNION and the fail-open shape is free to
     // drift from the contract. It did — it still carried `school` (removed) and
     // lacked the fun-fact fields, and a clean typecheck said nothing.
-    getState: protectedProcedure.query(async ({ ctx }): Promise<OnboardingState> => {
+    // ID-3 — onboarding runs on `authedProcedure`, NOT `protectedProcedure`. This
+    // is the surface that MINTS the operational `student` row (at about_you), and
+    // `requireMembership` now THROWS for a student who has no row yet — so gating
+    // it on membership would 403 exactly the brand-new student it exists to set
+    // up. auth + board (x-board) is enough; the service resolves the student
+    // profile from ctx.realUser.email and treats a non-student x-profile as exempt.
+    getState: authedProcedure.query(async ({ ctx }): Promise<OnboardingState> => {
       try {
         return await getOnboardingState(ctx.tx, {
-          userId: ctx.membership.userId,
+          email: ctx.realUser.email,
           boardId: ctx.board.id,
-          role: ctx.membership.role,
+          role: ctx.profile ?? "student",
         });
       } catch (e) {
         console.error("[onboarding.getState] failing open:", e);
@@ -351,17 +373,17 @@ export const appRouter = router({
       }
     }),
 
-    // The grade chips (D-ONB-2) — the board's REAL distinct subject.grade values.
-    listGradeOptions: protectedProcedure.query(({ ctx }) => listGradeOptions(ctx.tx)),
+    // The grade chips — the supported classes (constant; see listGradeOptions).
+    listGradeOptions: authedProcedure.query(({ ctx }) => listGradeOptions(ctx.tx)),
 
     // One beat, committed (D-ONB-1). Unlike getState this does NOT fail open: a
     // silently-dropped answer would make the flow lie about having saved.
-    saveStep: protectedProcedure
+    saveStep: authedProcedure
       .input(z.object({ step: OnboardingStep, value: z.string().nullable() }))
       .mutation(async ({ ctx, input }) => {
         try {
           return await saveOnboardingStep(ctx.tx, {
-            userId: ctx.membership.userId,
+            email: ctx.realUser.email,
             boardId: ctx.board.id,
             step: input.step,
             value: input.value,
@@ -374,15 +396,15 @@ export const appRouter = router({
         }
       }),
 
-    // S92 — the one beat that answers TWO things on one screen (class +
-    // pronoun). Same no-fail-open stance as saveStep, and both values land in a
+    // S92 — the one beat that answers TWO things on one screen (class + pronoun),
+    // and where the operational `student` row is born. Both values land in a
     // single write so the screen can never be half-answered.
-    saveAboutYou: protectedProcedure
+    saveAboutYou: authedProcedure
       .input(z.object({ grade: z.string().nullable(), pronoun: z.string().nullable() }))
       .mutation(async ({ ctx, input }) => {
         try {
           return await saveOnboardingAboutYou(ctx.tx, {
-            userId: ctx.membership.userId,
+            email: ctx.realUser.email,
             boardId: ctx.board.id,
             grade: input.grade,
             pronoun: input.pronoun,
@@ -395,9 +417,9 @@ export const appRouter = router({
         }
       }),
 
-    complete: protectedProcedure.mutation(({ ctx }) =>
+    complete: authedProcedure.mutation(({ ctx }) =>
       completeOnboarding(ctx.tx, {
-        userId: ctx.membership.userId,
+        email: ctx.realUser.email,
         boardId: ctx.board.id,
       }),
     ),
@@ -2179,16 +2201,8 @@ export const appRouter = router({
     // open (Slice C) everyone who signs in is a student, and this is the only
     // way anyone becomes a tutor, parent or admin. All board-scoped via RLS.
 
-    /** Everyone with a membership on this board. */
+    /** EVERY profile (global — one row per app_user). See admin_users header. */
     listPeople: adminProcedure.query(({ ctx }) => listPeople(ctx.tx)),
-
-    /**
-     * Exact-email lookup across the GLOBAL identity tables — finds a person who
-     * signed up on another board and therefore is not in `listPeople`.
-     */
-    findByEmail: adminProcedure
-      .input(z.object({ email: z.string().email() }))
-      .query(({ ctx, input }) => findByEmail(ctx.tx, input.email)),
 
     /**
      * THE role-grant path (M11: delegates to `grantRole`, same as every seed).
@@ -2200,7 +2214,7 @@ export const appRouter = router({
         try {
           return await setRole(ctx.tx, {
             board: ctx.board,
-            actorUserId: ctx.membership.userId,
+            actorEmail: ctx.realUser.email,
             email: input.email,
             role: input.role,
           });
@@ -2215,16 +2229,24 @@ export const appRouter = router({
         }
       }),
 
-    /** Every tutor→student and parent→child link on this board. */
+    /** The four picker feeds for the LINK form (adults + unlinked students). */
+    listLinkCandidates: adminProcedure.query(({ ctx }) =>
+      listLinkCandidates(ctx.tx, ctx.board.id),
+    ),
+
+    /** Every tutor→student and parent→child assignment on this board. */
     listLinks: adminProcedure.query(({ ctx }) => listLinks(ctx.tx)),
 
-    /** First write path to tutor_student / parent_child outside the seeds. */
+    /**
+     * Link an adult to a student by PROFILE ID (from the pickers). A tutor link
+     * drives the tutor_assignment ledger (assign or switch-with-snapshot).
+     */
     linkStudent: adminProcedure
       .input(
         z.object({
           kind: z.enum(["tutor", "parent"]),
-          adultEmail: z.string().email(),
-          studentEmail: z.string().email(),
+          adultUserId: z.string().uuid(),
+          studentUserId: z.string().uuid(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -2238,16 +2260,15 @@ export const appRouter = router({
         }
       }),
 
-    /** Removes the join row only — never a membership or any student data. */
+    /** Clears the single pointer only (tutor unlink freezes a snapshot). */
     unlinkStudent: adminProcedure
       .input(
         z.object({
           kind: z.enum(["tutor", "parent"]),
-          adultUserId: z.string().uuid(),
           studentUserId: z.string().uuid(),
         }),
       )
-      .mutation(({ ctx, input }) => unlinkStudent(ctx.tx, input)),
+      .mutation(({ ctx, input }) => unlinkStudent(ctx.tx, { boardId: ctx.board.id, ...input })),
   }),
 });
 

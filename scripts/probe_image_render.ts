@@ -39,9 +39,9 @@ import {
   appUser,
   board,
   chapter,
-  membership,
   question,
   questionImage,
+  student,
   subTopic,
   subject,
   topic,
@@ -127,16 +127,17 @@ async function main() {
   // A student member of BOTH boards (P for the happy serve, Q for the RLS-hide),
   // and a tutor for the save flow. Global identity rows + per-board membership.
   const stuEmail = `img-stu-${tag}@example.com`;
+  const stuQEmail = `img-stuq-${tag}@example.com`; // a SEPARATE student who belongs to board Q (single-board model)
   const outsiderEmail = `img-out-${tag}@example.com`;
-  const [stu] = await db.insert(appUser).values({ email: stuEmail, name: "Stu" }).returning();
-  const [tut] = await db.insert(appUser).values({ email: `img-tut-${tag}@example.com`, name: "Tut" }).returning();
-  const [out] = await db.insert(appUser).values({ email: outsiderEmail, name: "Out" }).returning();
-  if (!stu || !tut || !out) throw new Error("app_user seed failed");
+  const [stu] = await db.insert(appUser).values({ email: stuEmail, name: "Stu", userType: "student" }).returning();
+  const [stuQ] = await db.insert(appUser).values({ email: stuQEmail, name: "Stu Q", userType: "student" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `img-tut-${tag}@example.com`, name: "Tut", userType: "tutor" }).returning();
+  const [out] = await db.insert(appUser).values({ email: outsiderEmail, name: "Out", userType: "student" }).returning();
+  if (!stu || !stuQ || !tut || !out) throw new Error("app_user seed failed");
 
   // Fixture under P: spine + a question WITH a figure spec + one with none.
   const fx = await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(membership).values({ userId: stu.id, boardId: P.id, role: "student" });
-    await tx.insert(membership).values({ userId: tut.id, boardId: P.id, role: "tutor" });
+    await tx.insert(student).values({ userId: stu.id, boardId: P.id, class: "9", tutorId: tut.id });
     const [subj] = await tx.insert(subject).values({ boardId: P.id, slug: "math", name: "Mathematics", grade: "IGCSE" }).returning();
     const [chap] = await tx.insert(chapter).values({ boardId: P.id, subjectId: subj!.id, slug: "pythagoras", name: "Pythagoras", ordinal: 1 }).returning();
     const [tp] = await tx.insert(topic).values({ boardId: P.id, chapterId: chap!.id, slug: "right-triangles", name: "Right triangles", ordinal: 1 }).returning();
@@ -145,8 +146,9 @@ async function main() {
     const [qNoImg] = await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Define the hypotenuse.", referenceAnswer: "The side opposite the right angle.", explanation: null, pedagogicalNote: null, ordinal: 1, source: "b2c_authoring", image: null }).returning();
     return { st: st!.id, qImg: qImg!.id, qNoImg: qNoImg!.id };
   });
-  // Membership of Q for the RLS-hide serve test.
-  await withBoard(Q.id, (tx: Tx) => tx.insert(membership).values({ userId: stu.id, boardId: Q.id, role: "student" }));
+  // A DISTINCT student who belongs to Q — for the RLS-hide serve test (test 10).
+  // Single-board model: `stu` is on P and cannot also be on Q (student PK = userId).
+  await withBoard(Q.id, (tx: Tx) => tx.insert(student).values({ userId: stuQ.id, boardId: Q.id, class: "9" }));
 
   // 2 + 3. Render the spec → a PNG.
   const r1 = await generateImageForQuestion(P.id, fx.qImg);
@@ -188,7 +190,7 @@ async function main() {
 
   // 10. serve 404 — a Q member reading a P image (RLS-hidden under the Q claim).
   let s404 = 0;
-  try { await resolveImageBytes({ imageId: r1.imageId, boardSlug: Q.slug, email: stuEmail }); } catch (e) { if (e instanceof ImageError) s404 = e.status; }
+  try { await resolveImageBytes({ imageId: r1.imageId, boardSlug: Q.slug, email: stuQEmail }); } catch (e) { if (e instanceof ImageError) s404 = e.status; }
   check("serve 404: Q member reading a P image → IMAGE_NOT_FOUND (RLS-hidden)", s404 === 404);
 
   // 11. no spec.
@@ -222,10 +224,11 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
-  await withBoard(Q.id, (tx: Tx) => tx.delete(membership).where(eq(membership.boardId, Q.id)));
+  await withBoard(Q.id, (tx: Tx) => tx.delete(student).where(eq(student.boardId, Q.id)));
   await db.delete(appUser).where(and(eq(appUser.email, stuEmail)));
+  await db.delete(appUser).where(eq(appUser.email, stuQEmail));
   await db.delete(appUser).where(eq(appUser.email, `img-tut-${tag}@example.com`));
   await db.delete(appUser).where(eq(appUser.email, outsiderEmail));
   await db.delete(board).where(eq(board.id, P.id));

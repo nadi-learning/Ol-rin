@@ -35,13 +35,12 @@ import {
   attempt,
   board,
   chapter,
-  membership,
   practiceSession,
   question,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -113,7 +112,7 @@ async function main() {
   const tutorUserId = TU.user.id;
   const studentId = ST.user.id;
   const student2Id = ST2.user.id;
-  await withBoard(P.id, (tx) => tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tutorUserId, studentId }));
+  await withBoard(P.id, (tx) => tx.insert(student).values({ userId: studentId, boardId: P.id, class: "9", tutorId: tutorUserId }));
 
   // Seed a PRIVATE approved question on a sub_topic for a given student; returns id.
   let ord = 0;
@@ -216,12 +215,11 @@ async function main() {
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
     await tx.delete(assignment).where(eq(assignment.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailTU));
   await db.delete(appUser).where(eq(appUser.email, emailST));

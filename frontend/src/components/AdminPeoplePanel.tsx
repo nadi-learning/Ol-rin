@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { trpc } from "../trpc";
 
-// Slice D — the admin PEOPLE surface. Replaces the operational capability the
-// whitelist provided: with the gate open (Slice C) everyone who signs in is a
-// student, and this panel is the only way anyone becomes a tutor, parent or
-// admin. Lives in its own file so AdminPage doesn't double in size; all classes
-// stay `.adm-`-prefixed (the global revision-shell.css landmine).
+// ID-2 — the admin PEOPLE + ASSIGNMENTS surface on the profile model. Two jobs:
+//   - People: every profile (global, one row per app_user), grant a role.
+//   - Link: attach a tutor/parent to a student. Both fields are PICKERS by id —
+//     never a typed email — so the same-email ambiguity that produced the
+//     "spranav is admin not tutor" bug is structurally impossible. The student
+//     picker only offers UNLINKED students; a re-link is a CHANGE from the
+//     assignments list (which fires the tutor handover snapshot server-side).
 //
-// Two rules the UI must make legible, because both are refusals the admin will
-// otherwise read as bugs:
+// All classes stay `.adm-`-prefixed (the global revision-shell.css landmine).
+// Two refusals the UI makes legible, because both read as bugs otherwise:
 //   - a person must have SIGNED IN ONCE before a role can be granted (no
-//     pre-invite — the founder's call). Never-signed-in members are shown, and
-//     their Save is disabled with the reason stated inline rather than failing
-//     on submit.
+//     pre-invite). Never-signed-in profiles show, Save disabled + reason inline.
 //   - an admin cannot change their OWN role (lockout). Same treatment.
 
 type Person = Awaited<ReturnType<typeof trpc.admin.listPeople.query>>[number];
 type Link = Awaited<ReturnType<typeof trpc.admin.listLinks.query>>[number];
-type Found = Awaited<ReturnType<typeof trpc.admin.findByEmail.query>>;
+type Candidates = Awaited<ReturnType<typeof trpc.admin.listLinkCandidates.query>>;
 
 /** One tutor (or parent) with the students linked to them, for the grouped view. */
 type AssignGroup = {
@@ -34,19 +34,15 @@ type Role = (typeof ROLES)[number];
 export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
   const [people, setPeople] = useState<Person[] | null>(null);
   const [links, setLinks] = useState<Link[] | null>(null);
+  const [candidates, setCandidates] = useState<Candidates | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  // find-by-email
-  const [lookup, setLookup] = useState("");
-  const [found, setFound] = useState<Found | "none" | null>(null);
-  const [foundRole, setFoundRole] = useState<Role>("tutor");
-
-  // link builder
+  // link builder — everything is a PICKER (a profile id), not a typed email.
   const [linkKind, setLinkKind] = useState<"tutor" | "parent">("tutor");
-  const [adultEmail, setAdultEmail] = useState("");
-  const [studentEmail, setStudentEmail] = useState("");
+  const [adultUserId, setAdultUserId] = useState("");
+  const [studentUserId, setStudentUserId] = useState("");
 
   function load() {
     trpc.admin.listPeople
@@ -57,11 +53,15 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
       .query()
       .then(setLinks)
       .catch((e) => setError(String(e?.message ?? e)));
+    trpc.admin.listLinkCandidates
+      .query()
+      .then(setCandidates)
+      .catch((e) => setError(String(e?.message ?? e)));
   }
   useEffect(load, []);
 
   // Every mutation funnels through here so the error/ok/busy handling and the
-  // reload cannot drift between the four call sites.
+  // reload cannot drift between the call sites.
   async function run(key: string, fn: () => Promise<string>) {
     setError(null);
     setOk(null);
@@ -83,73 +83,61 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
     });
   }
 
-  async function onLookup() {
-    setError(null);
-    setOk(null);
-    setFound(null);
-    setBusy("lookup");
-    try {
-      const r = await trpc.admin.findByEmail.query({ email: lookup.trim() });
-      setFound(r ?? "none");
-    } catch (e: any) {
-      setError(humanError(String(e?.message ?? e)));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function onLink() {
     await run("link", async () => {
-      await trpc.admin.linkStudent.mutate({
-        kind: linkKind,
-        adultEmail: adultEmail.trim(),
-        studentEmail: studentEmail.trim(),
-      });
-      setAdultEmail("");
-      setStudentEmail("");
-      return `Linked ${adultEmail.trim()} to ${studentEmail.trim()}.`;
+      await trpc.admin.linkStudent.mutate({ kind: linkKind, adultUserId, studentUserId });
+      setAdultUserId("");
+      setStudentUserId("");
+      return `Linked.`;
     });
   }
 
   async function onUnlink(l: Link) {
-    await run(`unlink:${l.adultUserId}:${l.studentUserId}`, async () => {
-      await trpc.admin.unlinkStudent.mutate({
-        kind: l.kind,
-        adultUserId: l.adultUserId,
-        studentUserId: l.studentUserId,
-      });
+    await run(`unlink:${l.kind}:${l.studentUserId}`, async () => {
+      await trpc.admin.unlinkStudent.mutate({ kind: l.kind, studentUserId: l.studentUserId });
       return `Unlinked ${l.adultEmail} from ${l.studentEmail}.`;
     });
   }
 
-  // Group the flat link list BY the adult (tutor or parent) so the admin reads
-  // "who has how many students", not an undifferentiated pile. Tutors/parents
-  // with ZERO students are seeded from `people` so a teacher's count shows even
-  // at 0 — that is the "manage how many students each teacher has" ask. Each
-  // student stays a full `Link` so `onUnlink` is unchanged. useMemo so the group
-  // shape (and the sort) is stable across the render that a busy toggle causes.
+  // The two adult/student picker sets for the current link kind.
+  const adults = useMemo<Candidates["tutors"]>(() => {
+    if (!candidates) return [];
+    return linkKind === "tutor" ? candidates.tutors : candidates.parents;
+  }, [candidates, linkKind]);
+  const students = useMemo<Candidates["unlinkedForTutor"]>(() => {
+    if (!candidates) return [];
+    return linkKind === "tutor" ? candidates.unlinkedForTutor : candidates.unlinkedForParent;
+  }, [candidates, linkKind]);
+
+  // Group the flat link list BY the adult so the admin reads "who has how many
+  // students". Tutors/parents with ZERO students are seeded from the CANDIDATES
+  // (the board's active tutors + parents), not from the global people list, so a
+  // teacher's count shows even at 0 without dragging in other boards' profiles.
   const groups = useMemo<AssignGroup[]>(() => {
     const map = new Map<string, AssignGroup>();
     const keyOf = (kind: string, id: string) => `${kind}:${id}`;
 
-    // Seed 0-count tutors/parents so an unassigned teacher still lists (count 0).
-    for (const p of people ?? []) {
-      if (p.role === "tutor" || p.role === "parent") {
-        const k = keyOf(p.role, p.userId);
-        if (!map.has(k)) {
-          map.set(k, {
-            kind: p.role,
-            adultUserId: p.userId,
-            adultEmail: p.email,
-            adultName: p.name,
-            students: [],
-          });
-        }
+    if (candidates) {
+      for (const t of candidates.tutors) {
+        map.set(keyOf("tutor", t.userId), {
+          kind: "tutor",
+          adultUserId: t.userId,
+          adultEmail: t.email,
+          adultName: t.name,
+          students: [],
+        });
+      }
+      for (const p of candidates.parents) {
+        map.set(keyOf("parent", p.userId), {
+          kind: "parent",
+          adultUserId: p.userId,
+          adultEmail: p.email,
+          adultName: p.name,
+          students: [],
+        });
       }
     }
 
-    // Fill from the links. An adult in a link but not in `people` (shouldn't
-    // happen — a link requires a membership — but cheap to be safe) still lists.
     for (const l of links ?? []) {
       const k = keyOf(l.kind, l.adultUserId);
       let g = map.get(k);
@@ -167,14 +155,12 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
     }
 
     const arr = [...map.values()];
-    // Tutors before parents, then by email — a stable order so a group can't
-    // reshuffle between render and a per-row Remove click (listLinks' own reason).
     arr.sort((a, b) =>
       a.kind === b.kind ? a.adultEmail.localeCompare(b.adultEmail) : a.kind === "tutor" ? -1 : 1,
     );
     for (const g of arr) g.students.sort((a, b) => a.studentEmail.localeCompare(b.studentEmail));
     return arr;
-  }, [people, links]);
+  }, [candidates, links]);
 
   return (
     <>
@@ -183,7 +169,11 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
 
       <div className="adm-grid">
         <section className="adm-panel">
-          <label className="adm-label">People on this board</label>
+          <label className="adm-label">People</label>
+          <p className="adm-hint">
+            Every profile across the app. Grant someone a role — they must have signed in
+            once first.
+          </p>
           {people === null ? (
             <p className="adm-muted">Loading…</p>
           ) : people.length === 0 ? (
@@ -199,11 +189,10 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
               <tbody>
                 {people.map((p) => (
                   <PersonRow
-                    // Since S123 one person can hold several roles on a board
-                    // (student + tutor + parent), so listPeople returns multiple
-                    // rows per userId. Key on userId+role or React collapses them
-                    // and an admin's control for a role silently vanishes.
-                    key={`${p.userId}:${p.role}`}
+                    // One person's email holds up to four profiles, each its own
+                    // id + user_type; key on userId or React collapses distinct
+                    // profiles and a control silently vanishes.
+                    key={p.userId}
                     person={p}
                     isSelf={p.email.toLowerCase() === adminEmail.toLowerCase()}
                     busy={busy === `role:${p.email}`}
@@ -213,104 +202,62 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
               </tbody>
             </table>
           )}
-
-          <label className="adm-label" style={{ marginTop: 14 }}>
-            Find someone by email
-          </label>
-          <p className="adm-hint">
-            Someone who signed up on another board won't appear above. Look them up by
-            their exact address to grant a role here.
-          </p>
-          <div className="adm-row">
-            <input
-              className="adm-input"
-              placeholder="person@example.com"
-              value={lookup}
-              onChange={(e) => setLookup(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && lookup.trim()) onLookup();
-              }}
-            />
-            <button className="adm-btn" disabled={!lookup.trim() || busy !== null} onClick={onLookup}>
-              {busy === "lookup" ? "Looking…" : "Find"}
-            </button>
-          </div>
-          {found === "none" && (
-            <p className="adm-muted">
-              No account for that address. They need to sign in once before a role can be
-              granted.
-            </p>
-          )}
-          {found && found !== "none" && (
-            <div className="adm-found">
-              <div>
-                <b>{found.name ?? found.email}</b>
-                <span className="adm-found-email">{found.email}</span>
-              </div>
-              <div className="adm-found-state">
-                {found.role
-                  ? `Currently a ${found.role} on this board.`
-                  : "Not on this board yet."}
-              </div>
-              {!found.hasSignedIn ? (
-                <p className="adm-muted">Has never signed in — a role can't be granted yet.</p>
-              ) : (
-                <div className="adm-row">
-                  <select
-                    className="adm-select"
-                    value={foundRole}
-                    onChange={(e) => setFoundRole(e.target.value as Role)}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="adm-btn"
-                    disabled={busy !== null}
-                    onClick={() => onSetRole(found.email, foundRole)}
-                  >
-                    Grant
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
         </section>
 
         <section className="adm-panel">
           <label className="adm-label">Link a tutor or parent to a student</label>
           <p className="adm-hint">
-            Both people need a role on this board first. A tutor link lets them see that
-            student's work; a parent link lets them see the reports.
+            Pick from the people on this board. A tutor link lets them see that student's
+            work; a parent link lets them see the reports. Only unlinked students are shown —
+            to move a student, remove their current link below first.
           </p>
           <div className="adm-row">
             <select
               className="adm-select"
               value={linkKind}
-              onChange={(e) => setLinkKind(e.target.value as "tutor" | "parent")}
+              onChange={(e) => {
+                setLinkKind(e.target.value as "tutor" | "parent");
+                setAdultUserId("");
+                setStudentUserId("");
+              }}
             >
               <option value="tutor">Tutor</option>
               <option value="parent">Parent</option>
             </select>
-            <input
-              className="adm-input"
-              placeholder={linkKind === "tutor" ? "tutor@example.com" : "parent@example.com"}
-              value={adultEmail}
-              onChange={(e) => setAdultEmail(e.target.value)}
-            />
+            <select
+              className="adm-select"
+              value={adultUserId}
+              onChange={(e) => setAdultUserId(e.target.value)}
+            >
+              <option value="">
+                {adults.length === 0
+                  ? `— no ${linkKind}s on this board —`
+                  : `— pick a ${linkKind} —`}
+              </option>
+              {adults.map((a) => (
+                <option key={a.userId} value={a.userId}>
+                  {a.name ?? a.email} ({a.email})
+                </option>
+              ))}
+            </select>
           </div>
-          <input
-            className="adm-input"
-            placeholder="student@example.com"
-            value={studentEmail}
-            onChange={(e) => setStudentEmail(e.target.value)}
-          />
+          <select
+            className="adm-select"
+            value={studentUserId}
+            onChange={(e) => setStudentUserId(e.target.value)}
+          >
+            <option value="">
+              {students.length === 0 ? "— no unlinked students —" : "— pick a student —"}
+            </option>
+            {students.map((s) => (
+              <option key={s.userId} value={s.userId}>
+                {s.name ?? s.email} · class {s.class} ({s.email})
+              </option>
+            ))}
+          </select>
           <button
             className="adm-btn"
-            disabled={!adultEmail.trim() || !studentEmail.trim() || busy !== null}
+            disabled={!adultUserId || !studentUserId || busy !== null}
             onClick={onLink}
           >
             {busy === "link" ? "Linking…" : "Link"}
@@ -319,7 +266,7 @@ export function AdminPeoplePanel({ adminEmail }: { adminEmail: string }) {
           <label className="adm-label" style={{ marginTop: 14 }}>
             Assignments by tutor / parent
           </label>
-          {links === null || people === null ? (
+          {links === null || candidates === null ? (
             <p className="adm-muted">Loading…</p>
           ) : groups.length === 0 ? (
             <p className="adm-muted">No tutors or parents yet.</p>
@@ -434,7 +381,7 @@ function countLabel(g: AssignGroup): string {
   return `${n} ${n === 1 ? noun : plural}`;
 }
 
-/** tRPC surfaces the server's error CODE; turn the two expected ones into English. */
+/** tRPC surfaces the server's error CODE; turn the expected ones into English. */
 function humanError(raw: string): string {
   if (raw.includes("USER_NOT_FOUND")) {
     return "That person has never signed in. Ask them to sign in once, then grant the role.";

@@ -36,124 +36,213 @@ const createdAt = () =>
 // ───────────────────────── 1. Identity & tenancy ─────────────────────────
 
 // Tenant. One row per board. NOT tenant-scoped (it IS the tenant).
-export const board = pgTable("board", {
-  id: id(),
-  slug: text("slug").notNull().unique(), // 'cambridge' | 'cbse'
-  name: text("name").notNull(),
-  config: jsonb("config").notNull().default({}),
-  createdAt: createdAt(),
-});
-
-// Account. Shared with Starkhorn (F3, Google OAuth). Board-agnostic; a user
-// participates in boards via membership. NOT tenant-scoped.
-export const appUser = pgTable("app_user", {
-  id: id(),
-  email: text("email").notNull().unique(),
-  name: text("name"),
-  createdAt: createdAt(),
-});
-
-export const membership = pgTable(
-  "membership",
+export const board = pgTable(
+  "board",
   {
     id: id(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => appUser.id),
-    boardId: uuid("board_id")
-      .notNull()
-      .references(() => board.id),
-    role: text("role").notNull(),
-    /**
-     * Is this role ACTUALLY switched on, or is the person waiting on us?
-     *
-     * Added the session the landing persona started setting the role at signup.
-     * Before that, role could only come from an admin, so holding one WAS being
-     * enabled. Now anyone can pick "Parent" or "Tutor" on the way in — and a
-     * self-assigned tutor with no further check would have authoring access,
-     * which is how content gets made. Role says what you claim to be; this says
-     * whether we agreed.
-     *
-     * DEFAULT true, deliberately: every membership that exists before this
-     * column did was admin-minted, so defaulting false would lock out every
-     * current tutor, parent and admin on deploy. New self-assigned non-student
-     * rows are written `false` explicitly (services/membership.ts).
-     *
-     * Students are never gated — `enabled` is always true for them. There is no
-     * one to wait for.
-     */
-    enabled: boolean("enabled").notNull().default(true),
+    slug: text("slug").notNull().unique(), // 'cambridge' | 'cbse' — RLS/withBoard key
+    name: text("name").notNull(),
+    config: jsonb("config").notNull().default({}),
+    // ID-0 toggle 1 (founder-ratified 2026-07-21): a board can be switched off
+    // without being deleted. `is_active` was never a column; this is its
+    // first-class replacement. text + CHECK, house style (M23: no pg enums).
+    status: text("status").notNull().default("active"), // 'active' | 'inactive'
+    // Content/config revision counter for this board (toggle 1). Bump on a
+    // content/config change so consumers can compare + invalidate.
+    version: integer("version").notNull().default(1),
     createdAt: createdAt(),
   },
-  // ONE row per (user, board, ROLE) — S123, the founder's multi-profile call:
-  // "email X user_id X user_type should be unique … same email can login to all
-  // profiles but content visible will be different".
-  //
-  // 🔴 THIS RE-WIDENS THE S109 UNIQUE, AND S109'S REASON FOR NARROWING IT WAS
-  // REAL. Its comment (kept here because it is the hazard, not history): a user
-  // holding several roles on one board meant `requireMembership` "picked
-  // whichever row came back first (no ORDER BY)". That is still how the query
-  // reads — so widening this ALONE would make a person's role nondeterministic,
-  // flickering between their student and tutor rows at the planner's whim.
-  //
-  // What makes it safe is that role is no longer INFERRED. The active profile
-  // travels with the request (`x-profile`, the sibling of `x-board`), and every
-  // membership read now filters on it. S109 was right that a one-row-per-board
-  // answer must be unambiguous; it got there by forbidding the second row, and
-  // we get there by asking which one you mean. Removing the role filter from
-  // any of those three queries re-opens the exact bug S109 closed.
-  //
-  // Role is text + CHECK (house style, M23: no pg enums).
+  (t) => [check("board_status_check", sql`${t.status} IN ('active','inactive')`)],
+);
+
+/**
+ * The PROFILE — the unit of identity (ID-0, S127 redesign). One row per
+ * (email × phone × user_type): the same person's email can hold up to FOUR
+ * distinct profiles (student/tutor/parent/admin), each its own id, each its own
+ * spine of evidence. This ABSORBS the old `membership` table — `user_type`
+ * lives here now, not on a per-board row. GLOBAL, never tenant-scoped
+ * (decision 5): board lives on the role tables (student.board_id, tutor.boards[]).
+ *
+ * Uniqueness is NULLS NOT DISTINCT so the phone-null login window (decision 1:
+ * app_user is created at login with phone NULL, filled at onboarding) still
+ * enforces ONE row per (email, user_type) — Postgres's default treats two NULL
+ * phones as distinct and would let a second login mint a duplicate profile.
+ */
+export const appUser = pgTable(
+  "app_user",
+  {
+    id: id(),
+    email: text("email").notNull(),
+    name: text("name"),
+    // NULL until onboarding captures it (decision 1). Part of the profile key.
+    phone: text("phone"),
+    // student | tutor | parent | admin. The 4th (admin) preserves the "DB role
+    // AND whitelist" gate (contracts.ts ADMIN_EMAILS). text + CHECK (M23).
+    userType: text("user_type").notNull(),
+    // 7-char alphanumeric, minted per profile at signup (founder ask 2026-07-21;
+    // generateReferralCode in contracts.ts). UNIQUE. Nullable at the DDL level so
+    // the reshape migration lands on pre-cutover rows; the write path
+    // (login-upsert, ID-1) always sets it, and the cutover mints one for the
+    // preserved founder admin. Tighten to NOT NULL once every row carries one.
+    referralCode: text("referral_code").unique(),
+    createdAt: createdAt(),
+  },
   (t) => [
-    unique().on(t.userId, t.boardId, t.role),
-    check("membership_role_check", sql`${t.role} IN ('student','tutor','parent','admin')`),
+    unique("app_user_email_phone_type_uq")
+      .on(t.email, t.phone, t.userType)
+      .nullsNotDistinct(),
+    check(
+      "app_user_user_type_check",
+      sql`${t.userType} IN ('student','tutor','parent','admin')`,
+    ),
   ],
 );
 
-// `whitelist` (the access gate) lived here until Slice F (S113), which DROPPED
-// the table (migration 0034). Slices A–E removed every reader and writer first:
-// the gate is open, anyone who signs in is a student (services/membership.ts),
-// roles above student are set by `grantRole` from the admin People surface.
-// The table's incidental unique(board,email) is replaced by membership's own
-// unique(user,board) — see the comment on that table.
+// ── Per-role attribute tables + per-student character instances (ID-0). ──
+// Keyed user_id → app_user.id (1:1 with the profile). email/name/phone live
+// ONLY on app_user; these hold role-specific fields. ON DELETE CASCADE: the
+// profile row is the identity, the role row is its detail. The old `membership`
+// table is ABSORBED into app_user.user_type (see appUser above) and DROPPED.
 
-export const parentChild = pgTable(
-  "parent_child",
+// The onboarding character — a per-student INSTANCE (no shared catalog), the
+// AI persona the student learns with, carrying voice/chat model routing. GLOBAL
+// (scoped transitively via the student that owns it).
+export const hero = pgTable("hero", {
+  heroId: uuid("hero_id").primaryKey().defaultRandom(),
+  heroLevel: integer("hero_level").notNull().default(0),
+  heroName: text("hero_name"),
+  heroType: text("hero_type"),
+  heroRef: text("hero_ref"), // 'marvel' | 'dc' | …
+  status: text("status").notNull().default("active"),
+  // Text tag for now (toggle 4); a `persona` config table is a later slice.
+  personaId: text("persona_id"),
+  defaultVoiceModel: text("default_voice_model"),
+  defaultChatModel: text("default_chat_model"),
+  createdAt: createdAt(),
+});
+
+// The companion — same per-student-instance shape as hero.
+export const pet = pgTable("pet", {
+  petId: uuid("pet_id").primaryKey().defaultRandom(),
+  petLevel: integer("pet_level").notNull().default(0),
+  petName: text("pet_name"),
+  petType: text("pet_type"),
+  petRef: text("pet_ref"),
+  status: text("status").notNull().default("active"),
+  personaId: text("persona_id"),
+  defaultVoiceModel: text("default_voice_model"),
+  defaultChatModel: text("default_chat_model"),
+  createdAt: createdAt(),
+});
+
+// Tutor profile detail. GLOBAL — a tutor works across MANY boards, held in the
+// `boards` json array (decision 5), so there is no single board_id to RLS on.
+export const tutor = pgTable(
+  "tutor",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    boards: jsonb("boards").notNull().default([]), // board ids the tutor serves
+    level: integer("level").notNull().default(0),
+    qualifications: text("qualifications"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    status: text("status").notNull().default("active"),
+    createdAt: createdAt(),
+  },
+  (t) => [check("tutor_status_check", sql`${t.status} IN ('active','inactive')`)],
+);
+
+// Parent profile detail. GLOBAL. The relationship to a student is the student's
+// `parent_id` pointer (below), not a column here.
+export const parent = pgTable(
+  "parent",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    relation: text("relation").notNull().default("guardian"), // mother|father|guardian|…
+    planTier: text("plan_tier"),
+    createdAt: createdAt(),
+  },
+  (t) => [check("parent_status_check", sql`${t.status} IN ('active','inactive')`)],
+);
+
+// `whitelist` (the access gate) lived here until Slice F (S113), which DROPPED
+// the table (migration 0034). The gate is open: anyone who signs in is a
+// student; roles above student are set from the admin People surface.
+
+// Student profile detail — the ONE identity table that is tenant-scoped
+// (decision 5): `board_id` is the RLS key. Carries the single-pointer
+// relationships that REPLACE tutor_student / parent_child: one tutor + one
+// parent per student BY CONSTRUCTION (a tutor/parent still has many students).
+// The old join tables are DROPPED; the same-email resolver bug is gone because
+// admin now assigns by profile id via pickers, never by resolving email → role.
+export const student = pgTable(
+  "student",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id), // RLS key
+    age: integer("age"),
+    class: text("class").notNull(), // e.g. '9' | '10'
+    // Single-pointer relationships (→ app_user.id). Nullable: a student may be
+    // unlinked. Server-validated on write; the admin LINK picker only offers
+    // real board tutors/parents. `tutor_id IS NULL` == "unlinked" — the picker's
+    // filter (ID-2).
+    tutorId: uuid("tutor_id").references(() => appUser.id),
+    parentId: uuid("parent_id").references(() => appUser.id),
+    school: text("school"),
+    pronoun: text("pronoun"), // 'he' | 'she' | … (S92), moved here (toggle 5)
+    heroId: uuid("hero_id").references(() => hero.heroId),
+    petId: uuid("pet_id").references(() => pet.petId),
+    status: text("status").notNull().default("active"),
+    onboardingAt: timestamp("onboarding_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [check("student_status_check", sql`${t.status} IN ('active','inactive')`)],
+);
+
+// tutor_assignment — append-only handover ledger (ID-0, founder ask). On a tutor
+// switch/remove the prior row is closed with a FROZEN progress_snapshot
+// ({ mastery, insights, metrics } to the switch), so the FORMER tutor keeps a
+// read-only point-in-time view; progress is never lost. `student.tutor_id` stays
+// the LIVE pointer. Tenant-scoped (board_id + RLS). Mirrors report.snapshot
+// discipline: a frozen description, never a live log. Parent handovers have no
+// history (toggle 9). student_id / tutor_id → app_user.id (the profiles).
+export const tutorAssignment = pgTable(
+  "tutor_assignment",
   {
     id: id(),
     boardId: uuid("board_id")
       .notNull()
-      .references(() => board.id),
-    parentId: uuid("parent_id")
-      .notNull()
-      .references(() => appUser.id),
+      .references(() => board.id), // RLS key
     studentId: uuid("student_id")
       .notNull()
       .references(() => appUser.id),
-    createdAt: createdAt(),
-  },
-  // boardId is IN the unique (S109) — it was missing, unlike tutor_student's
-  // (board, tutor, student) below, so a parent with the same child on two
-  // boards collided and the second link silently vanished.
-  (t) => [unique().on(t.boardId, t.parentId, t.studentId)],
-);
-
-export const tutorStudent = pgTable(
-  "tutor_student",
-  {
-    id: id(),
-    boardId: uuid("board_id")
-      .notNull()
-      .references(() => board.id),
     tutorId: uuid("tutor_id")
       .notNull()
       .references(() => appUser.id),
-    studentId: uuid("student_id")
+    status: text("status").notNull().default("active"), // 'active' | 'ended'
+    assignedAt: timestamp("assigned_at", { withTimezone: true })
       .notNull()
-      .references(() => appUser.id),
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }), // null while active
+    progressSnapshot: jsonb("progress_snapshot"), // frozen at end
+    endedReason: text("ended_reason"),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.boardId, t.tutorId, t.studentId)],
+  (t) => [
+    check("tutor_assignment_status_check", sql`${t.status} IN ('active','ended')`),
+    index("idx_tutor_assignment_student").on(t.studentId),
+    index("idx_tutor_assignment_tutor").on(t.tutorId),
+  ],
 );
 
 // ───────────────────────── 1b. Auth (Better Auth) ─────────────────────────
@@ -1282,68 +1371,51 @@ export const attemptImage = pgTable(
 // the flow resumable — close the tab at beat 4, come back to beat 4. The
 // alternative (buffer client-side, commit once at the end) loses everything on
 // a refresh, which for a child on a phone is the common case, not the edge.
+// Onboarding — a STATE-MACHINE HEADER now (ID-0), not an answer bag. The answers
+// land on their real homes at onboarding time (ID-3): phone → app_user.phone;
+// class/school/pronoun/hero/pet → student. GLOBAL: keyed on user_id
+// (globally-unique app_user.id). Board isn't known until the student picks one
+// mid-flow, so there is no board_id to scope on — onboarding drops OUT of RLS
+// (was tenant-scoped pre-ID-0). Per-transition audit lives in onboarding_flow_log.
 export const onboarding = pgTable(
   "onboarding",
   {
     id: id(),
-    boardId: uuid("board_id")
-      .notNull()
-      .references(() => board.id),
     userId: uuid("user_id")
       .notNull()
-      .references(() => appUser.id),
+      .references(() => appUser.id, { onDelete: "cascade" }),
     // text + CHECK, never a pg enum (M23 — see the header conventions).
     status: text("status").notNull().default("in_progress"),
-    // The step id from onboarding.copy.ts — the resume point, not an index, so
-    // reordering or inserting a beat can't silently teleport a half-done user.
-    currentStep: text("current_step").notNull(),
-    // The answers. `grade` is the ONLY one with a consumer waiting (subject.grade
-    // filtering); the rest are stored for when there IS something to do with
-    // them. `phone` is child PII and optional by deliberate design — see the
-    // slice notes on DPDP + verifiable parental consent.
-    grade: text("grade"),
-    // S92 — how Olórin refers to the student to a tutor/parent: 'he' | 'she' |
-    // 'name' (use their first name). Asked on the same screen as grade, by the
-    // `about_you` beat. NOT a gender field — see the PRONOUNS contract for why
-    // that distinction is load-bearing rather than cosmetic.
-    pronoun: text("pronoun"),
-    // ⚠️ NO LONGER ASKED (S90, founder call) — `school` is not in
-    // ONBOARDING_STEPS any more. The column stays because it holds real
-    // answers and dropping it buys nothing; expect it NULL on every row
-    // written from S90 on. Do not add it back to the flow without a consumer.
-    school: text("school"),
-    // S91 — now a CLOSED SET of ids (FAV_CHARACTERS), not free text. Rows
-    // written before S91 hold whatever the student typed ("Interstellar -
-    // Cooper", "No movie"); rows from S91 on hold an id ("iron_man"). Read it
-    // through the copy file's lookup, which tolerates both by falling back.
-    favCharacter: text("fav_character"),
-    // ⚠️ NO LONGER ASKED (S91, founder call) — the fun-fact pair is not in
-    // ONBOARDING_STEPS any more; `pet` took its slot. Same treatment as
-    // `school`: the columns stay because they hold real S89/S90 answers and
-    // dropping them buys nothing. Expect both NULL on every row from S91 on.
-    funFactAbout: text("fun_fact_about"),
-    funFact: text("fun_fact"),
-    // S91 — the pet the student chose (founder). Either a PETS id ('owl') or
-    // free text when they picked "something else" — which is exactly why there
-    // is no CHECK here. isKnownPet() in contracts is the discriminator, and it
-    // is what decides whether the pet ARRIVES on the loader or gets Pikachu's
-    // "2-3 dayssss" line. A custom value is the one free-text echo left in the
-    // flow, so the FE routes it through canEcho before repeating it.
-    pet: text("pet"),
-    phone: text("phone"),
-    // Spelled out rather than createdAt(): that helper emits a column literally
-    // named created_at, and started_at/completed_at is the pair that says what
-    // this row actually tracks.
+    // The current step id (from onboarding.copy.ts) — the resume point, not an
+    // index, so reordering a beat can't teleport a half-done user.
+    state: text("state").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
+    endAt: timestamp("end_at", { withTimezone: true }), // null until completed
+    createdAt: createdAt(),
   },
   (t) => [
-    unique().on(t.userId, t.boardId),
+    unique().on(t.userId),
     check("onboarding_status", sql`${t.status} IN ('in_progress', 'completed')`),
   ],
 );
+
+// onboarding_flow_log — append-only, one row per state transition (ID-0). The
+// audit trail behind the header above.
+export const onboardingFlowLog = pgTable("onboarding_flow_log", {
+  id: id(),
+  onboardingId: uuid("onboarding_id")
+    .notNull()
+    .references(() => onboarding.id, { onDelete: "cascade" }),
+  state: text("state").notNull(),
+  status: text("status").notNull(),
+  failureReason: text("failure_reason"),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 // ───────────────────────── AI forensics ─────────────────────────
 
@@ -1443,9 +1515,12 @@ export const aiCallLog = pgTable(
  * directions now fail loudly instead of silently.
  */
 export const TENANT_SCOPED_TABLES = [
-  "membership",
-  "parent_child",
-  "tutor_student",
+  // ID-0 identity redesign: `student` (board_id) + `tutor_assignment` (board_id)
+  // are the only tenant-scoped identity tables. app_user/tutor/parent/hero/pet/
+  // onboarding are GLOBAL (decision 5); membership/parent_child/tutor_student are
+  // DROPPED. The census in probe_boot reconciles this list against pg_class.
+  "student",
+  "tutor_assignment",
   "subject",
   "chapter",
   "topic",
@@ -1470,7 +1545,6 @@ export const TENANT_SCOPED_TABLES = [
   "pace_plan",
   "voice_session",
   "attempt_image", // Slice Q3 — subjective answer photos (tenant-scoped + RLS)
-  "onboarding", // Slice ONB-1 — the conversational welcome (tenant-scoped + RLS)
   // Slice S2R-2 — the Stage-2 sitting. Holds a student's drafts + (soon) the
   // tutor's chat: student data, so RLS is not optional (M34).
   "assessment_session",
@@ -1489,11 +1563,19 @@ export const TENANT_SCOPED_TABLES = [
 export const ALL_TABLES = [
   "board",
   "app_user",
+  // GLOBAL identity role/instance/flow tables (ID-0, decision 5 — not scoped):
+  "tutor",
+  "parent",
+  "hero",
+  "pet",
+  "onboarding",
+  "onboarding_flow_log",
+  // Better Auth (global):
   "users",
   "sessions",
   "accounts",
   "verifications",
-  ...TENANT_SCOPED_TABLES,
+  ...TENANT_SCOPED_TABLES, // includes student + tutor_assignment
   "content_version",
   "upload_token", // Slice Q3 — GLOBAL credential (no RLS); needs the app-role grant
   "ai_call_log", // AI forensics — GLOBAL (no RLS, see its comment); needs the grant

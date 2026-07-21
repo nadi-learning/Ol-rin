@@ -34,11 +34,10 @@ import {
   board,
   chapter,
   masteryState,
-  membership,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -100,10 +99,12 @@ async function main() {
   const SC = await withBoard(P.id, (tx) => grantRole(tx, { email: emailSC, name: "Stu Cold", board: P, role: "student" }));
   const userT = T.user.id, userS1 = S1.user.id, userS2 = S2.user.id, userSC = SC.user.id;
 
-  // link T → S1 and T → SC (S2 deliberately UNLINKED)
+  // Operational `student` rows (ID-4 fixture). Link T → S1 and T → SC via
+  // `student.tutor_id`; S2 UNLINKED (tutor_id null).
   await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userT, studentId: userS1 });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userT, studentId: userSC });
+    await tx.insert(student).values({ userId: userS1, boardId: P.id, class: "9", tutorId: userT });
+    await tx.insert(student).values({ userId: userS2, boardId: P.id, class: "9" });
+    await tx.insert(student).values({ userId: userSC, boardId: P.id, class: "9", tutorId: userT });
   });
 
   // Mastery for S1: A,B (topic1) + D,E (topic2); C left UNTAUGHT.
@@ -199,12 +200,11 @@ async function main() {
   // ── cleanup (FK-safe order) ──
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   for (const email of [emailT, emailS1, emailS2, emailSC]) {
     await db.delete(appUser).where(eq(appUser.email, email));

@@ -31,7 +31,7 @@ import {
   contentVersion,
   appUser,
   eventLog,
-  membership,
+  student as studentTable,
   subTopic,
   subject,
   topic,
@@ -114,7 +114,7 @@ async function main() {
   // a student to attribute the recorded checks to (event_log.studentId FK).
   const [student] = await db
     .insert(appUser)
-    .values({ email: `prq-s-${tag}@example.com`, name: "Probe S" })
+    .values({ email: `prq-s-${tag}@example.com`, name: "Probe S", userType: "student" })
     .returning();
   if (!student) throw new Error("student seed failed");
 
@@ -254,7 +254,7 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(studentTable).where(eq(studentTable.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.id, student.id));

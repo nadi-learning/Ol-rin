@@ -21,9 +21,8 @@ import {
   authoringChat,
   board,
   chapter,
-  membership,
+  student,
   subject,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -83,7 +82,7 @@ async function main() {
   const userT = T.user.id, userS1 = S1.user.id, userS2 = S2.user.id;
 
   await withBoard(P.id, (tx) =>
-    tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userT, studentId: userS1 }),
+    tx.insert(student).values({ userId: userS1, boardId: P.id, class: "9", tutorId: userT }),
   );
 
   // Seed chats: S1 has an OLDER Gemini/Mixtures chat + a NEWER Claude/Atoms chat;
@@ -153,10 +152,9 @@ async function main() {
   // ── cleanup ──
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(authoringChat).where(eq(authoringChat.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailT));
   await db.delete(appUser).where(eq(appUser.email, emailS1));

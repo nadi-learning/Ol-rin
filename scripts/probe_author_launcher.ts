@@ -30,10 +30,10 @@ import {
   masteryState,
   observation,
   question,
+  student,
   subject,
   subTopic,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -70,9 +70,9 @@ async function main() {
   const [Q] = await db.insert(board).values({ slug: `alaunch-q-${tag}`, name: "Probe Q" }).returning();
   if (!P || !Q) throw new Error("board seed failed");
 
-  const [tut] = await db.insert(appUser).values({ email: `alaunch-tut-${tag}@example.com`, name: "Tutor" }).returning();
-  const [stuA] = await db.insert(appUser).values({ email: `alaunch-a-${tag}@example.com`, name: "Student A" }).returning();
-  const [stuU] = await db.insert(appUser).values({ email: `alaunch-u-${tag}@example.com`, name: "Student U (unlinked)" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `alaunch-tut-${tag}@example.com`, name: "Tutor", userType: "tutor" }).returning();
+  const [stuA] = await db.insert(appUser).values({ email: `alaunch-a-${tag}@example.com`, name: "Student A", userType: "student" }).returning();
+  const [stuU] = await db.insert(appUser).values({ email: `alaunch-u-${tag}@example.com`, name: "Student U (unlinked)", userType: "student" }).returning();
   if (!tut || !stuA || !stuU) throw new Error("app_user seed failed");
 
   // Fixture under P: TWO chapters (Motion ord 1, Energy ord 2), each with a
@@ -90,7 +90,7 @@ async function main() {
     const [tpB] = await tx.insert(topic).values({ boardId: P.id, chapterId: chB!.id, slug: "ke", name: "Kinetic energy", ordinal: 1 }).returning();
     const [subB1] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tpB!.id, slug: "ke-calc", name: "Computing KE", ordinal: 1 }).returning();
     await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: subA1!.id, axis: "conceptual", code: "C1", description: "Explains acceleration as rate of change of velocity." });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stuA.id });
+    await tx.insert(student).values({ userId: stuA.id, boardId: P.id, class: "9", tutorId: tut.id });
     await tx.insert(question).values({ boardId: P.id, subTopicId: subA1!.id, axis: "conceptual", kind: "subjective", stem: "Canonical A", referenceAnswer: "ref", ordinal: 0, source: "seed" });
     await tx.insert(question).values({ boardId: P.id, subTopicId: subB1!.id, axis: "procedural", kind: "subjective", stem: "Canonical B", referenceAnswer: "ref", ordinal: 0, source: "seed" });
     await tx.insert(masteryState).values({ boardId: P.id, studentId: stuA.id, subTopicId: subA1!.id, conceptualLevel: 3, proceduralLevel: 2, description: "Solid on the idea; shaky on units.", log: "internal" });
@@ -236,7 +236,7 @@ async function main() {
     await tx.delete(observation).where(eq(observation.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(learningObjective).where(eq(learningObjective.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));

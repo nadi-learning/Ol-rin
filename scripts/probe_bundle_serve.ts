@@ -23,7 +23,7 @@ import {
   board,
   contentUnit,
   contentVersion,
-  membership,
+  student,
   users,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
@@ -128,7 +128,10 @@ async function main() {
   // content is on A) from check 2.
   const cookie = await signUpCookie(email);
   check("dev sign-up returned a session cookie", cookie.length > 0);
-  await withBoard(bA.id, (tx) => grantRole(tx, { email, name: "Bnd", board: bA, role: "student" }));
+  // grantRole mints only the profile shell (ID-4); the operational student row —
+  // onboarding's output — is what the bundle gate (requireMembership) needs.
+  const M = await withBoard(bA.id, (tx) => grantRole(tx, { email, name: "Bnd", board: bA, role: "student" }));
+  await withBoard(bA.id, (tx) => tx.insert(student).values({ userId: M.user.id, boardId: bA.id, class: "9" }));
 
   // 1. member of A → bundle under board=A → 200 + JS + correct bytes
   const okA = await getBundle(versionId, slugA, cookie);
@@ -142,8 +145,11 @@ async function main() {
   check(`non-member → 403 (got ${noMem.status})`, noMem.status === 403);
   check("403 body NO_MEMBERSHIP", noMem.body.includes("NO_MEMBERSHIP"));
 
-  // 3. now a member of B too, but A's version under board=B → RLS hides A's unit → 404
-  await withBoard(bB.id, (tx) => grantRole(tx, { email, name: "Bnd", board: bB, role: "student" }));
+  // 3. MOVE the student to B (single-board model: one student = one board, so
+  // "member of B" means their operational row is now on B, not A), then read A's
+  // version under board=B → RLS hides A's unit → 404.
+  await withBoard(bA.id, (tx) => tx.delete(student).where(eq(student.userId, M.user.id)));
+  await withBoard(bB.id, (tx) => tx.insert(student).values({ userId: M.user.id, boardId: bB.id, class: "9" }));
   const crossBoard = await getBundle(versionId, slugB, cookie);
   check(`member of B but A's content under board=B → 404 (got ${crossBoard.status})`, crossBoard.status === 404);
   check("404 body VERSION_NOT_FOUND", crossBoard.body.includes("VERSION_NOT_FOUND"));
@@ -157,8 +163,8 @@ async function main() {
   check(`unknown board → 404 (got ${badBoard.status})`, badBoard.status === 404);
 
   // cleanup
-  await withBoard(bA.id, (tx) => tx.delete(membership).where(eq(membership.boardId, bA.id)));
-  await withBoard(bB.id, (tx) => tx.delete(membership).where(eq(membership.boardId, bB.id)));
+  await withBoard(bA.id, (tx) => tx.delete(student).where(eq(student.boardId, bA.id)));
+  await withBoard(bB.id, (tx) => tx.delete(student).where(eq(student.boardId, bB.id)));
   await withBoard(bA.id, async (tx) => {
     await tx.delete(contentVersion).where(eq(contentVersion.id, versionId));
     await tx.delete(contentUnit).where(eq(contentUnit.boardId, bA.id));

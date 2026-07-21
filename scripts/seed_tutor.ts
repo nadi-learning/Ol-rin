@@ -20,7 +20,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board, tutorStudent } from "@b2c/kernel/schema";
+import { appUser, board, student } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { grantRole } from "../src/services/membership";
@@ -56,16 +56,18 @@ async function main() {
       role: "tutor",
     });
 
-    // 2. resolve the student's app_user (global). Must already exist — they're
-    // created on first login / by the practice seed flow.
-    const [student] = await tx
+    // 2. resolve the student PROFILE (email + user_type='student' — one email may
+    // hold several profiles now). Must already exist — created on first login /
+    // by onboarding. The operational `student` row is minted by onboarding (ID-3),
+    // so a student who has picked a board is the one we can link.
+    const [studentProfile] = await tx
       .select({ id: appUser.id })
       .from(appUser)
-      .where(eq(appUser.email, STUDENT_EMAIL))
+      .where(and(eq(appUser.email, STUDENT_EMAIL), eq(appUser.userType, "student")))
       .limit(1);
-    if (!student) {
+    if (!studentProfile) {
       console.warn(
-        `[seed:tutor] student '${STUDENT_EMAIL}' has no app_user yet — log in as the student once (dev login) first, then re-run. The tutor role is granted; the link is skipped.`,
+        `[seed:tutor] student '${STUDENT_EMAIL}' has no student profile yet — log in as the student once (dev login) first, then re-run. The tutor role is granted; the link is skipped.`,
       );
       console.log(
         `[seed:tutor] cbse / tutor=${TUTOR_EMAIL} (role=tutor, user=${tutor.user.id}). Link to ${STUDENT_EMAIL}: SKIPPED (student not found).`,
@@ -73,20 +75,23 @@ async function main() {
       return;
     }
 
-    // 3. link tutor → student (idempotent on the unique (board,tutor,student)).
-    await tx
-      .insert(tutorStudent)
-      .values({
-        boardId: b.id,
-        tutorId: tutor.user.id,
-        studentId: student.id,
-      })
-      .onConflictDoNothing({
-        target: [tutorStudent.boardId, tutorStudent.tutorId, tutorStudent.studentId],
-      });
+    // 3. link tutor → student via the single pointer `student.tutor_id` (ID-4 —
+    // tutor_student is dropped). RLS-scoped to cbse; a no-op if the student has no
+    // operational row on this board yet (they haven't onboarded).
+    const linked = await tx
+      .update(student)
+      .set({ tutorId: tutor.user.id })
+      .where(eq(student.userId, studentProfile.id))
+      .returning({ userId: student.userId });
+    if (linked.length === 0) {
+      console.warn(
+        `[seed:tutor] student '${STUDENT_EMAIL}' has no operational \`student\` row on cbse yet (not onboarded). Tutor role granted; link SKIPPED.`,
+      );
+      return;
+    }
 
     console.log(
-      `[seed:tutor] cbse / tutor=${TUTOR_EMAIL} (role=tutor) → student=${STUDENT_EMAIL}. tutor_id=${tutor.user.id} student_id=${student.id}`,
+      `[seed:tutor] cbse / tutor=${TUTOR_EMAIL} (role=tutor) → student=${STUDENT_EMAIL}. tutor_id=${tutor.user.id} student_id=${studentProfile.id}`,
     );
   });
 

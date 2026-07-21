@@ -21,13 +21,12 @@ import {
   appUser,
   board,
   chapter,
-  membership,
   question,
   questionImage,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -87,14 +86,12 @@ async function main() {
   if (!P) throw new Error("board seed failed");
 
   const stuEmail = `imr-stu-${tag}@example.com`;
-  const [stu] = await db.insert(appUser).values({ email: stuEmail, name: "Stu" }).returning();
-  const [tut] = await db.insert(appUser).values({ email: `imr-tut-${tag}@example.com`, name: "Tut" }).returning();
+  const [stu] = await db.insert(appUser).values({ email: stuEmail, name: "Stu", userType: "student" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `imr-tut-${tag}@example.com`, name: "Tut", userType: "tutor" }).returning();
   if (!stu || !tut) throw new Error("app_user seed failed");
 
   const fx = await withBoard(P.id, async (tx: Tx) => {
-    await tx.insert(membership).values({ userId: stu.id, boardId: P.id, role: "student" });
-    await tx.insert(membership).values({ userId: tut.id, boardId: P.id, role: "tutor" });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stu.id });
+    await tx.insert(student).values({ userId: stu.id, boardId: P.id, class: "9", tutorId: tut.id });
     const [subj] = await tx.insert(subject).values({ boardId: P.id, slug: "math", name: "Mathematics", grade: "IGCSE" }).returning();
     const [chap] = await tx.insert(chapter).values({ boardId: P.id, subjectId: subj!.id, slug: "geo", name: "Geometry", ordinal: 1 }).returning();
     const [tp] = await tx.insert(topic).values({ boardId: P.id, chapterId: chap!.id, slug: "tri", name: "Triangles", ordinal: 1 }).returning();
@@ -160,12 +157,11 @@ async function main() {
     await tx.execute(sql`delete from attempt where board_id = ${P.id}`);
     await tx.execute(sql`delete from practice_session where board_id = ${P.id}`);
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, stuEmail));
   await db.delete(appUser).where(eq(appUser.email, `imr-tut-${tag}@example.com`));

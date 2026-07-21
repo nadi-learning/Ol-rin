@@ -131,8 +131,8 @@ async function main() {
 
   const emailA = `vr-a-${tag}@example.com`;
   const emailB = `vr-b-${tag}@example.com`;
-  const [stuA] = await db.insert(appUser).values({ email: emailA, name: "Stu A" }).returning();
-  const [stuB] = await db.insert(appUser).values({ email: emailB, name: "Stu B" }).returning();
+  const [stuA] = await db.insert(appUser).values({ email: emailA, name: "Stu A", userType: "student" }).returning();
+  const [stuB] = await db.insert(appUser).values({ email: emailB, name: "Stu B", userType: "student" }).returning();
   if (!stuA || !stuB) throw new Error("app_user seed failed");
 
   // Fixture under P: a slide_module content_version whose manifest slide-1 has

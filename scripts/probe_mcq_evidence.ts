@@ -113,7 +113,7 @@ async function main() {
 
   const [student] = await db
     .insert(appUser)
-    .values({ email: `pmcq-s-${tag}@example.com`, name: "MCQ S" })
+    .values({ email: `pmcq-s-${tag}@example.com`, name: "MCQ S", userType: "student" })
     .returning();
   if (!student) throw new Error("student seed failed");
 

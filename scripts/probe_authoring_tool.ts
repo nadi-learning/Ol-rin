@@ -27,10 +27,10 @@ import {
   observation,
   practiceSession,
   question,
+  student,
   subject,
   subTopic,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -78,8 +78,8 @@ async function main() {
   const [Q] = await db.insert(board).values({ slug: `atool-q-${tag}`, name: "Probe Q" }).returning();
   if (!P || !Q) throw new Error("board seed failed");
 
-  const [tut] = await db.insert(appUser).values({ email: `atool-tut-${tag}@example.com`, name: "Tutor" }).returning();
-  const [stuA] = await db.insert(appUser).values({ email: `atool-a-${tag}@example.com`, name: "Student A" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `atool-tut-${tag}@example.com`, name: "Tutor", userType: "tutor" }).returning();
+  const [stuA] = await db.insert(appUser).values({ email: `atool-a-${tag}@example.com`, name: "Student A", userType: "student" }).returning();
   if (!tut || !stuA) throw new Error("app_user seed failed");
 
   // Fixture under P: chapter Motion with 2 sub_topics + LOs on sub_topic 1, a
@@ -96,7 +96,7 @@ async function main() {
     await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Canonical Q", referenceAnswer: "ref", ordinal: 0, source: "seed" });
     await tx.insert(masteryState).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, conceptualLevel: 3, proceduralLevel: 2, description: "Solid on rate-of-change; shaky converting units under time pressure.", log: "internal" });
     await tx.insert(observation).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, axis: "procedural", observationLevel: 2, reasoning: "Set up Δv/Δt correctly but dropped the s→ms conversion.", source: "stage1_scorer", calibrationFlag: "over" });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stuA.id });
+    await tx.insert(student).values({ userId: stuA.id, boardId: P.id, class: "9", tutorId: tut.id });
     return { chapterId: chap!.id, subTopicId: st!.id, allowedSubTopicIds: [st!.id, st2!.id] };
   });
 
@@ -214,7 +214,7 @@ async function main() {
     await tx.delete(observation).where(eq(observation.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(learningObjective).where(eq(learningObjective.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));

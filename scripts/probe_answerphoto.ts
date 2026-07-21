@@ -34,13 +34,12 @@ import {
   attemptImage,
   board,
   chapter,
-  membership,
   practiceSession,
   question,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
   uploadToken,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
@@ -144,7 +143,12 @@ async function main() {
   // this route (they use the owner one), a non-tutor/unlinked caller gets 404.
   const emailT = `apt-t-${tag}@example.com`;
   const T = await withBoard(P.id, (tx) => grantRole(tx, { email: emailT, name: "T", board: P, role: "tutor" }));
-  await withBoard(P.id, (tx) => tx.insert(tutorStudent).values({ boardId: P.id, tutorId: T.user.id, studentId: userW }));
+  // ID-4: the tutor↔student link is `student.tutor_id`. W needs an operational
+  // `student` row (grantRole minted only the shell) pointing at tutor T. The
+  // owner-scoped A-series above needs no student row — owner check + RLS suffice.
+  await withBoard(P.id, (tx) =>
+    tx.insert(student).values({ userId: userW, boardId: P.id, class: "9", tutorId: T.user.id }),
+  );
   const t1 = await call(() => resolveTutorAnswerPhotoBytes({ imageId: imgId, boardSlug: P.slug, email: emailT }));
   check("T1 linked tutor → 200, bytes round-trip", t1.status === 200 && t1.bytes?.[0] === 137 && t1.mime === "image/png");
   const t2 = await call(() => resolveTutorAnswerPhotoBytes({ imageId: imgId, boardSlug: P.slug, email: emailX }));
@@ -189,20 +193,17 @@ async function main() {
   // ── cleanup (FK-safe order + stored bytes) ──
   const tokens = await db.select({ token: uploadToken.token }).from(uploadToken).where(eq(uploadToken.boardId, P.id));
   await withBoard(P.id, async (tx: Tx) => {
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
     await tx.delete(attemptImage).where(eq(attemptImage.boardId, P.id));
     await tx.delete(attempt).where(eq(attempt.boardId, P.id));
     await tx.delete(uploadToken).where(eq(uploadToken.boardId, P.id));
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
+    // student row FKs to app_user (user_id / tutor_id) — drop before appUser below.
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
-  });
-  await withBoard(Q.id, async (tx: Tx) => {
-    await tx.delete(membership).where(eq(membership.boardId, Q.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.email, emailX));

@@ -44,11 +44,11 @@ import {
   masteryState,
   observation,
   schedulingState,
+  student,
   subTopic,
   subject,
   topic,
   transcript,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -106,9 +106,9 @@ async function main() {
   const tutorEmail = `s2-tut-${tag}@example.com`;
   const stuEmail = `s2-stu-${tag}@example.com`;
   const otherEmail = `s2-other-${tag}@example.com`;
-  const [tut] = await db.insert(appUser).values({ email: tutorEmail, name: "Tutor" }).returning();
-  const [stu] = await db.insert(appUser).values({ email: stuEmail, name: "Stu" }).returning();
-  const [other] = await db.insert(appUser).values({ email: otherEmail, name: "Other" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: tutorEmail, name: "Tutor", userType: "tutor" }).returning();
+  const [stu] = await db.insert(appUser).values({ email: stuEmail, name: "Stu", userType: "student" }).returning();
+  const [other] = await db.insert(appUser).values({ email: otherEmail, name: "Other", userType: "student" }).returning();
   if (!tut || !stu || !other) throw new Error("app_user seed failed");
 
   // fixture under P: spine + LOs + tutor_student link + observations on stCold.
@@ -126,7 +126,7 @@ async function main() {
     await tx.insert(learningObjective).values({ boardId: P.id, subTopicId: stOneAxis!.id, axis: "procedural", code: "P1", description: "Derives velocity from a distance–time graph." });
 
     // link the tutor to the student (NOT to `other`).
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stu.id });
+    await tx.insert(student).values({ userId: stu.id, boardId: P.id, class: "9", tutorId: tut.id });
 
     // a small spread of Stage-1 observations on stCold (what draft reads).
     const baseMs = Date.now() - 14 * 24 * 3600 * 1000; // ~2 weeks ago
@@ -458,7 +458,7 @@ async function main() {
     await tx.delete(transcript).where(eq(transcript.boardId, P.id));
     await tx.delete(eventLog).where(eq(eventLog.boardId, P.id));
     await tx.delete(observation).where(eq(observation.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(learningObjective).where(eq(learningObjective.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));

@@ -129,9 +129,11 @@ async function main() {
       );
     }
 
+    // Onboarding is now a GLOBAL state-machine header keyed by userId only (the
+    // identity redesign dropped its board_id — one onboarding per profile).
     const gone = await tx
       .delete(onboarding)
-      .where(and(eq(onboarding.userId, m.user.id), eq(onboarding.boardId, b.id)))
+      .where(eq(onboarding.userId, m.user.id))
       .returning({ id: onboarding.id });
 
     console.log(

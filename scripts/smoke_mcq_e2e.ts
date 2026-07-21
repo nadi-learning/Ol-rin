@@ -10,11 +10,12 @@ import { and, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser, board, chapter, contentUnit, contentVersion, eventLog,
-  membership, subTopic, subject, topic,
+  student, subTopic, subject, topic,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { MCQ_CHECK_EVENT } from "../src/services/revision";
+import { grantRole } from "../src/services/membership";
 import { auth } from "../src/auth/auth";
 import { env } from "../src/config/env";
 
@@ -88,10 +89,14 @@ async function main() {
     return { subTopicId: st!.id, unitId: u!.id };
   });
 
-  // No pre-enablement: the platform is ungated, so `me` over the wire creates
-  // the student membership itself — that IS the real path.
+  // Establish the student the way the product does post-signup: grantRole mints
+  // the profile shell (ID-4) and onboarding mints the operational student row —
+  // here the row is a fixture so `me` (protectedProcedure → requireMembership)
+  // resolves. `me` is now a pure read; it no longer creates membership.
   const email = `smkmcq-s-${tag}@example.com`;
   const cookie = await signUpCookie(email);
+  const M = await withBoard(Z.id, (tx: Tx) => grantRole(tx, { email, name: email.split("@")[0]!, board: Z, role: "student" }));
+  await withBoard(Z.id, (tx: Tx) => tx.insert(student).values({ userId: M.user.id, boardId: Z.id, class: "10" }));
   const me = await call("query", "me", cookie, Z.slug, {});
   check("student me → role student (wire)", me?.role === "student");
 
@@ -119,7 +124,7 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, Z.id));
     await tx.delete(chapter).where(eq(chapter.boardId, Z.id));
     await tx.delete(subject).where(eq(subject.boardId, Z.id));
-    await tx.delete(membership).where(eq(membership.boardId, Z.id));
+    await tx.delete(student).where(eq(student.boardId, Z.id));
   });
   await db.delete(appUser).where(eq(appUser.email, email));
   await db.delete(board).where(eq(board.id, Z.id));

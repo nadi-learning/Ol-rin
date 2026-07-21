@@ -25,12 +25,11 @@ import {
   appUser,
   board,
   chapter,
-  membership,
   question,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -89,7 +88,7 @@ async function main() {
 
   // link T → S1 only (S2 deliberately UNLINKED)
   await withBoard(P.id, (tx) =>
-    tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userT, studentId: userS1 }),
+    tx.insert(student).values({ userId: userS1, boardId: P.id, class: "9", tutorId: userT }),
   );
 
   // Seed questions: S1-private on A (with a figure) + on B; a CANONICAL on A;
@@ -155,12 +154,11 @@ async function main() {
   // ── cleanup (FK-safe order) ──
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailT));
   await db.delete(appUser).where(eq(appUser.email, emailS1));

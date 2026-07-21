@@ -23,10 +23,10 @@ import {
   chapter,
   learningObjective,
   question,
+  student,
   subject,
   subTopic,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -97,8 +97,8 @@ async function main() {
   const [P] = await db.insert(board).values({ slug: `awrk-p-${tag}`, name: "Probe P" }).returning();
   const [Q] = await db.insert(board).values({ slug: `awrk-q-${tag}`, name: "Probe Q" }).returning();
   if (!P || !Q) throw new Error("board seed failed");
-  const [tut] = await db.insert(appUser).values({ email: `awrk-tut-${tag}@example.com`, name: "Tutor" }).returning();
-  const [stu] = await db.insert(appUser).values({ email: `awrk-stu-${tag}@example.com`, name: "Student" }).returning();
+  const [tut] = await db.insert(appUser).values({ email: `awrk-tut-${tag}@example.com`, name: "Tutor", userType: "tutor" }).returning();
+  const [stu] = await db.insert(appUser).values({ email: `awrk-stu-${tag}@example.com`, name: "Student", userType: "student" }).returning();
   if (!tut || !stu) throw new Error("app_user seed failed");
 
   const fx = await withBoard(P.id, async (tx: Tx) => {
@@ -115,7 +115,7 @@ async function main() {
     // A canonical bank question — its STEM must reach the worker (D-QA3-9), its
     // reference answer must NOT (bank context feeds stems/tags only).
     await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: BANK_STEM_MARKER, referenceAnswer: BANK_KEY_MARKER, ordinal: 0, source: "seed" });
-    await tx.insert(tutorStudent).values({ boardId: P.id, tutorId: tut.id, studentId: stu.id });
+    await tx.insert(student).values({ userId: stu.id, boardId: P.id, class: "9", tutorId: tut.id });
     return { chapterId: chap!.id, subTopicId: st!.id };
   });
 
@@ -207,7 +207,7 @@ async function main() {
     await tx.delete(authoringWorker).where(eq(authoringWorker.boardId, P.id));
     await tx.delete(authoringChat).where(eq(authoringChat.boardId, P.id));
     await tx.delete(question).where(eq(question.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(learningObjective).where(eq(learningObjective.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));

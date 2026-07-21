@@ -30,12 +30,11 @@ import {
   board,
   chapter,
   masteryState,
-  membership,
   pacePlan,
+  student,
   subTopic,
   subject,
   topic,
-  tutorStudent,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -150,10 +149,12 @@ async function main() {
   const userX = X.user.id;
   check("real flow: tutor membership role = 'tutor' (M11 SET side)", T.role === "tutor");
 
-  // link T → W only (X deliberately UNLINKED).
-  await withBoard(P.id, (tx) =>
-    tx.insert(tutorStudent).values({ boardId: P.id, tutorId: userT, studentId: userW }),
-  );
+  // Operational `student` rows (ID-4 fixture). Link T → W via `student.tutor_id`;
+  // X UNLINKED (tutor_id null).
+  await withBoard(P.id, async (tx: Tx) => {
+    await tx.insert(student).values({ userId: userW, boardId: P.id, class: "9", tutorId: userT });
+    await tx.insert(student).values({ userId: userX, boardId: P.id, class: "9" });
+  });
 
   // W sets up a Science plan + earns certified mastery on chA's sub_topic
   // (conceptual 4 / procedural 4 → mean 4 → "strong"). chB stays untaught.
@@ -254,12 +255,11 @@ async function main() {
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(pacePlan).where(eq(pacePlan.boardId, P.id));
     await tx.delete(masteryState).where(eq(masteryState.boardId, P.id));
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
     await tx.delete(subTopic).where(eq(subTopic.boardId, P.id));
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailT));
   await db.delete(appUser).where(eq(appUser.email, emailW));

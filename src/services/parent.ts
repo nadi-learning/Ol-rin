@@ -35,7 +35,7 @@ import {
   chapter,
   masteryHistory,
   masteryState,
-  parentChild,
+  student,
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
@@ -108,39 +108,41 @@ export async function assertParentsChild(
   parentUserId: string,
   childId: string,
 ): Promise<ChildSummary> {
-  const [child] = await tx
-    .select({
-      studentId: appUser.id,
-      name: appUser.name,
-      email: appUser.email,
-    })
-    .from(parentChild)
-    .innerJoin(appUser, eq(appUser.id, parentChild.studentId))
-    .where(
-      and(
-        eq(parentChild.parentId, parentUserId),
-        eq(parentChild.studentId, childId),
-      ),
-    )
+  // ID-4: the parent→child link is the single pointer `student.parent_id` (one
+  // parent per student by construction — the dropped `parent_child` join is gone).
+  // The `student` row is RLS-scoped to the active board, so a child on ANOTHER
+  // board reads absent here and correctly resolves to NOT_FOUND (the cross-board
+  // wall the parent probe asserts). A child the caller does not parent is reported
+  // as NOT_FOUND (no existence leak). Returns the ChildSummary the report needs.
+  const [row] = await tx
+    .select({ studentId: student.userId, name: appUser.name, email: appUser.email })
+    .from(student)
+    .innerJoin(appUser, eq(appUser.id, student.userId))
+    .where(and(eq(student.userId, childId), eq(student.parentId, parentUserId)))
     .limit(1);
-  if (!child) throw new ChildNotFoundError(childId);
-  return child;
+  if (!row) throw new ChildNotFoundError(childId);
+  return { studentId: row.studentId, name: row.name, email: row.email };
 }
 
-/** The caller's children (RLS-scoped to the board via parent_child). */
+/**
+ * The caller's children — every student whose `parent_id` points at this parent
+ * (ID-4). RLS scopes `student` to the active board, so the same query under a
+ * board the parent's children aren't on returns empty. Joined to app_user for the
+ * display name/email (those live only on the profile).
+ */
 export async function listChildren(
   tx: Tx,
   parentUserId: string,
 ): Promise<ChildSummary[]> {
   return tx
     .select({
-      studentId: appUser.id,
+      studentId: student.userId,
       name: appUser.name,
       email: appUser.email,
     })
-    .from(parentChild)
-    .innerJoin(appUser, eq(appUser.id, parentChild.studentId))
-    .where(eq(parentChild.parentId, parentUserId))
+    .from(student)
+    .innerJoin(appUser, eq(appUser.id, student.userId))
+    .where(eq(student.parentId, parentUserId))
     .orderBy(asc(appUser.email));
 }
 

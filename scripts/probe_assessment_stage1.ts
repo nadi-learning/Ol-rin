@@ -99,7 +99,7 @@ async function main() {
   // student app_user (GLOBAL table — board-agnostic identity), created before the
   // session so the FK holds.
   const email = `ai1-stu-${tag}@example.com`;
-  const [stu] = await db.insert(appUser).values({ email, name: "Stu" }).returning();
+  const [stu] = await db.insert(appUser).values({ email, name: "Stu", userType: "student" }).returning();
   if (!stu) throw new Error("app_user seed failed");
 
   // Fixture under P: spine + LOs (both axes) + a question per behaviour, + one

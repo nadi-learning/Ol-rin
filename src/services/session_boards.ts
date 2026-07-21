@@ -1,33 +1,34 @@
 /**
- * Slice E — the board pick. The pre-board session surface.
+ * Slice E → ID-1 — the pre-board session surface (board pick + who-am-I).
  *
  * 🔑 THE CHICKEN-AND-EGG THIS EXISTS TO BREAK. Every other read in this app is
  * board-scoped: `authedProcedure` (init.ts) rejects any call whose `x-board`
  * header is missing or unknown, and the grade chips a student picks from are
- * themselves board-scoped (`listGradeOptions` reads `subject`, which is
- * FORCE-RLS'd). So a brand-new student cannot be shown grades until they have
- * committed to a board — and cannot commit to a board through any procedure
- * that already requires one. These four reads are the only ones in the codebase
- * that run WITHOUT a board, and they are deliberately tiny.
+ * themselves board-scoped. So a brand-new student cannot be shown grades until
+ * they have committed to a board — and cannot commit to a board through any
+ * procedure that already requires one. These reads are the only ones that run
+ * WITHOUT a board, and they are deliberately tiny.
  *
- * 🔴 EVERY MEMBERSHIP READ HERE ITERATES BOARDS UNDER withBoard. `membership`
- * is FORCE-RLS'd, so a board-less select returns ZERO rows and reads as
- * "this person belongs nowhere" — the spurious clean answer this codebase has
- * been bitten by repeatedly (see b2c-two-user-tables). The loop costs one
- * transaction per board and there are TWO boards. That is the price of not
- * punching an RLS hole, and it is the right price: a policy exception here
- * would be a permanent tenant-isolation weakness bought to save one query.
- * DO NOT "optimise" this into a board-less read or a policy carve-out.
+ * ID-1: the `membership` table is gone. A person's profiles are `app_user` rows
+ * (one per user_type); a profile is OPERATIONAL when its role-detail row exists
+ * (student.board_id / tutor.boards[] / parent). `whoami` reports every profile
+ * with that operational flag + the board(s) it serves, so the FE can route a
+ * signed-in tutor to their waiting room WITHOUT first calling `me` (which needs a
+ * board they may not have yet). `enterProfile` is the login shell-mint.
+ *
+ * 🔴 STUDENT ROWS ARE RLS-SCOPED, so a board-less select returns ZERO and reads
+ * as "belongs nowhere" — the spurious clean answer this codebase has been bitten
+ * by repeatedly (b2c-two-user-tables, M29/M80). Every student read here iterates
+ * boards under withBoard. tutor/parent are GLOBAL and read directly. DO NOT
+ * "optimise" the student loop into a board-less read or a policy carve-out.
  */
-// `isNotNull`/`isNull`/`sql` + `contentUnit` went with the published-slides
-// count in listBoards (Slice M) — the offered set is now an allow-list, so this
-// file no longer reads content at all.
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board as boardTable, membership } from "@b2c/kernel/schema";
+import { appUser, board as boardTable, parent, student, tutor } from "@b2c/kernel/schema";
+import { isSelfAssignableRole, type Role } from "@b2c/kernel/contracts";
 import { db } from "../db/client";
 import { withBoard } from "../db/with-board";
-import { resolveMembership, type ResolvedMembership } from "./membership";
+import { ensureProfile, resolveMembership, type ResolvedMembership } from "./membership";
 
 export class BoardNotFoundError extends Error {
   readonly code = "BOARD_NOT_FOUND";
@@ -38,10 +39,22 @@ export class BoardNotFoundError extends Error {
 }
 
 export type BoardOption = { slug: string; name: string };
-export type MembershipSummary = { slug: string; name: string; role: string };
+
+/**
+ * One profile the person holds. `slug`/`name` are null for a board-less profile
+ * (a not-yet-onboarded student, a waiting-room tutor/parent, an admin). A tutor
+ * who serves several boards yields one entry per board.
+ */
+export type MembershipSummary = {
+  slug: string | null;
+  name: string | null;
+  role: string;
+  /** The role-detail row exists (and, for a tutor, includes this board). */
+  enabled: boolean;
+};
 export type Whoami = {
   memberships: MembershipSummary[];
-  /** The board to enter on boot, or null when the student must still pick. */
+  /** The board to enter on boot, or null when there is no operational board yet. */
   preferred: string | null;
 };
 
@@ -54,66 +67,18 @@ async function allBoards(): Promise<{ id: string; slug: string; name: string }[]
 }
 
 /**
- * The boards a student may actually pick — those with something to LEARN.
- *
- * 🔴 THE TEST IS PUBLISHED SLIDES, NOT A `subject` ROW. The first cut of this
- * checked `subject`, on the reasoning that a board with no grades strands the
- * student on `— no classes set up yet —`. The browser walk showed what that
- * actually returns against a real database: **46 boards**, because "insert one
- * subject" is a single line every probe writes, and the picker offered a child
- * "Fig P", "Probe Q" and "Probe T". Measured on the dev DB: 76 boards exist,
- * 46 have a subject, and exactly **2** have published slides — cbse and
- * cambridge, the two real ones.
- *
- * Published slides is also the RIGHT rule, not merely a stricter one. The dead
- * end that matters is not "no grades", it is "no lessons": a board with a full
- * grade list and nothing published drops the student on a dashboard where every
- * "Start lesson" 404s. This is the same signal `getChapterNav.hasContent` uses
- * to aim the first-run CTA (S108) — one concept, two call sites, not a new one.
- *
- * ⚠️ CONSEQUENCE, worth knowing before content moves: a board is only pickable
- * while it has ≥1 published chapter. If cbse's single published chapter were
- * ever unpublished, cbse would vanish from the picker rather than offer an
- * empty product. That is deliberate, but it means the picker is now downstream
- * of content publishing.
- *
- * `content_unit` is RLS'd, hence the per-board withBoard (see the file header).
- */
-/**
  * 🔑 Slice M (founder) — THE OFFERED BOARDS ARE A PRODUCT DECISION, not a query
- * result. This **supersedes the published-slides rule documented above**, which
- * is kept verbatim because its reasoning still explains the two failure modes
- * this list has to keep avoiding.
- *
- * What changed and why: the derived rule made the picker downstream of content
- * publishing (its own ⚠️ said so). The founder wants the three boards we intend
- * to serve — CBSE, IGCSE, Cambridge — visible now, and a board with nothing
- * behind it to land the student on the "still setting this up" screen rather
- * than hide. That is a strictly better dead end than the derived rule's, which
- * was to make the board VANISH: a child told "we're setting it up" knows the
- * app works and their board is coming; a child who cannot find their board at
- * all concludes the product is not for them.
- *
- * 🔴 The old rule's real win is preserved. It existed because a `subject`-based
- * check offered a child "Fig P", "Probe Q" and "Probe T" — 46 boards, mostly
- * probe litter. An explicit allow-list cannot regress into that no matter what
- * any probe inserts, which is a stronger guarantee than the content check was.
- *
- * 🔴 EVERY SLUG HERE MUST EXIST IN `board`. `chooseBoard` throws BoardNotFound
- * on a miss, so an unseeded slug is a crash on the student's first tap, not an
- * empty product. `bun run seed:boards` creates them and is the sibling of this
- * list — see `scripts/seed_boards.ts`.
- *
- * Order is the order the chips render.
+ * result. An explicit allow-list can never regress into offering probe-litter
+ * boards ("Fig P", "Probe Q") the way a `subject`/content-derived rule once did,
+ * and a board with nothing behind it lands the student on "still setting this up"
+ * rather than vanishing. Every slug here MUST exist in `board` (`bun run
+ * seed:boards`) — `chooseBoard` throws BoardNotFound on a miss. Order = render order.
  */
 const SUPPORTED_BOARDS: readonly string[] = ["cbse", "cambridge"];
 
 export async function listBoards(): Promise<BoardOption[]> {
   const boards = await allBoards();
   const bySlug = new Map(boards.map((b) => [b.slug, b]));
-  // Missing rows are SKIPPED rather than fabricated: a chip we cannot resolve
-  // to a real board id is the crash described above, so the picker showing two
-  // boards on an unseeded database is the safe failure, not the silent one.
   return SUPPORTED_BOARDS.flatMap((slug) => {
     const b = bySlug.get(slug);
     if (!b) {
@@ -125,73 +90,147 @@ export async function listBoards(): Promise<BoardOption[]> {
 }
 
 /**
- * Where this identity already belongs. Drives the FE boot: no memberships ⇒
- * show the picker inside onboarding; otherwise enter at `preferred`.
+ * Login's PROFILE-SHELL mint (decision 1). Called by `session.enter` on boot with
+ * the landing persona: it upserts the board-less `app_user` shell for (email,
+ * persona) so the person's profiles are on record — a signed-in tutor becomes a
+ * row an admin can find and set up (ID-2), and a signed-in student has an identity
+ * to hang onboarding off (ID-3).
  *
- * `preferred` is the OLDEST membership, not the first board alphabetically —
- * a tutor who was later granted a second board must keep landing on the one
- * they have been using. Ties (same timestamp) fall back to board name order,
- * which `allBoards` already imposes.
+ * 🔴 ADMIN IS NOT SELF-MINTED. A person sending `x-profile: admin` who is not one
+ * gets NO admin shell created — admin profiles come only from `grantRole` / the
+ * cutover, gated by the whitelist. A non-self-assignable persona falls back to
+ * `student`, the honest default, rather than minting nothing (which would leave a
+ * brand-new visitor with no identity at all).
  *
- * Returns memberships rather than a single board on purpose: the FE needs to
- * distinguish "none yet" (pick) from "exactly one" (enter) without a second
- * round-trip, and a future board switcher reads the same shape.
+ * Returns the fresh `whoami` so boot is one round-trip.
+ */
+export async function enterProfile(args: {
+  email: string;
+  name: string | null;
+  persona?: string | null;
+}): Promise<Whoami> {
+  const userType: Role = isSelfAssignableRole(args.persona) ? args.persona : "student";
+  // app_user is GLOBAL (no RLS) → no board claim needed; a plain tx suffices.
+  await db.transaction((tx) =>
+    ensureProfile(tx as PgTransaction<any, any, any>, {
+      email: args.email,
+      name: args.name,
+      userType,
+    }),
+  );
+  return whoami(args.email);
+}
+
+/**
+ * Every profile this identity holds, with its operational state + board(s).
+ * Drives the FE boot: the FE finds the entry for the claimed persona and routes
+ * on `enabled`/`slug` — an enabled student enters at their board, a disabled
+ * tutor/parent lands in the waiting room, a board-less student goes to onboarding.
+ *
+ * `preferred` is the OLDEST profile that is operational AND has a board, so a
+ * returning person lands where they actually work.
  */
 export async function whoami(email: string): Promise<Whoami> {
   const boards = await allBoards();
+  const byId = new Map(boards.map((b) => [b.id, b]));
+
+  const profiles = await db
+    .select({ id: appUser.id, userType: appUser.userType, at: appUser.createdAt })
+    .from(appUser)
+    .where(eq(appUser.email, email))
+    .orderBy(appUser.createdAt);
+
   const found: (MembershipSummary & { at: Date })[] = [];
 
-  for (const b of boards) {
-    // 🔴 S123: ALL rows for this board, not `.limit(1)`. One email may now hold
-    // a student AND a tutor AND a parent profile on the same board, and this is
-    // the function that tells the FE which profiles exist — taking one row would
-    // hide the others, which is precisely how a tutor's landing click ended up
-    // resolving to their student surface.
-    const rows = await withBoard(b.id, async (tx) =>
-      await tx
-        .select({ role: membership.role, at: membership.createdAt })
-        .from(membership)
-        .innerJoin(appUser, eq(appUser.id, membership.userId))
-        .where(and(eq(appUser.email, email), eq(membership.boardId, b.id))),
-    );
-    for (const row of rows) {
-      found.push({ slug: b.slug, name: b.name, role: row.role, at: row.at });
+  for (const p of profiles) {
+    if (p.userType === "student") {
+      // RLS: the student row is visible only under its own board's claim, so
+      // iterate. A shell-only student (no row yet) yields a board-less, disabled
+      // entry → the FE sends them to onboarding, not the waiting room.
+      let entry: MembershipSummary & { at: Date } = {
+        slug: null,
+        name: null,
+        role: "student",
+        enabled: false,
+        at: p.at,
+      };
+      for (const b of boards) {
+        const [s] = await withBoard(b.id, (tx) =>
+          tx
+            .select({ userId: student.userId })
+            .from(student)
+            .where(eq(student.userId, p.id))
+            .limit(1),
+        );
+        if (s) {
+          entry = { slug: b.slug, name: b.name, role: "student", enabled: true, at: p.at };
+          break;
+        }
+      }
+      found.push(entry);
+    } else if (p.userType === "tutor") {
+      const [t] = await db
+        .select({ boards: tutor.boards, status: tutor.status })
+        .from(tutor)
+        .where(eq(tutor.userId, p.id))
+        .limit(1);
+      const boardIds =
+        t && t.status === "active" && Array.isArray(t.boards) ? (t.boards as string[]) : [];
+      if (boardIds.length === 0) {
+        found.push({ slug: null, name: null, role: "tutor", enabled: false, at: p.at });
+      } else {
+        for (const boardId of boardIds) {
+          const b = byId.get(boardId);
+          found.push({
+            slug: b?.slug ?? null,
+            name: b?.name ?? null,
+            role: "tutor",
+            enabled: true,
+            at: p.at,
+          });
+        }
+      }
+    } else if (p.userType === "parent") {
+      const [pr] = await db
+        .select({ status: parent.status })
+        .from(parent)
+        .where(eq(parent.userId, p.id))
+        .limit(1);
+      found.push({
+        slug: null,
+        name: null,
+        role: "parent",
+        enabled: !!pr && pr.status === "active",
+        at: p.at,
+      });
+    } else {
+      // admin — board-agnostic; the whitelist is the gate (adminProcedure).
+      found.push({ slug: null, name: null, role: "admin", enabled: true, at: p.at });
     }
   }
 
-  // Stable sort: `found` is already in board-name order, and Array.sort is
-  // stable in every runtime this ships on, so equal timestamps keep that order.
+  // Stable oldest-first (Array.sort is stable in every runtime this ships on).
   found.sort((a, b) => a.at.getTime() - b.at.getTime());
 
+  const preferred = found.find((m) => m.enabled && m.slug)?.slug ?? null;
   return {
-    memberships: found.map(({ slug, name, role }) => ({ slug, name, role })),
-    preferred: found[0]?.slug ?? null,
+    memberships: found.map(({ slug, name, role, enabled }) => ({ slug, name, role, enabled })),
+    preferred,
   };
 }
 
 /**
- * Commit this identity to a board — the SOLE membership-creation path since
- * Slice E. `me` used to create memberships as a side effect of being read,
- * which meant the FE's hard-coded `x-board: cbse` minted a CBSE membership
- * before the student had ever seen a picker. That inversion is the whole point
- * of this slice: creation is now an explicit act with an explicit board.
- *
- * Delegates to `resolveMembership` (M11) — the same helper login has always
- * driven — so this is a new ENTRY POINT, not a second implementation. Calling
- * it for a board the student already belongs to is a no-op that returns the
- * existing role: the read-before-write in `resolveMembership` means a returning
- * tutor is not demoted by re-picking their own board.
+ * Commit this identity to a board (session.chooseBoard). Since ID-1 the student's
+ * OPERATIONAL row (student.board_id + class) is minted by onboarding (ID-3), so
+ * this validates the board and ensures the profile shell — it no longer writes a
+ * board-scoped row. Delegates to `resolveMembership`, kept as the shared entry
+ * point login and board-pick both drive (M11).
  */
 export async function chooseBoard(args: {
   slug: string;
   email: string;
   name: string | null;
-  /**
-   * The landing persona, passed straight through to `resolveMembership`, which
-   * honours it only when MINTING and only for a self-assignable role. Named
-   * "intended" rather than "role" on purpose: it is what the person said, not
-   * what they are, and the two are only the same after an admin agrees.
-   */
+  /** The landing persona, passed through to `resolveMembership`. */
   intendedRole?: string | null;
 }): Promise<ResolvedMembership> {
   const [b] = await db
@@ -212,12 +251,10 @@ export async function chooseBoard(args: {
 }
 
 /**
- * Run a read inside a board WITHOUT requiring a membership there — the other
- * half of the chicken-and-egg break, used by `session.listGradesForBoard`.
- *
- * Deliberately narrow: it takes a slug and hands back a board-scoped tx, so the
- * only thing that widens the pre-membership read surface is a new caller, which
- * is reviewable. Do not export a generic "run anything unscoped" helper.
+ * Run a read inside a board WITHOUT requiring membership there — the other half
+ * of the chicken-and-egg break, used by `session.listGradesForBoard`. Narrow by
+ * design: a slug in, a board-scoped tx out. Do not export a generic "run anything
+ * unscoped" helper.
  */
 export async function withBoardBySlug<T>(
   slug: string,

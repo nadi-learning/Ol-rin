@@ -27,7 +27,7 @@ import {
   board,
   chapter,
   masteryState,
-  membership,
+  student,
   pacePlan,
   subTopic,
   subject,
@@ -303,7 +303,7 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
   for (const email of [emailW, emailX]) await db.delete(appUser).where(eq(appUser.email, email));
   await db.delete(board).where(eq(board.id, P.id));

@@ -1,51 +1,47 @@
 /**
- * probe_admin_people — Slice D exit gate (the admin PEOPLE surface).
+ * probe_admin_people — ID-2 exit gate (the admin PEOPLE + ASSIGNMENTS surface,
+ * rebuilt on the profile model).
  *
  * Real DB + real RLS, throwaway boards A/B (M22), self-cleaning. Everything here
  * is FIRM — no AI, no fixtures beyond seeded rows.
  *
  *   1. DB connectivity.
- *   2. The admin gate, BOTH sides (M11) — and a SOURCE-level assertion that all
- *      six procedures are declared on `adminProcedure`. The runtime legs below
- *      can only test the procedures that exist today; the source check is what
- *      catches a SEVENTH being added later on `protectedProcedure` by mistake,
- *      which is the realistic way this surface springs a leak.
- *   3. 🔑 THE TWO-USER-TABLES LEG — the load-bearing one. `app_user` is NOT
- *      proof of signing in (grantRole mints those for any email, as every seed
- *      does). A person with an app_user + membership but NO Better Auth `users`
- *      row must still be refused with USER_NOT_FOUND, or the founder's "no
- *      pre-invite" rule is decorative and the whitelist is quietly rebuilt.
- *   4. CANNOT_CHANGE_OWN_ROLE — an admin cannot demote themselves (lockout).
- *   5. setRole drives grantRole (M11: same path as the seeds) + the single-role
- *      invariant survives (grant tutor then parent → exactly ONE row).
- *   6. listPeople: board-scoped; `hasSignedIn` true/false both represented — a
- *      LEFT join, so a seeded never-logged-in member must NOT vanish.
- *   7. findByEmail: finds a global identity with no membership here (role null);
- *      unknown → null; exact-match only (a prefix must not resolve).
- *   8. linkStudent: role validation both endpoints · no-membership refused ·
- *      happy path · idempotent (double-link → still ONE row).
+ *   2. The admin gate, BOTH sides (M11) — plus a SOURCE-level assertion that all
+ *      six procedures are declared on `adminProcedure` (catches a seventh added
+ *      on `protectedProcedure` by mistake — the realistic way this springs a leak).
+ *   3. 🔑 THE TWO-USER-TABLES LEG. `app_user` is NOT proof of sign-in (grantRole
+ *      mints those for any email). A person with an app_user profile but NO
+ *      `users` row must still be refused with USER_NOT_FOUND, or "no pre-invite"
+ *      is decorative — and the refusal must WRITE NOTHING.
+ *   4. CANNOT_CHANGE_OWN_ROLE — resolved by EMAIL now (identity spans profiles).
+ *   5. setRole drives grantRole (M11) · name never wiped · multi-profile: a
+ *      second role ADDS a distinct profile (the S123 construct).
+ *   6. listPeople is GLOBAL — every profile, one row per app_user; a board-B-only
+ *      student shows under a board-A read; a `users` row with no profile does NOT.
+ *   7. listLinkCandidates: adults are ACTIVE tutors on THIS board / active parents
+ *      (an off-board tutor is excluded); students are the UNLINKED-for-that-kind
+ *      on this board (an off-board student is excluded by RLS).
+ *   8. linkStudent BY ID: wrong-role refused · off-board student refused · happy
+ *      tutor+parent · idempotent (one active assignment) · 🔑 SWITCH fires the
+ *      handover snapshot (prior row ended + progress_snapshot frozen).
  *   9. listLinks: resolves both names · RLS — A's links invisible under B.
- *  10. unlinkStudent: removes 1, second call removes 0 (idempotent), and the
- *      MEMBERSHIP survives (unlink must never delete the person).
- *  11. HTTP: all six procedures unauth → 401 (soft, TIMEOUT-GUARDED).
- *
- * ⚠️ The HTTP legs use an AbortSignal timeout deliberately. The rest of the
- * suite uses a bare `fetch` inside a catch that assumes the only failure is
- * connection-refused — true for a DOWN server, false for a WEDGED one, which
- * hangs the whole suite silently (S110b). New code does not add to that debt.
+ *  10. unlinkStudent: clears the pointer (tutor unlink freezes a snapshot) ·
+ *      idempotent (second removed=0) · the PROFILE survives (never deleted).
+ *  11. HTTP: all six procedures unauth → 401 (soft, TIMEOUT-GUARDED, S110b).
  */
 import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
-import { appUser, board, membership, parentChild, tutorStudent, users } from "@b2c/kernel/schema";
+import { appUser, board, student, tutor, tutorAssignment, users } from "@b2c/kernel/schema";
+import type { Role } from "@b2c/kernel/contracts";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { grantRole } from "../src/services/membership";
 import { assertAdmin, AdminOnlyError } from "../src/services/admin_ingest";
 import {
   CannotChangeOwnRoleError,
-  findByEmail,
   InvalidLinkError,
   linkStudent,
+  listLinkCandidates,
   listLinks,
   listPeople,
   setRole,
@@ -56,6 +52,7 @@ import {
 import { env } from "../src/config/env";
 
 type Tx = PgTransaction<any, any, any>;
+type Board = { id: string; slug: string };
 
 let passed = 0;
 let failed = 0;
@@ -74,6 +71,35 @@ async function seedAuthIdentity(email: string, name: string) {
   await db.insert(users).values({ email, name, emailVerified: true }).onConflictDoNothing();
 }
 
+/** The app_user profile id for (email, user_type) — app_user is global. */
+async function profileId(email: string, userType: Role): Promise<string | null> {
+  const [r] = await db
+    .select({ id: appUser.id })
+    .from(appUser)
+    .where(and(eq(appUser.email, email), eq(appUser.userType, userType)))
+    .limit(1);
+  return r?.id ?? null;
+}
+
+/** Mint a signed-in tutor profile serving `bd` (grantRole appends the board). */
+async function seedTutorOn(bd: Board, email: string, name: string): Promise<string> {
+  await seedAuthIdentity(email, name);
+  const m = await withBoard(bd.id, (tx) => grantRole(tx, { email, name, board: bd, role: "tutor" }));
+  return m.user.id;
+}
+
+/** Mint a signed-in student with a real `student` row on `bd` (the fixture path). */
+async function seedStudentOn(bd: Board, email: string, name: string): Promise<string> {
+  await seedAuthIdentity(email, name);
+  const m = await withBoard(bd.id, (tx) =>
+    grantRole(tx, { email, name, board: bd, role: "student" }),
+  );
+  await withBoard(bd.id, (tx) =>
+    tx.insert(student).values({ userId: m.user.id, boardId: bd.id, class: "9" }),
+  );
+  return m.user.id;
+}
+
 const HTTP_TIMEOUT_MS = 4000;
 
 async function main() {
@@ -86,11 +112,16 @@ async function main() {
   if (!A || !B) throw new Error("board seed failed");
 
   const adminEmail = `admp-admin-${tag}@example.com`;
-  const studentEmail = `admp-student-${tag}@example.com`;
   const tutorEmail = `admp-tutor-${tag}@example.com`;
+  const tutor2Email = `admp-tutor2-${tag}@example.com`;
   const parentEmail = `admp-parent-${tag}@example.com`;
-  const ghostEmail = `admp-ghost-${tag}@example.com`; // membership, but NEVER signed in
-  const strangerEmail = `admp-stranger-${tag}@example.com`; // signed in, no membership here
+  const studentEmail = `admp-student-${tag}@example.com`;
+  const studentBEmail = `admp-studentb-${tag}@example.com`; // student on board B only
+  const offBoardTutorEmail = `admp-offtutor-${tag}@example.com`; // tutor on B only
+  const ghostEmail = `admp-ghost-${tag}@example.com`; // app_user profile, NEVER signed in
+  const strangerEmail = `admp-stranger-${tag}@example.com`; // signed in, no app_user profile
+  const multiEmail = `admp-multi-${tag}@example.com`; // accumulates two profiles
+  const namelessEmail = `admp-nameless-${tag}@example.com`;
 
   // ── 2. the admin gate, both sides ──
   let nonAdminThrows = false;
@@ -111,8 +142,8 @@ async function main() {
   const routerSrc = await Bun.file("src/trpc/router.ts").text();
   const PEOPLE_PROCS = [
     "listPeople",
-    "findByEmail",
     "setRole",
+    "listLinkCandidates",
     "listLinks",
     "linkStudent",
     "unlinkStudent",
@@ -126,27 +157,18 @@ async function main() {
   );
 
   // ── 3. 🔑 the two-user-tables leg ──
-  // A ghost: real membership + real app_user, but no Better Auth identity —
-  // exactly what every seed produces.
+  // A ghost: real app_user profile (grantRole mints it), but no Better Auth row.
   await withBoard(A.id, (tx) =>
     grantRole(tx, { email: ghostEmail, name: "Ghost", board: A, role: "student" }),
   );
-  const ghostAppUser = await db
-    .select({ id: appUser.id })
-    .from(appUser)
-    .where(eq(appUser.email, ghostEmail));
-  check("ghost HAS an app_user row (so app_user cannot be the test)", ghostAppUser.length === 1);
+  const ghostProfile = await profileId(ghostEmail, "student");
+  check("ghost HAS an app_user profile (so app_user cannot be the test)", ghostProfile !== null);
 
   let ghostRefused = false;
   let ghostErrCode = "";
   try {
     await withBoard(A.id, (tx) =>
-      setRole(tx, {
-        board: A,
-        actorUserId: adminM.user.id,
-        email: ghostEmail,
-        role: "tutor",
-      }),
+      setRole(tx, { board: A, actorEmail: adminEmail, email: ghostEmail, role: "tutor" }),
     );
   } catch (e) {
     ghostRefused = e instanceof UserNotFoundError;
@@ -156,197 +178,190 @@ async function main() {
     `🔑 setRole on a never-signed-in person → USER_NOT_FOUND (got ${ghostErrCode || "no throw"})`,
     ghostRefused,
   );
-  const ghostStillStudent = await withBoard(A.id, (tx) =>
-    tx
-      .select({ role: membership.role })
-      .from(membership)
-      .innerJoin(appUser, eq(appUser.id, membership.userId))
-      .where(eq(appUser.email, ghostEmail)),
-  );
-  check("…and the refusal WROTE NOTHING (ghost still student)", ghostStillStudent[0]?.role === "student");
+  const ghostTutor = await profileId(ghostEmail, "tutor");
+  check("…and the refusal WROTE NOTHING (no tutor profile minted for the ghost)", ghostTutor === null);
 
-  // ── 4. self-demotion refused ──
+  // ── 4. self-change refused (by email) ──
   let selfRefused = false;
   try {
     await withBoard(A.id, (tx) =>
-      setRole(tx, { board: A, actorUserId: adminM.user.id, email: adminEmail, role: "student" }),
+      setRole(tx, { board: A, actorEmail: adminEmail, email: adminEmail, role: "student" }),
     );
   } catch (e) {
     selfRefused = e instanceof CannotChangeOwnRoleError;
   }
-  check("setRole on SELF → CANNOT_CHANGE_OWN_ROLE", selfRefused);
-  const adminStill = await withBoard(A.id, (tx) =>
-    tx
-      .select({ role: membership.role })
-      .from(membership)
-      .innerJoin(appUser, eq(appUser.id, membership.userId))
-      .where(eq(appUser.email, adminEmail)),
-  );
-  check("…and the admin is STILL admin (no lockout)", adminStill[0]?.role === "admin");
+  check("setRole on SELF (same email) → CANNOT_CHANGE_OWN_ROLE", selfRefused);
+  check("…and the admin profile still exists (no lockout)", (await profileId(adminEmail, "admin")) !== null);
 
-  // ── 5. setRole works for real; single-role invariant holds ──
+  // ── 5. setRole works · name not wiped · multi-profile accumulates ──
   await seedAuthIdentity(tutorEmail, "Tutor T");
   await seedAuthIdentity(parentEmail, "Parent P");
-  await seedAuthIdentity(studentEmail, "Student S");
+  await seedAuthIdentity(multiEmail, "Multi M");
   await seedAuthIdentity(strangerEmail, "Stranger X");
 
   const madeTutor = await withBoard(A.id, (tx) =>
-    setRole(tx, { board: A, actorUserId: adminM.user.id, email: tutorEmail, role: "tutor" }),
+    setRole(tx, { board: A, actorEmail: adminEmail, email: tutorEmail, role: "tutor" }),
   );
   check("setRole(tutor) on a signed-in person → role 'tutor'", madeTutor.role === "tutor");
   check("…and reports hasSignedIn true", madeTutor.hasSignedIn === true);
 
-  // Granting a role must not RENAME anyone. grantRole upserts app_user.name, so
-  // a null Better Auth name would wipe the spine's name if passed through raw.
-  const namelessEmail = `admp-nameless-${tag}@example.com`;
+  // Granting a role must not RENAME anyone: grantRole upserts app_user.name, so a
+  // null auth name must not wipe a name the (email, role) profile already holds.
   await withBoard(A.id, (tx) =>
-    grantRole(tx, { email: namelessEmail, name: "Spine Name", board: A, role: "student" }),
+    grantRole(tx, { email: namelessEmail, name: "Spine Name", board: A, role: "tutor" }),
   );
   await db.insert(users).values({ email: namelessEmail, name: null, emailVerified: true });
   const renamed = await withBoard(A.id, (tx) =>
-    setRole(tx, { board: A, actorUserId: adminM.user.id, email: namelessEmail, role: "tutor" }),
+    setRole(tx, { board: A, actorEmail: adminEmail, email: namelessEmail, role: "tutor" }),
   );
   check(
     `setRole does NOT wipe an existing name when the auth name is null (got ${JSON.stringify(renamed.name)})`,
     renamed.name === "Spine Name",
   );
 
-  // 🔴 S123 INVERTED THIS LEG. Granting a SECOND role now ACCUMULATES rather
-  // than overwriting — the founder's multi-profile construct, where one email
-  // holds a student/tutor/parent profile side by side and the active one is
-  // named per request (`x-profile`). Before S123 this asserted the opposite
-  // (exactly one row, overwritten), which is why it went red on the migration.
+  // Multi-profile: a second role ADDS a distinct profile (one email, several ids).
   await withBoard(A.id, (tx) =>
-    setRole(tx, { board: A, actorUserId: adminM.user.id, email: tutorEmail, role: "parent" }),
+    setRole(tx, { board: A, actorEmail: adminEmail, email: multiEmail, role: "tutor" }),
   );
-  const tutorRows = await withBoard(A.id, (tx) =>
-    tx
-      .select({ role: membership.role })
-      .from(membership)
-      .innerJoin(appUser, eq(appUser.id, membership.userId))
-      .where(eq(appUser.email, tutorEmail)),
+  await withBoard(A.id, (tx) =>
+    setRole(tx, { board: A, actorEmail: adminEmail, email: multiEmail, role: "parent" }),
   );
-  // M54 still applies: assert the ROLES, not just the count. A count-only check
-  // would pass on two rows that both said 'parent' — i.e. on a broken grant.
+  const multiProfiles = await db
+    .select({ role: appUser.userType })
+    .from(appUser)
+    .where(eq(appUser.email, multiEmail));
   check(
-    `S123 multi-profile: setRole ADDS a second profile (got ${tutorRows.length}: ${tutorRows
+    `multi-profile: two setRoles → TWO distinct profiles (got ${multiProfiles.length}: ${multiProfiles
       .map((r) => r.role)
       .sort()
       .join("+")})`,
-    tutorRows.length === 2 &&
-      new Set(tutorRows.map((r) => r.role)).size === 2 &&
-      tutorRows.every((r) => r.role === "tutor" || r.role === "parent"),
+    multiProfiles.length === 2 &&
+      new Set(multiProfiles.map((r) => r.role)).size === 2 &&
+      multiProfiles.every((r) => r.role === "tutor" || r.role === "parent"),
   );
 
-  // 🔴 RESTORE BY DELETING, NOT BY RE-GRANTING. The link legs below expect this
-  // person to be a tutor and nothing else. Pre-S123 a `setRole(…, "tutor")` put
-  // them back because a grant overwrote; now it would simply no-op against the
-  // tutor row they still hold and leave the parent profile standing, so the
-  // legs would run against a two-profile person and silently mean something
-  // different. Removing a profile is a delete — that is the whole point of the
-  // new unique.
-  await withBoard(A.id, async (tx) => {
-    const [u] = await tx
-      .select({ id: appUser.id })
-      .from(appUser)
-      .where(eq(appUser.email, tutorEmail))
-      .limit(1);
-    await tx
-      .delete(membership)
-      .where(
-        and(
-          eq(membership.userId, u!.id),
-          eq(membership.boardId, A.id),
-          eq(membership.role, "parent"),
-        ),
-      );
-  });
+  // ── seed the link cast ──
   await withBoard(A.id, (tx) =>
-    setRole(tx, { board: A, actorUserId: adminM.user.id, email: parentEmail, role: "parent" }),
+    setRole(tx, { board: A, actorEmail: adminEmail, email: parentEmail, role: "parent" }),
   );
-  await withBoard(A.id, (tx) =>
-    setRole(tx, { board: A, actorUserId: adminM.user.id, email: studentEmail, role: "student" }),
-  );
+  const studentId = await seedStudentOn(A, studentEmail, "Student S");
+  const studentBId = await seedStudentOn(B, studentBEmail, "Student B");
+  const tutorId = (await profileId(tutorEmail, "tutor"))!;
+  const parentId = (await profileId(parentEmail, "parent"))!;
+  await seedTutorOn(B, offBoardTutorEmail, "Off Tutor"); // tutor on B, not A
 
-  // ── 6. listPeople ──
-  const peopleA = await withBoard(A.id, (tx) => listPeople(tx));
-  const emailsA = peopleA.map((p) => p.email);
+  // ── 6. listPeople is GLOBAL ──
+  const peopleAll = await withBoard(A.id, (tx) => listPeople(tx));
+  const emails = peopleAll.map((p) => p.email);
   check(
-    "listPeople returns the board's members (admin/tutor/parent/student/ghost)",
-    [adminEmail, tutorEmail, parentEmail, studentEmail, ghostEmail].every((e) =>
-      emailsA.includes(e),
+    "listPeople returns every profile (admin/tutor/parent/student/ghost/multi)",
+    [adminEmail, tutorEmail, parentEmail, studentEmail, ghostEmail, multiEmail].every((e) =>
+      emails.includes(e),
     ),
   );
   check(
+    "listPeople is GLOBAL: a board-B-only student shows under a board-A read",
+    emails.includes(studentBEmail),
+  );
+  check(
     "listPeople: the never-signed-in ghost is PRESENT with hasSignedIn=false (LEFT join)",
-    peopleA.find((p) => p.email === ghostEmail)?.hasSignedIn === false,
+    peopleAll.find((p) => p.email === ghostEmail)?.hasSignedIn === false,
   );
   check(
-    "listPeople: a signed-in member reads hasSignedIn=true",
-    peopleA.find((p) => p.email === tutorEmail)?.hasSignedIn === true,
+    "listPeople: a signed-in profile reads hasSignedIn=true",
+    peopleAll.find((p) => p.email === tutorEmail)?.hasSignedIn === true,
   );
-  const peopleB = await withBoard(B.id, (tx) => listPeople(tx));
   check(
-    `RLS: board B's listPeople does NOT see A's members (got ${peopleB.length})`,
-    peopleB.every((p) => !emailsA.includes(p.email)),
+    "listPeople: a `users` row with NO profile is not listed (identity ≠ auth)",
+    !emails.includes(strangerEmail),
   );
 
-  // ── 7. findByEmail ──
-  const stranger = await withBoard(A.id, (tx) => findByEmail(tx, strangerEmail));
-  check("findByEmail finds a signed-in person with NO membership here", stranger !== null);
-  check("…and reports role null (not on this board) + hasSignedIn true", stranger?.role === null && stranger?.hasSignedIn === true);
-  const known = await withBoard(A.id, (tx) => findByEmail(tx, tutorEmail));
-  check("findByEmail reports the role of someone ON this board", known?.role === "tutor");
-  const missing = await withBoard(A.id, (tx) => findByEmail(tx, `nobody-${tag}@example.com`));
-  check("findByEmail unknown → null", missing === null);
-  const prefix = await withBoard(A.id, (tx) => findByEmail(tx, strangerEmail.slice(0, 10)));
-  check("findByEmail is EXACT-match (a prefix does not resolve → no enumeration)", prefix === null);
+  // ── 7. listLinkCandidates ──
+  const cand = await withBoard(A.id, (tx) => listLinkCandidates(tx, A.id));
+  check(
+    "candidates.tutors includes the board's tutor, EXCLUDES an off-board tutor",
+    cand.tutors.some((t) => t.email === tutorEmail) &&
+      !cand.tutors.some((t) => t.email === offBoardTutorEmail),
+  );
+  check("candidates.parents includes the board's parent", cand.parents.some((p) => p.email === parentEmail));
+  check(
+    "candidates.unlinkedForTutor includes the unlinked student, EXCLUDES the off-board one (RLS)",
+    cand.unlinkedForTutor.some((s) => s.userId === studentId) &&
+      !cand.unlinkedForTutor.some((s) => s.userId === studentBId),
+  );
 
-  // ── 8. linkStudent ──
+  // ── 8. linkStudent BY ID ──
   let wrongRole = false;
   try {
     await withBoard(A.id, (tx) =>
-      linkStudent(tx, {
-        boardId: A.id,
-        kind: "tutor",
-        adultEmail: studentEmail, // a student, not a tutor
-        studentEmail,
-      }),
+      linkStudent(tx, { boardId: A.id, kind: "tutor", adultUserId: studentId, studentUserId: studentId }),
     );
   } catch (e) {
     wrongRole = e instanceof InvalidLinkError;
   }
   check("linkStudent with a STUDENT as the tutor → INVALID_LINK", wrongRole);
 
-  let noMembership = false;
+  let offBoard = false;
   try {
     await withBoard(A.id, (tx) =>
-      linkStudent(tx, {
-        boardId: A.id,
-        kind: "tutor",
-        adultEmail: tutorEmail,
-        studentEmail: strangerEmail, // signed in, but not on this board
-      }),
+      linkStudent(tx, { boardId: A.id, kind: "tutor", adultUserId: tutorId, studentUserId: studentBId }),
     );
   } catch (e) {
-    noMembership = e instanceof InvalidLinkError;
+    offBoard = e instanceof InvalidLinkError;
   }
-  check("linkStudent with an off-board student → INVALID_LINK", noMembership);
+  check("linkStudent with an off-board student → INVALID_LINK", offBoard);
 
   await withBoard(A.id, (tx) =>
-    linkStudent(tx, { boardId: A.id, kind: "tutor", adultEmail: tutorEmail, studentEmail }),
+    linkStudent(tx, { boardId: A.id, kind: "tutor", adultUserId: tutorId, studentUserId: studentId }),
   );
   await withBoard(A.id, (tx) =>
-    linkStudent(tx, { boardId: A.id, kind: "parent", adultEmail: parentEmail, studentEmail }),
+    linkStudent(tx, { boardId: A.id, kind: "parent", adultUserId: parentId, studentUserId: studentId }),
   );
-  // idempotent — a double-click must not duplicate
+  // idempotent — a double-click must not open a second assignment.
   await withBoard(A.id, (tx) =>
-    linkStudent(tx, { boardId: A.id, kind: "tutor", adultEmail: tutorEmail, studentEmail }),
+    linkStudent(tx, { boardId: A.id, kind: "tutor", adultUserId: tutorId, studentUserId: studentId }),
   );
-  const tsRows = await withBoard(A.id, (tx) =>
-    tx.select({ id: tutorStudent.id }).from(tutorStudent).where(eq(tutorStudent.boardId, A.id)),
+  const [linkedStudent] = await withBoard(A.id, (tx) =>
+    tx.select({ tutorId: student.tutorId, parentId: student.parentId }).from(student).where(eq(student.userId, studentId)),
   );
-  check(`linkStudent is idempotent: double-link → ONE row (got ${tsRows.length})`, tsRows.length === 1);
+  check("linkStudent set student.tutor_id + parent_id (by id)", linkedStudent?.tutorId === tutorId && linkedStudent?.parentId === parentId);
+  const activeAssign = await withBoard(A.id, (tx) =>
+    tx
+      .select({ id: tutorAssignment.id })
+      .from(tutorAssignment)
+      .where(and(eq(tutorAssignment.studentId, studentId), eq(tutorAssignment.status, "active"))),
+  );
+  check(`idempotent: exactly ONE active tutor_assignment (got ${activeAssign.length})`, activeAssign.length === 1);
+
+  // 🔑 SWITCH → the handover snapshot fires.
+  const tutor2Id = await seedTutorOn(A, tutor2Email, "Tutor Two");
+  await withBoard(A.id, (tx) =>
+    linkStudent(tx, { boardId: A.id, kind: "tutor", adultUserId: tutor2Id, studentUserId: studentId }),
+  );
+  const [afterSwitch] = await withBoard(A.id, (tx) =>
+    tx.select({ tutorId: student.tutorId }).from(student).where(eq(student.userId, studentId)),
+  );
+  check("switch: student.tutor_id now points at the NEW tutor", afterSwitch?.tutorId === tutor2Id);
+  const endedRow = await withBoard(A.id, (tx) =>
+    tx
+      .select({ snapshot: tutorAssignment.progressSnapshot, reason: tutorAssignment.endedReason, endedAt: tutorAssignment.endedAt })
+      .from(tutorAssignment)
+      .where(and(eq(tutorAssignment.studentId, studentId), eq(tutorAssignment.tutorId, tutorId), eq(tutorAssignment.status, "ended"))),
+  );
+  check(
+    "🔑 switch closed the prior tutor's row with a FROZEN snapshot",
+    endedRow.length === 1 && endedRow[0]!.snapshot != null && endedRow[0]!.reason === "reassigned" && endedRow[0]!.endedAt != null,
+  );
+  const activeAfterSwitch = await withBoard(A.id, (tx) =>
+    tx
+      .select({ tutorId: tutorAssignment.tutorId })
+      .from(tutorAssignment)
+      .where(and(eq(tutorAssignment.studentId, studentId), eq(tutorAssignment.status, "active"))),
+  );
+  check(
+    "switch: exactly ONE active row, for the new tutor",
+    activeAfterSwitch.length === 1 && activeAfterSwitch[0]!.tutorId === tutor2Id,
+  );
 
   // ── 9. listLinks ──
   const linksA = await withBoard(A.id, (tx) => listLinks(tx));
@@ -354,59 +369,49 @@ async function main() {
   const parentLink = linksA.find((l) => l.kind === "parent");
   check("listLinks returns both a tutor and a parent link", Boolean(tutorLink && parentLink));
   check(
-    "listLinks resolves BOTH sides' emails (the aliased self-join works)",
-    tutorLink?.adultEmail === tutorEmail && tutorLink?.studentEmail === studentEmail,
+    "listLinks resolves BOTH sides' emails (the aliased self-joins work)",
+    tutorLink?.adultEmail === tutor2Email && tutorLink?.studentEmail === studentEmail,
   );
   const linksB = await withBoard(B.id, (tx) => listLinks(tx));
-  check(`RLS: board B sees NONE of A's links (got ${linksB.length})`, linksB.length === 0);
-
-  // Deterministic order. "Remove" is a per-row button, so an unordered list can
-  // reshuffle between render and click and delete a link the admin never aimed
-  // at — found while writing the browser walk, which did exactly that.
-  const within = (ls: Link[], kind: "tutor" | "parent") =>
-    ls.filter((l) => l.kind === kind).map((l) => l.adultEmail);
-  const sorted = (xs: string[]) => xs.every((v, i) => i === 0 || xs[i - 1]! <= v);
-  const again = await withBoard(A.id, (tx) => listLinks(tx));
   check(
-    "listLinks is ORDERED (stable across calls, sorted within each kind)",
-    sorted(within(linksA, "tutor")) &&
-      sorted(within(linksA, "parent")) &&
-      JSON.stringify(again.map((l) => `${l.kind}:${l.adultEmail}:${l.studentEmail}`)) ===
-        JSON.stringify(linksA.map((l) => `${l.kind}:${l.adultEmail}:${l.studentEmail}`)),
+    `RLS: board B sees NONE of A's links (got ${linksB.length})`,
+    !linksB.some((l) => l.studentEmail === studentEmail),
   );
+  // Deterministic order (a per-row Remove can't act on a reshuffled link).
+  const again = await withBoard(A.id, (tx) => listLinks(tx));
+  const key = (ls: Link[]) => ls.map((l) => `${l.kind}:${l.adultEmail}:${l.studentEmail}`).join("|");
+  check("listLinks is ORDERED (stable across calls)", key(again) === key(linksA));
 
   // ── 10. unlinkStudent ──
   const rm1 = await withBoard(A.id, (tx) =>
-    unlinkStudent(tx, {
-      kind: "tutor",
-      adultUserId: tutorLink!.adultUserId,
-      studentUserId: tutorLink!.studentUserId,
-    }),
+    unlinkStudent(tx, { boardId: A.id, kind: "tutor", studentUserId: studentId }),
   );
-  check("unlinkStudent removes the link (removed=1)", rm1.removed === 1);
+  check("unlinkStudent clears the tutor pointer (removed=1)", rm1.removed === 1);
+  const [afterUnlink] = await withBoard(A.id, (tx) =>
+    tx.select({ tutorId: student.tutorId }).from(student).where(eq(student.userId, studentId)),
+  );
+  check("…and student.tutor_id is now null", afterUnlink?.tutorId === null);
+  const noActive = await withBoard(A.id, (tx) =>
+    tx
+      .select({ id: tutorAssignment.id })
+      .from(tutorAssignment)
+      .where(and(eq(tutorAssignment.studentId, studentId), eq(tutorAssignment.status, "active"))),
+  );
+  check("…and no active tutor_assignment remains (the unlink froze + closed it)", noActive.length === 0);
   const rm2 = await withBoard(A.id, (tx) =>
-    unlinkStudent(tx, {
-      kind: "tutor",
-      adultUserId: tutorLink!.adultUserId,
-      studentUserId: tutorLink!.studentUserId,
-    }),
+    unlinkStudent(tx, { boardId: A.id, kind: "tutor", studentUserId: studentId }),
   );
   check("unlinkStudent is idempotent (second call removed=0)", rm2.removed === 0);
   const survivors = await withBoard(A.id, (tx) => listPeople(tx));
   check(
-    "unlink deleted the LINK only — both people still have memberships",
-    survivors.some((p) => p.email === tutorEmail) && survivors.some((p) => p.email === studentEmail),
+    "unlink cleared the LINK only — the profiles survive",
+    survivors.some((p) => p.email === tutor2Email) && survivors.some((p) => p.email === studentEmail),
   );
 
   // ── 11. HTTP: unauth → 401 on every procedure (soft, timeout-guarded) ──
-  // ⚠️ The VERB matters. tRPC answers a GET on a mutation with 405 Method Not
-  // Allowed *before* the auth middleware runs — so a GET against setRole returns
-  // 405 whether or not the procedure is gated, and asserting 401 over GET would
-  // be a test that cannot fail for the reason it claims to. Queries go GET,
-  // mutations go POST, and each must reach the gate and be refused.
   const HTTP_LEGS: Array<{ proc: string; method: "GET" | "POST" }> = [
     { proc: "listPeople", method: "GET" },
-    { proc: "findByEmail", method: "GET" },
+    { proc: "listLinkCandidates", method: "GET" },
     { proc: "listLinks", method: "GET" },
     { proc: "setRole", method: "POST" },
     { proc: "linkStudent", method: "POST" },
@@ -420,36 +425,42 @@ async function main() {
         body: method === "POST" ? "{}" : undefined,
         signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
       });
-      check(
-        `HTTP ${method} admin.${proc} (unauth) → 401 (got ${res.status})`,
-        res.status === 401,
-      );
+      check(`HTTP ${method} admin.${proc} (unauth) → 401 (got ${res.status})`, res.status === 401);
     } catch (e: any) {
       const why = e?.name === "TimeoutError" ? "server WEDGED — not merely down" : "server not running";
       console.log(`  ~ HTTP admin.${proc} skipped (${why})`);
     }
   }
 
-  // ── cleanup (FK-safe) ──
+  // ── cleanup (FK-safe: assignments → students → role rows → profiles) ──
   const allEmails = [
     adminEmail,
-    studentEmail,
     tutorEmail,
+    tutor2Email,
     parentEmail,
+    studentEmail,
+    studentBEmail,
+    offBoardTutorEmail,
     ghostEmail,
     strangerEmail,
-    `admp-nameless-${tag}@example.com`,
+    multiEmail,
+    namelessEmail,
   ];
   await withBoard(A.id, async (tx: Tx) => {
-    await tx.delete(tutorStudent).where(eq(tutorStudent.boardId, A.id));
-    await tx.delete(parentChild).where(eq(parentChild.boardId, A.id));
-    await tx.delete(membership).where(eq(membership.boardId, A.id));
+    await tx.delete(tutorAssignment).where(eq(tutorAssignment.boardId, A.id));
+    await tx.delete(student).where(eq(student.boardId, A.id));
   });
   await withBoard(B.id, async (tx: Tx) => {
-    await tx.delete(membership).where(eq(membership.boardId, B.id));
+    await tx.delete(tutorAssignment).where(eq(tutorAssignment.boardId, B.id));
+    await tx.delete(student).where(eq(student.boardId, B.id));
   });
   for (const e of allEmails) {
-    await db.delete(appUser).where(eq(appUser.email, e));
+    const [u] = await db.select({ id: appUser.id }).from(appUser).where(eq(appUser.email, e));
+    if (u) {
+      await db.delete(tutor).where(eq(tutor.userId, u.id));
+      // parent rows cascade from app_user; delete profiles now.
+    }
+    await db.delete(appUser).where(eq(appUser.email, e)); // cascades tutor/parent/student rows
     await db.delete(users).where(eq(users.email, e));
   }
   await db.delete(board).where(eq(board.id, A.id));

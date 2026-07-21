@@ -19,7 +19,13 @@
  */
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { board, subject, TENANT_SCOPED_TABLES } from "@b2c/kernel/schema";
+import {
+  appUser,
+  board,
+  subject,
+  tutorAssignment,
+  TENANT_SCOPED_TABLES,
+} from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
@@ -112,6 +118,42 @@ async function main() {
   }
   check("WITH CHECK: cross-board insert (board_id ≠ claim) rejected", rejected);
 
+  // ── 6b. NEW scoped identity table (ID-0) — prove tutor_assignment ISOLATES,
+  // not just that the census reports it FORCE-RLS'd. Two throwaway GLOBAL
+  // profiles (app_user is not scoped) + an assignment under board A.
+  const [stu] = await db
+    .insert(appUser)
+    .values({ email: `probe-stu-${tag}@example.com`, userType: "student" })
+    .returning();
+  const [tut] = await db
+    .insert(appUser)
+    .values({ email: `probe-tut-${tag}@example.com`, userType: "tutor" })
+    .returning();
+  if (!stu || !tut) throw new Error("probe app_user insert failed");
+
+  const [taA] = await withBoard(boardA.id, (tx) =>
+    tx
+      .insert(tutorAssignment)
+      .values({ boardId: boardA.id, studentId: stu.id, tutorId: tut.id })
+      .returning(),
+  );
+  if (!taA) throw new Error("tutor_assignment insert under board A failed");
+  check("insert tutor_assignment under board A (claim A)", true);
+
+  const taUnderB = await withBoard(boardB.id, (tx) =>
+    tx.select().from(tutorAssignment).where(eq(tutorAssignment.id, taA.id)),
+  );
+  check(
+    "RLS isolation: board A's tutor_assignment invisible under claim B",
+    taUnderB.length === 0,
+  );
+
+  const taNoClaim = await db
+    .select()
+    .from(tutorAssignment)
+    .where(eq(tutorAssignment.id, taA.id));
+  check("Fail-closed: tutor_assignment invisible with no board claim", taNoClaim.length === 0);
+
   // ── 7. THE CENSUS — TENANT_SCOPED_TABLES reconciled against pg_class. ──
   // The list is hand-maintained and the toolchain checks NEITHER direction:
   //
@@ -170,7 +212,12 @@ async function main() {
     unlisted.length === 0,
   );
 
-  // cleanup
+  // cleanup (assignment + profiles before the boards they reference)
+  await withBoard(boardA.id, (tx) =>
+    tx.delete(tutorAssignment).where(eq(tutorAssignment.id, taA.id)),
+  );
+  await db.delete(appUser).where(eq(appUser.id, stu.id));
+  await db.delete(appUser).where(eq(appUser.id, tut.id));
   await withBoard(boardA.id, (tx) => tx.delete(subject).where(eq(subject.id, subjA.id)));
   await db.delete(board).where(eq(board.id, boardA.id));
   await db.delete(board).where(eq(board.id, boardB.id));

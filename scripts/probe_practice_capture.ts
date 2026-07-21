@@ -30,7 +30,7 @@ import {
   attempt,
   board,
   chapter,
-  membership,
+  student,
   practiceSession,
   question,
   subTopic,
@@ -101,6 +101,10 @@ async function main() {
   const X = await withBoard(P.id, (tx) => grantRole(tx, { email: emailX, name: "X", board: P, role: "student" }));
   const userW = W.user.id;
   const userX = X.user.id;
+  // grantRole mints only the shell (ID-4); W exercises the member-gate leg below,
+  // which needs the operational student row (onboarding's output). The practice
+  // reads themselves gate on appUserId, not requireMembership, so X needs none.
+  await withBoard(P.id, (tx: Tx) => tx.insert(student).values({ userId: userW, boardId: P.id, class: "9" }));
 
   // 2. startSession
   const s1 = await withBoard(P.id, (tx) => startSession(tx, { boardId: P.id, appUserId: userW, subTopicId: fx.subTopicA }));
@@ -229,7 +233,7 @@ async function main() {
     await tx.delete(topic).where(eq(topic.boardId, P.id));
     await tx.delete(chapter).where(eq(chapter.boardId, P.id));
     await tx.delete(subject).where(eq(subject.boardId, P.id));
-    await tx.delete(membership).where(eq(membership.boardId, P.id));
+    await tx.delete(student).where(eq(student.boardId, P.id));
   });
   await db.delete(appUser).where(eq(appUser.email, emailW));
   await db.delete(appUser).where(eq(appUser.email, emailX));

@@ -1,26 +1,42 @@
 /**
- * probe_onboarding — Slice ONB-1, Stage 1 (the BE + the migration).
+ * probe_onboarding — ID-3 exit gate (onboarding on the profile model).
  *
  * Drives services/onboarding.ts through withBoard(), i.e. as the NON-superuser
  * app role with a real board claim, so RLS is actually binding (M11: a probe
- * whose precondition can't fail proves nothing — a superuser would pass this
- * vacuously).
+ * whose precondition can't fail proves nothing).
  *
- *   1. needs-it            — no row → needsOnboarding, starting at the top
- *   2. persists + advances — an answer is stored AND current_step moves on
- *   3. resume mid-flow     — a fresh read returns the beat we stopped at
- *   4. grade is validated  — only a grade the BOARD really has (D-ONB-2)
- *   5. invalid step        — an unknown/talk-only misuse is rejected
- *   6. skip works          — an optional beat advances with no answer
- *   7. complete            — flips the flag; needsOnboarding goes false
- *   8. tutor/parent exempt — reported not-needed, NOT a 403
- *   9. RLS cross-board     — board A's row is invisible under board B
- *  10. idempotent          — re-saving/-completing can't fork or rewrite
+ * 🔑 WHAT CHANGED FROM ONB-1. The answers no longer live as columns on a
+ * board-scoped `onboarding` row. `onboarding` is now a GLOBAL state-machine
+ * header (state/status/endAt) keyed by the student's app_user profile; the
+ * answers land on the STUDENT row (class/pronoun/hero/pet, board-scoped) and
+ * app_user (phone). `about_you` is where the operational `student` row is BORN.
+ * So the RLS leg moved onto the student row (the real board boundary), and the
+ * "does the operational row exist" claim is new.
+ *
+ *   1. needs-it            — a profile shell with no header → needsOnboarding, top
+ *   2. grade chips         — the supported classes, board-independent (anti-trap)
+ *   3. about_you BIRTHS    — saveAboutYou mints the operational student row
+ *   4. resume mid-flow     — a fresh read returns the beat we stopped at
+ *   5. validation          — closed sets + required fields + wrong-path rejects
+ *   6. the walk            — hero/pet instances created + linked; phone → app_user
+ *   7. idempotent          — re-saving overwrites, never forks
+ *   8. RLS                 — the STUDENT row (A's answers) is invisible under B
+ *   9. exempt roles        — tutor/parent/admin → not-needed, NOT a 403
+ *  10. complete            — flips the flag; endAt stamped once
+ *  11. flow log            — transitions are recorded (the header's audit trail)
  *
  * Unique per-run fixtures (M22) + full teardown in `finally`.
  */
 import { and, eq, inArray } from "drizzle-orm";
-import { appUser, board, onboarding, subject } from "@b2c/kernel/schema";
+import {
+  appUser,
+  board,
+  hero,
+  onboarding,
+  onboardingFlowLog,
+  pet,
+  student,
+} from "@b2c/kernel/schema";
 import {
   FAV_CHARACTERS,
   ONBOARDING_STEPS,
@@ -36,6 +52,7 @@ import {
   OnboardingValidationError,
   saveAboutYou,
   saveStep,
+  SUPPORTED_GRADES,
 } from "../src/services/onboarding";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -66,101 +83,74 @@ const boardIds: string[] = [];
 const userIds: string[] = [];
 
 async function main() {
-  console.log("\nprobe_onboarding\n");
+  console.log("\nprobe_onboarding (ID-3)\n");
 
-  // ── fixtures: two boards (for the RLS leg), one student, one tutor ──────
-  const [boardA] = await db
-    .insert(board)
-    .values({ slug: `onb-a-${tag}`, name: "Onb A" })
-    .returning();
-  const [boardB] = await db
-    .insert(board)
-    .values({ slug: `onb-b-${tag}`, name: "Onb B" })
-    .returning();
+  // ── fixtures: two boards + a student profile SHELL + a tutor profile ──────
+  const [boardA] = await db.insert(board).values({ slug: `onb-a-${tag}`, name: "Onb A" }).returning();
+  const [boardB] = await db.insert(board).values({ slug: `onb-b-${tag}`, name: "Onb B" }).returning();
   boardIds.push(boardA!.id, boardB!.id);
 
-  const [student] = await db
+  // The shell `session.enter` would mint — (email, user_type='student'), no row.
+  const [studentP] = await db
     .insert(appUser)
-    .values({ email: `onb-student-${tag}@example.com`, name: "Onb Student" })
+    .values({ email: `onb-student-${tag}@example.com`, name: "Onb Student", userType: "student" })
     .returning();
-  const [tutor] = await db
+  const [tutorP] = await db
     .insert(appUser)
-    .values({ email: `onb-tutor-${tag}@example.com`, name: "Onb Tutor" })
+    .values({ email: `onb-tutor-${tag}@example.com`, name: "Onb Tutor", userType: "tutor" })
     .returning();
-  userIds.push(student!.id, tutor!.id);
+  userIds.push(studentP!.id, tutorP!.id);
 
-  // Real catalogue grades on board A — the chips must come from THESE.
-  await withBoard(boardA!.id, async (tx) => {
-    await tx.insert(subject).values([
-      { boardId: boardA!.id, slug: `phys-${tag}`, name: "Physics", grade: "10" },
-      { boardId: boardA!.id, slug: `chem-${tag}`, name: "Chemistry", grade: "10" },
-      { boardId: boardA!.id, slug: `bio-${tag}`, name: "Biology", grade: "9" },
-    ]);
-  });
+  const email = studentP!.email;
+  const S = { email, boardId: boardA!.id, role: "student" };
 
-  const S = { userId: student!.id, boardId: boardA!.id, role: "student" };
-
-  // ── 1. needs-it ─────────────────────────────────────────────────────────
+  // ── 1. needs-it ───────────────────────────────────────────────────────────
   console.log("1. needs-it");
   await withBoard(boardA!.id, async (tx) => {
     const st = await getState(tx, S);
-    check("no row → needsOnboarding", st.needsOnboarding === true);
+    check("a shell with no header → needsOnboarding", st.needsOnboarding === true);
     check("starts at the first beat", st.currentStep === "greet", st.currentStep);
-    check("read is non-provisioning (still no row)", true);
+    check("no answers yet", st.answers.grade === null && st.answers.phone === null);
   });
-  const preRows = await db
-    .select()
-    .from(onboarding)
-    .where(eq(onboarding.userId, student!.id));
-  check("getState really wrote nothing (a query must not write)", preRows.length === 0);
+  const preHeader = await db.select().from(onboarding).where(eq(onboarding.userId, studentP!.id));
+  check("getState wrote nothing (a query must not write)", preHeader.length === 0);
 
-  // ── 2. grade chips are the SUPPORTED grades, not the catalogue's ────────
-  //
-  // 🔑 INVERTED in Slice M, and the inversion is the point. These two legs used
-  // to assert D-ONB-2: that the chips were `selectDistinct(subject.grade)` and
-  // that RLS scoped them per board (board B, with no subjects, returned []).
-  // Both claims are now FALSE BY DESIGN — the founder's call is that the product
-  // offers Class 9 and Class 10, and the empty-list case those legs protected is
-  // exactly the trap that made a constant necessary: grade is required to finish
-  // onboarding, so a board whose catalogue yields [] strands its students
-  // forever. See the doc comment on `listGradeOptions`.
-  //
-  // Kept as legs rather than deleted, because "the list does NOT vary by board"
-  // is now a guarantee worth failing on: the moment someone re-derives it, a
-  // contentless board silently becomes a dead end again.
+  // ── 2. grade chips are the SUPPORTED classes, board-independent ────────────
   console.log("\n2. grade chips");
   await withBoard(boardA!.id, async (tx) => {
     const opts = await listGradeOptions(tx);
-    check(
-      "the supported grades, in order",
-      JSON.stringify(opts) === JSON.stringify(["9", "10"]),
-      JSON.stringify(opts),
-    );
+    check("the supported grades, in order", JSON.stringify(opts) === JSON.stringify([...SUPPORTED_GRADES]), JSON.stringify(opts));
   });
   await withBoard(boardB!.id, async (tx) => {
     const opts = await listGradeOptions(tx);
-    // 🔴 THE ANTI-TRAP LEG. Board B has NO subjects at all — the population
-    // igcse now ships as. It must still offer both grades, or its students
-    // cannot answer the beat and cannot enter the app.
-    check(
-      "a board with NO subjects still offers both grades (the anti-trap)",
-      JSON.stringify(opts) === JSON.stringify(["9", "10"]),
-      JSON.stringify(opts),
-    );
+    // A board with NO catalogue still offers the grades — the anti-trap: grade is
+    // required to finish, so an empty list would strand its students forever.
+    check("a board with NO subjects still offers the grades (anti-trap)", JSON.stringify(opts) === JSON.stringify([...SUPPORTED_GRADES]), JSON.stringify(opts));
   });
 
-  // ── 3. persists + advances (S92: the duo beat) ──────────────────────────
-  console.log("\n3. persists + advances");
+  // ── 3. about_you BIRTHS the operational student row ────────────────────────
+  console.log("\n3. about_you births the student row");
   await withBoard(boardA!.id, async (tx) => {
-    const st = await saveStep(tx, { ...S, step: "greet", value: null });
-    check("talk-only beat advances greet → about_you", st.currentStep === "about_you", st.currentStep);
-    const st2 = await saveAboutYou(tx, { ...S, grade: "10", pronoun: "she" });
-    check("grade persisted", st2.answers.grade === "10", String(st2.answers.grade));
-    check("pronoun persisted in the SAME write", st2.answers.pronoun === "she", String(st2.answers.pronoun));
-    check("advanced about_you → fav_character", st2.currentStep === "fav_character", st2.currentStep);
+    const st0 = await saveStep(tx, { ...S, step: "greet", value: null });
+    check("talk-only greet advances → about_you", st0.currentStep === "about_you", st0.currentStep);
+    // Before about_you there is a header but NO student row.
+    const [rowBefore] = await tx.select({ userId: student.userId }).from(student).where(eq(student.userId, studentP!.id));
+    check("no student row before about_you (a board-less shell)", !rowBefore);
+
+    const st = await saveAboutYou(tx, { ...S, grade: "10", pronoun: "she" });
+    check("grade persisted (→ student.class)", st.answers.grade === "10", String(st.answers.grade));
+    check("pronoun persisted in the SAME write", st.answers.pronoun === "she", String(st.answers.pronoun));
+    check("advanced about_you → fav_character", st.currentStep === "fav_character", st.currentStep);
+
+    const [rowAfter] = await tx
+      .select({ boardId: student.boardId, class: student.class, pronoun: student.pronoun })
+      .from(student)
+      .where(eq(student.userId, studentP!.id));
+    check("🔑 the operational student row now EXISTS on this board", rowAfter?.boardId === boardA!.id, String(rowAfter?.boardId));
+    check("…carrying class + pronoun", rowAfter?.class === "10" && rowAfter?.pronoun === "she");
   });
 
-  // ── 4. resume mid-flow ──────────────────────────────────────────────────
+  // ── 4. resume mid-flow ─────────────────────────────────────────────────────
   console.log("\n4. resume mid-flow");
   await withBoard(boardA!.id, async (tx) => {
     const st = await getState(tx, S);
@@ -169,314 +159,165 @@ async function main() {
     check("still needs onboarding (not complete)", st.needsOnboarding === true);
   });
 
-  // ── 5. validation ───────────────────────────────────────────────────────
+  // ── 5. validation ──────────────────────────────────────────────────────────
   console.log("\n5. validation");
   await withBoard(boardA!.id, async (tx) => {
-    const e = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10th", pronoun: "he" }));
-    check(
-      "a free-text grade ('10th') is rejected",
-      e instanceof OnboardingValidationError,
-      e ? e.message : "did not throw",
-    );
-    const e2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: null, pronoun: "he" }));
-    check("grade cannot be skipped (it is the one field with a consumer)", e2 instanceof OnboardingValidationError);
-
-    // S92 — pronoun is closed-set + required. S123 removed the 'name' opt-out
-    // (founder), so the closed set is now exactly he|she and there is no
-    // third way through: the two stickers are the answer.
-    const eP = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: null }));
-    check("pronoun cannot be skipped", eP instanceof OnboardingValidationError);
-    // S123: the REMOVED value must now be refused like any other unknown. This
-    // is the leg that would catch 'name' quietly surviving in the contract.
-    const eP3 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "name" }));
-    check(
-      "S123: the removed 'just {name}' opt-out is now REJECTED",
-      eP3 instanceof OnboardingValidationError,
-    );
-    const eP2 = await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "male" }));
-    check(
-      "pronoun rejects a value outside the contract",
-      eP2 instanceof OnboardingValidationError,
-      eP2 ? eP2.message : "did not throw",
-    );
-
-    // The multi-answer beat must NOT be reachable through the single-answer
-    // path — that would write one column and silently drop the other.
-    const eDuo = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "about_you", value: "10" }),
-    );
-    check(
-      "saveStep('about_you') is rejected — it writes two columns",
-      eDuo instanceof OnboardingValidationError,
-      eDuo ? eDuo.message : "did not throw",
-    );
-
-    const e3 = await expectThrow(() => saveStep(tx, { ...S, step: "greet", value: "hi" }));
-    check("a talk-only beat refuses an answer", e3 instanceof OnboardingValidationError);
-    const e4 = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "done" as any, value: null }),
-    );
-    check("'done' cannot be reached via saveStep", e4 instanceof OnboardingValidationError);
-
-    // S91 — fav_character is chips now, so it is closed-set. This is the claim
-    // that makes "Pikachu can only shout something we wrote" true: the id he
-    // echoes cannot be a string a student typed.
-    const e5 = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "fav_character", value: "No movie" }),
-    );
-    check(
-      "fav_character rejects free text ('No movie' — the S90 bug, at the root)",
-      e5 instanceof OnboardingValidationError,
-      e5 ? e5.message : "did not throw",
-    );
-    const e6 = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "fav_character", value: null }),
-    );
-    check("fav_character cannot be skipped (every chip is an answer)", e6 instanceof OnboardingValidationError);
-
-    // S91 — pet is required but NOT closed-set: 'something else' is a real
-    // answer. Both halves of that need asserting, or a later tightening
-    // silently kills the hatch.
-    const e7 = await expectThrow(() => saveStep(tx, { ...S, step: "pet", value: null }));
-    check("pet is required", e7 instanceof OnboardingValidationError);
+    check("a free-text grade ('10th') is rejected", (await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10th", pronoun: "he" }))) instanceof OnboardingValidationError);
+    check("grade cannot be skipped", (await expectThrow(() => saveAboutYou(tx, { ...S, grade: null, pronoun: "he" }))) instanceof OnboardingValidationError);
+    check("pronoun cannot be skipped", (await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: null }))) instanceof OnboardingValidationError);
+    check("the removed 'just {name}' opt-out is REJECTED (S123)", (await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "name" }))) instanceof OnboardingValidationError);
+    check("pronoun rejects a value outside the contract", (await expectThrow(() => saveAboutYou(tx, { ...S, grade: "10", pronoun: "male" }))) instanceof OnboardingValidationError);
+    check("saveStep('about_you') is rejected — it writes two things", (await expectThrow(() => saveStep(tx, { ...S, step: "about_you", value: "10" }))) instanceof OnboardingValidationError);
+    check("a talk-only beat refuses an answer", (await expectThrow(() => saveStep(tx, { ...S, step: "greet", value: "hi" }))) instanceof OnboardingValidationError);
+    check("'done' cannot be reached via saveStep", (await expectThrow(() => saveStep(tx, { ...S, step: "done" as any, value: null }))) instanceof OnboardingValidationError);
+    check("fav_character rejects free text (the S90 bug, at the root)", (await expectThrow(() => saveStep(tx, { ...S, step: "fav_character", value: "No movie" }))) instanceof OnboardingValidationError);
+    check("fav_character cannot be skipped", (await expectThrow(() => saveStep(tx, { ...S, step: "fav_character", value: null }))) instanceof OnboardingValidationError);
+    check("pet is required", (await expectThrow(() => saveStep(tx, { ...S, step: "pet", value: null }))) instanceof OnboardingValidationError);
   });
 
-  // ── 5b. the removed beats are really gone (S90, S91) ────────────────────
-  // A deletion nobody asserts is a deletion that quietly comes back. These
-  // beats must be unreachable as STEPS even though their columns still exist.
+  // ── 5b. the removed beats are really gone (S90, S91) ───────────────────────
   console.log("\n5b. removed beats");
   for (const gone of ["school", "fun_fact_about", "fun_fact", "grade"]) {
     check(`'${gone}' is not in ONBOARDING_STEPS`, !(ONBOARDING_STEPS as readonly string[]).includes(gone));
   }
   await withBoard(boardA!.id, async (tx) => {
-    const e = await expectThrow(() => saveStep(tx, { ...S, step: "school" as any, value: "DPS" }));
-    check(
-      "saveStep('school') is rejected — the beat no longer exists",
-      e instanceof OnboardingValidationError,
-      e ? e.message : "did not throw",
-    );
-    const e2 = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "fun_fact" as any, value: "Ravi solves cubes" }),
-    );
-    check(
-      "saveStep('fun_fact') is rejected — S91 removed the beat",
-      e2 instanceof OnboardingValidationError,
-      e2 ? e2.message : "did not throw",
-    );
-    const e3 = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "fun_fact_about" as any, value: "friend" }),
-    );
-    check("saveStep('fun_fact_about') is rejected — S91 removed the beat", e3 instanceof OnboardingValidationError);
+    check("saveStep('school') is rejected — the beat no longer exists", (await expectThrow(() => saveStep(tx, { ...S, step: "school" as any, value: "DPS" }))) instanceof OnboardingValidationError);
+    check("saveStep('fun_fact') is rejected", (await expectThrow(() => saveStep(tx, { ...S, step: "fun_fact" as any, value: "cubes" }))) instanceof OnboardingValidationError);
   });
 
-  // ── 5c. the flow's shape (S91) ──────────────────────────────────────────
-  // The ORDER is the contract the FE copy is keyed by and the server resumes
-  // on. Asserting it here is what stops a reorder from silently teleporting a
-  // half-done student.
-  console.log("\n5c. the beat order");
+  // ── 5c. the flow's shape ───────────────────────────────────────────────────
+  console.log("\n5c. beat order");
   check(
     "ONBOARDING_STEPS is the ONB-7 flow (pikachu AND lore are GONE)",
-    JSON.stringify(ONBOARDING_STEPS) ===
-      JSON.stringify(["greet", "about_you", "fav_character", "pet", "phone", "done"]),
+    JSON.stringify(ONBOARDING_STEPS) === JSON.stringify(["greet", "about_you", "fav_character", "pet", "phone", "done"]),
     JSON.stringify(ONBOARDING_STEPS),
   );
   check("the roster is the S96 eleven", FAV_CHARACTERS.length === 11, String(FAV_CHARACTERS.length));
   check("the companion set is the S96 seven", PETS.length === 7, String(PETS.length));
 
-  // ── 5d. a RETIRED step still resolves (S96) ─────────────────────────────
-  // 🔴 The bug this exists for: real rows hold current_step='pikachu' (every
-  // S91–S95 walk, the founder's own included). ONB-5 deleted the beat, and a
-  // step the list no longer names would have resolved to "unknown" — which the
-  // walker's contract treats as "let them through" (G3). Those students would
-  // have been silently skipped PAST THE ENTIRE STORY with no error anywhere.
-  //
-  // A deletion nobody asserts is a deletion that quietly comes back (S90).
+  // ── 5d. a RETIRED step still resolves forward ──────────────────────────────
   console.log("\n5d. retired steps resolve forward");
-  check("a stored 'pikachu' row resumes at its SUCCESSOR, not nowhere", resolveOnboardingStep("pikachu") === "pet", resolveOnboardingStep("pikachu"));
-  check("'grade' (S92) → about_you", resolveOnboardingStep("grade") === "about_you");
-  check("'school' (S90) → fav_character", resolveOnboardingStep("school") === "fav_character");
-  check("'fun_fact_about' (S91) → pet", resolveOnboardingStep("fun_fact_about") === "pet");
+  check("'pikachu' → its successor 'pet'", resolveOnboardingStep("pikachu") === "pet", resolveOnboardingStep("pikachu"));
+  check("'grade' → about_you", resolveOnboardingStep("grade") === "about_you");
+  check("'lore' → done (ONB-7)", resolveOnboardingStep("lore") === "done");
   check("a LIVE step resolves to itself", resolveOnboardingStep("pet") === "pet");
-  // ONB-7: the Gandalf reveal left onboarding (introduced in-product later,
-  // when the student is stuck). A row parked on it closes out, replaying
-  // nothing — mapping to `done` is what makes cutting the LAST beat safe.
-  check("a stored 'lore' row resumes at done (ONB-7)", resolveOnboardingStep("lore") === "done", resolveOnboardingStep("lore"));
-  check("total: every retired step lands on a real, live step", Object.values(RETIRED_ONBOARDING_STEPS).every((s) => (ONBOARDING_STEPS as readonly string[]).includes(s)));
-  // Junk must not trap a student mid-flow; greet is the only safe restart.
+  check("every retired step lands on a real, live step", Object.values(RETIRED_ONBOARDING_STEPS).every((s) => (ONBOARDING_STEPS as readonly string[]).includes(s)));
   check("garbage falls back to greet, never undefined", resolveOnboardingStep("nonsense") === "greet");
-
-  // The claim above is pure — it proves the TABLE, not that anyone reads it.
-  // This one writes a real 'pikachu' row (exactly what an S91–S95 student left
-  // behind) straight past the service and asserts getState resolves it, which
-  // is the only version of this claim that would have caught the live bug: the
-  // old code did `row.currentStep as OnboardingStep`, a bare cast on a column
-  // the DB does not constrain, and the cast made the type LOOK safe.
+  // The load-bearing version: a REAL stored 'pikachu' header, read through getState.
   await withBoard(boardA!.id, async (tx) => {
-    await tx.update(onboarding).set({ currentStep: "pikachu" }).where(eq(onboarding.userId, S.userId));
+    await tx.update(onboarding).set({ state: "pikachu" }).where(eq(onboarding.userId, studentP!.id));
     const st = await getState(tx, S);
-    check("a REAL stored 'pikachu' row resumes at pet, through getState", st.currentStep === "pet", st.currentStep);
-    check("...and is not silently dropped out of onboarding", st.needsOnboarding === true);
-    // Put it back where 5c left it so the walk below starts where it expects.
-    await tx.update(onboarding).set({ currentStep: "fav_character" }).where(eq(onboarding.userId, S.userId));
+    check("a REAL stored 'pikachu' header resumes at pet, through getState", st.currentStep === "pet", st.currentStep);
+    check("…and is not silently dropped out of onboarding", st.needsOnboarding === true);
+    await tx.update(onboarding).set({ state: "fav_character" }).where(eq(onboarding.userId, studentP!.id));
   });
 
-  // ── 6. the S91 walk: chips, the pet, and the skip ───────────────────────
-  console.log("\n6. chips, pet, skip");
+  // ── 6. the walk: hero + pet instances, phone → app_user ────────────────────
+  console.log("\n6. the walk");
   await withBoard(boardA!.id, async (tx) => {
-    // Whitespace-only is now a REJECT, not a null: fav_character is required.
-    const blankErr = await expectThrow(() => saveStep(tx, { ...S, step: "fav_character", value: "   " }));
-    check("whitespace-only fav_character is rejected, not stored blank", blankErr instanceof OnboardingValidationError);
+    check("whitespace-only fav_character is rejected", (await expectThrow(() => saveStep(tx, { ...S, step: "fav_character", value: "   " }))) instanceof OnboardingValidationError);
 
     const ch = await saveStep(tx, { ...S, step: "fav_character", value: "iron_man" });
-    check("a chip id persists", ch.answers.favCharacter === "iron_man", String(ch.answers.favCharacter));
-    check("advanced fav_character → pet (the echo beat is gone)", ch.currentStep === "pet", ch.currentStep);
+    check("a chip id persists (→ hero instance)", ch.answers.favCharacter === "iron_man", String(ch.answers.favCharacter));
+    check("advanced fav_character → pet", ch.currentStep === "pet", ch.currentStep);
+    const [sHero] = await tx.select({ heroId: student.heroId }).from(student).where(eq(student.userId, studentP!.id));
+    check("🔑 a per-student HERO instance was created + linked", !!sHero?.heroId);
+    if (sHero?.heroId) {
+      const [h] = await tx.select({ type: hero.heroType }).from(hero).where(eq(hero.heroId, sHero.heroId));
+      check("…storing the picked character", h?.type === "iron_man", String(h?.type));
+    }
 
-    // 🔴 D-ONB-13 — the pronoun list is a DEFAULT, not a gate. This student's
-    // pronoun is 'she' (set at about_you, section 3) and `batman` is on the
-    // `he` list. The UI offers him via "more heroes", so the server MUST take
-    // him. This is the claim that fails the moment someone "helpfully"
-    // validates the hero against the pronoun's list — which would turn the
-    // display default into a cage, and the app would be telling a child who
-    // they are.
-    //
-    // ⚠️ The hero MUST be off this student's own list or the claim is vacuous
-    // (M11) — a same-list pick passes just as green under a gated server.
+    // Cross-list: a `he`-list hero for a `she` student is ACCEPTED (the list is a
+    // display default, not a gate). Re-saving updates the SAME hero, not a 2nd.
+    const heroBefore = sHero?.heroId;
     const crossed = await saveStep(tx, { ...S, step: "fav_character", value: "batman" });
-    check("a `he`-list hero is accepted for a `she` student (D-ONB-13)", crossed.answers.favCharacter === "batman", String(crossed.answers.favCharacter));
+    check("a `he`-list hero is accepted for a `she` student (D-ONB-13)", crossed.answers.favCharacter === "batman");
+    const [sHero2] = await tx.select({ heroId: student.heroId }).from(student).where(eq(student.userId, studentP!.id));
+    check("re-saving fav_character updates the SAME hero instance", sHero2?.heroId === heroBefore);
     await saveStep(tx, { ...S, step: "fav_character", value: "iron_man" });
 
-    // The pet: a known id. Slice L CLOSED this set.
     const known = await saveStep(tx, { ...S, step: "pet", value: "owl" });
-    check("a known pet persists", known.answers.pet === "owl", String(known.answers.pet));
+    check("a known pet persists (→ pet instance)", known.answers.pet === "owl", String(known.answers.pet));
     check("advanced pet → phone", known.currentStep === "phone", known.currentStep);
-    check("isKnownPet('owl') → it arrives now", isKnownPet(known.answers.pet) === true);
+    check("isKnownPet('owl') → true", isKnownPet(known.answers.pet) === true);
+    const [sPet] = await tx.select({ petId: student.petId }).from(student).where(eq(student.userId, studentP!.id));
+    check("🔑 a per-student PET instance was created + linked", !!sPet?.petId);
 
-    // 🔑 Slice L — INVERTED. This leg used to assert "a CUSTOM pet is allowed
-    // (the 'something else' hatch)". The hatch is deleted and saveStep now
-    // validates against PETS, so the claim flips: an off-list pet is REFUSED.
-    // Inverted rather than deleted, for the same reason as probe_echo_guard
-    // §7/§8 — the rule is what the slice is, and an unwritten rule grows back.
-    let rejected = false;
-    try {
-      await saveStep(tx, { ...S, step: "pet", value: "llama" });
-    } catch (e) {
-      rejected = e instanceof OnboardingValidationError;
-    }
-    check("🔴 a CUSTOM pet is REFUSED — the set is closed (Slice L)", rejected);
-    // …and the refusal must not have half-written. A validation that throws
-    // AFTER the upsert would leave the student holding a pet nobody can render.
+    check("a CUSTOM pet is REFUSED — the set is closed (Slice L)", (await expectThrow(() => saveStep(tx, { ...S, step: "pet", value: "llama" }))) instanceof OnboardingValidationError);
     const after = await getState(tx, S);
     check("the refused write left the known pet intact", after.answers.pet === "owl", String(after.answers.pet));
+    check("isKnownPet('llama') → false", isKnownPet("llama") === false);
 
-    // isKnownPet still has a job: PRE-Slice-L rows hold free text and are read
-    // on every resume. This is the read-path claim, asserted without writing
-    // one (the write path is now closed, which is the point).
-    check("isKnownPet('llama') → false, so a legacy row takes the stand-in owl", isKnownPet("llama") === false);
-
-    // INVERTED this session: the Skip button is gone and phone is required, so
-    // the three legs that lived here — "optional phone skips with no answer",
-    // its advance, and the pet surviving that skip — assert behaviour that no
-    // longer exists. S119's lesson is why they are inverted rather than
-    // deleted: a probe that drives saveStep directly does not fail when the
-    // rule tightens under it, it THROWS, and takes every downstream leg with it.
-    const ePhoneNull = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "phone", value: null }),
-    );
-    check(
-      "phone REQUIRED — a null answer is refused, not skipped",
-      ePhoneNull instanceof OnboardingValidationError,
-      ePhoneNull ? ePhoneNull.message : "did not throw",
-    );
-    const ePhoneLand = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "phone", value: "1234567890" }),
-    );
-    check(
-      "phone SHAPED — ten digits starting 1 is refused",
-      ePhoneLand instanceof OnboardingValidationError,
-      ePhoneLand ? ePhoneLand.message : "did not throw",
-    );
-    const ePhoneShort = await expectThrow(() =>
-      saveStep(tx, { ...S, step: "phone", value: "987654321" }),
-    );
-    check(
-      "phone SHAPED — nine digits is refused",
-      ePhoneShort instanceof OnboardingValidationError,
-      ePhoneShort ? ePhoneShort.message : "did not throw",
-    );
+    check("phone REQUIRED — a null answer is refused", (await expectThrow(() => saveStep(tx, { ...S, step: "phone", value: null }))) instanceof OnboardingValidationError);
+    check("phone SHAPED — ten digits starting 1 is refused", (await expectThrow(() => saveStep(tx, { ...S, step: "phone", value: "1234567890" }))) instanceof OnboardingValidationError);
+    check("phone SHAPED — nine digits is refused", (await expectThrow(() => saveStep(tx, { ...S, step: "phone", value: "987654321" }))) instanceof OnboardingValidationError);
 
     const phoned = await saveStep(tx, { ...S, step: "phone", value: "9876543210" });
-    check("a real mobile is accepted", phoned.answers.phone === "9876543210", String(phoned.answers.phone));
-    check("and advances phone → done (lore is gone, ONB-7)", phoned.currentStep === "done", phoned.currentStep);
+    check("a real mobile is accepted (→ app_user.phone)", phoned.answers.phone === "9876543210", String(phoned.answers.phone));
+    check("and advances phone → done", phoned.currentStep === "done", phoned.currentStep);
     check("the pet survives the phone step", phoned.answers.pet === "owl", String(phoned.answers.pet));
+    const [u] = await tx.select({ phone: appUser.phone }).from(appUser).where(eq(appUser.id, studentP!.id));
+    check("the phone landed on the app_user profile", u?.phone === "9876543210", String(u?.phone));
   });
 
-  // ── 7. idempotent ───────────────────────────────────────────────────────
+  // ── 7. idempotent ──────────────────────────────────────────────────────────
   console.log("\n7. idempotent");
   await withBoard(boardA!.id, async (tx) => {
-    // S123: was `pronoun: "name"` — the removed "just {name}" opt-out. Left in
-    // place it did NOT fail this leg, it THREW out of the whole probe at 59/72
-    // and took ~13 downstream legs with it, reporting a shape that looks like a
-    // small red. Exactly S119's miss, in the same file.
     await saveAboutYou(tx, { ...S, grade: "9", pronoun: "he" });
     await saveAboutYou(tx, { ...S, grade: "9", pronoun: "he" });
-    const rows = await tx
-      .select()
-      .from(onboarding)
-      .where(and(eq(onboarding.userId, student!.id), eq(onboarding.boardId, boardA!.id)));
-    check("re-saving overwrites, never forks a second row", rows.length === 1, `${rows.length} rows`);
-    check("the overwrite took", rows[0]!.grade === "9");
+    const rows = await tx.select().from(student).where(eq(student.userId, studentP!.id));
+    check("re-saving overwrites, never forks a second student row", rows.length === 1, `${rows.length} rows`);
+    check("the overwrite took (class 9)", rows[0]!.class === "9");
+    const heads = await db.select().from(onboarding).where(eq(onboarding.userId, studentP!.id));
+    check("still exactly ONE onboarding header", heads.length === 1, `${heads.length} rows`);
   });
 
-  // ── 8. RLS cross-board ──────────────────────────────────────────────────
-  console.log("\n8. RLS");
+  // ── 8. RLS — the STUDENT row is the board boundary now ─────────────────────
+  console.log("\n8. RLS (the student row)");
   await withBoard(boardB!.id, async (tx) => {
-    const rows = await tx
-      .select()
-      .from(onboarding)
-      .where(eq(onboarding.userId, student!.id));
-    check("board A's onboarding row is INVISIBLE under board B", rows.length === 0, `${rows.length} rows`);
+    const rows = await tx.select().from(student).where(eq(student.userId, studentP!.id));
+    check("board A's student row is INVISIBLE under board B", rows.length === 0, `${rows.length} rows`);
+    // The header is global, but the ANSWERS are board-scoped — so board B sees no
+    // grade even though the header exists.
     const st = await getState(tx, { ...S, boardId: boardB!.id });
-    check("→ so board B reports a fresh start, not A's progress", st.currentStep === "greet");
+    check("→ board B reads no board-scoped answers (grade null under B)", st.answers.grade === null, String(st.answers.grade));
   });
 
-  // ── 9. tutor/parent exempt ──────────────────────────────────────────────
+  // ── 9. exempt roles ────────────────────────────────────────────────────────
   console.log("\n9. exempt roles");
   await withBoard(boardA!.id, async (tx) => {
     for (const role of ["tutor", "parent", "admin"]) {
-      const st = await getState(tx, { userId: tutor!.id, boardId: boardA!.id, role });
+      const st = await getState(tx, { email: tutorP!.email, boardId: boardA!.id, role });
       check(`${role} → needsOnboarding false (exempt, not 403)`, st.needsOnboarding === false);
     }
   });
 
-  // ── 10. complete ────────────────────────────────────────────────────────
+  // ── 10. complete ───────────────────────────────────────────────────────────
   console.log("\n10. complete");
-  let firstCompletedAt: Date | null = null;
+  let firstEndAt: Date | null = null;
   await withBoard(boardA!.id, async (tx) => {
-    const st = await complete(tx, { userId: student!.id, boardId: boardA!.id });
+    const st = await complete(tx, { email, boardId: boardA!.id });
     check("complete flips the flag", st.needsOnboarding === false);
     check("status is completed", st.status === "completed");
     check("current_step lands on 'done'", st.currentStep === "done", st.currentStep);
     check("answers survive completion", st.answers.grade === "9");
-    const [row] = await tx
-      .select()
-      .from(onboarding)
-      .where(eq(onboarding.userId, student!.id));
-    firstCompletedAt = row!.completedAt;
-    check("completed_at is stamped", firstCompletedAt !== null);
+    const [row] = await tx.select().from(onboarding).where(eq(onboarding.userId, studentP!.id));
+    firstEndAt = row!.endAt;
+    check("end_at is stamped", firstEndAt !== null);
   });
-
   await new Promise((r) => setTimeout(r, 50));
   await withBoard(boardA!.id, async (tx) => {
-    await complete(tx, { userId: student!.id, boardId: boardA!.id });
-    const [row] = await tx
-      .select()
-      .from(onboarding)
-      .where(eq(onboarding.userId, student!.id));
-    check(
-      "completing twice keeps the FIRST completed_at",
-      row!.completedAt?.getTime() === (firstCompletedAt as Date | null)?.getTime(),
-    );
+    await complete(tx, { email, boardId: boardA!.id });
+    const [row] = await tx.select().from(onboarding).where(eq(onboarding.userId, studentP!.id));
+    check("completing twice keeps the FIRST end_at", row!.endAt?.getTime() === (firstEndAt as Date | null)?.getTime());
   });
+
+  // ── 11. flow log — transitions recorded ────────────────────────────────────
+  console.log("\n11. flow log");
+  const [head] = await db.select({ id: onboarding.id }).from(onboarding).where(eq(onboarding.userId, studentP!.id));
+  const logs = await db.select().from(onboardingFlowLog).where(eq(onboardingFlowLog.onboardingId, head!.id));
+  check("the flow log recorded the transitions (append-only trail)", logs.length > 0, `${logs.length} rows`);
+  check("a completed transition was logged", logs.some((l) => l.status === "completed"));
 }
 
 main()
@@ -485,14 +326,22 @@ main()
     console.error("\nprobe threw:", e);
   })
   .finally(async () => {
-    // teardown (M22) — onboarding/subject first: they reference board + app_user.
+    // teardown (M22). student rows reference hero/pet + board + app_user; delete
+    // them first, then the orphan hero/pet instances, then app_user (which
+    // cascades onboarding + flow_log), then boards.
+    const heroPetIds: { heroId: string | null; petId: string | null }[] = [];
     for (const b of boardIds) {
       await withBoard(b, async (tx) => {
-        await tx.delete(onboarding).where(eq(onboarding.boardId, b));
-        await tx.delete(subject).where(eq(subject.boardId, b));
+        const rows = await tx.select({ heroId: student.heroId, petId: student.petId }).from(student).where(eq(student.boardId, b));
+        heroPetIds.push(...rows);
+        await tx.delete(student).where(eq(student.boardId, b));
       });
     }
-    if (userIds.length) await db.delete(appUser).where(inArray(appUser.id, userIds));
+    const heroes = heroPetIds.map((r) => r.heroId).filter((x): x is string => !!x);
+    const pets = heroPetIds.map((r) => r.petId).filter((x): x is string => !!x);
+    if (heroes.length) await db.delete(hero).where(inArray(hero.heroId, heroes));
+    if (pets.length) await db.delete(pet).where(inArray(pet.petId, pets));
+    if (userIds.length) await db.delete(appUser).where(inArray(appUser.id, userIds)); // cascades onboarding + flow_log
     if (boardIds.length) await db.delete(board).where(inArray(board.id, boardIds));
 
     console.log(`\n${passed} passed, ${failed} failed\n`);
