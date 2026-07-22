@@ -45,6 +45,7 @@ import {
   subTopic,
   subject,
   topic,
+  tutor,
 } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -150,6 +151,12 @@ async function main() {
   // Single-board model: `stu` is on P and cannot also be on Q (student PK = userId).
   await withBoard(Q.id, (tx: Tx) => tx.insert(student).values({ userId: stuQ.id, boardId: Q.id, class: "9" }));
 
+  // Make `tut` an OPERATIONAL tutor on P (detail row, board in boards[]) — for the
+  // role-agnostic serve test (test 7b): a tutor viewing an authored figure. The
+  // `tutor` table is global (no RLS). Regression guard for the spranav bug where
+  // the student-default gate 403'd a tutor with no student row.
+  await db.insert(tutor).values({ userId: tut.id, boards: [P.id], status: "active" });
+
   // 2 + 3. Render the spec → a PNG.
   const r1 = await generateImageForQuestion(P.id, fx.qImg);
   check("generateImageForQuestion → imageId + version 1 + storageKey + bytes", !!r1.imageId && r1.version === 1 && r1.storageKey === `${fx.qImg}/v1.png` && r1.bytes.length > 0);
@@ -174,9 +181,15 @@ async function main() {
   const underQ = await withBoard(Q.id, (tx: Tx) => tx.select().from(questionImage).where(eq(questionImage.id, r1.imageId)));
   check("RLS: the P image row is invisible under board Q", underQ.length === 0);
 
-  // 7. serve happy path.
+  // 7. serve happy path (student).
   const served = await resolveImageBytes({ imageId: r1.imageId, boardSlug: P.slug, email: stuEmail });
   check("serve: P member gets the PNG bytes back", isPng(served.bytes) && served.mime === "image/png" && served.bytes.length === r1.bytes.length);
+
+  // 7b. serve role-agnostic (tutor): a tutor serving P (in boards[]) gets the bytes.
+  // An <img src> can't send x-profile, so the gate must accept ANY board-belonging
+  // role, not only student. This is the spranav authoring-image regression.
+  const servedTut = await resolveImageBytes({ imageId: r1.imageId, boardSlug: P.slug, email: tut.email });
+  check("serve: P tutor (no student row) gets the PNG bytes back", isPng(servedTut.bytes) && servedTut.bytes.length === r1.bytes.length);
 
   // 8. serve 401 — no email.
   let s401 = 0;
@@ -227,6 +240,7 @@ async function main() {
     await tx.delete(student).where(eq(student.boardId, P.id));
   });
   await withBoard(Q.id, (tx: Tx) => tx.delete(student).where(eq(student.boardId, Q.id)));
+  await db.delete(tutor).where(eq(tutor.userId, tut.id)); // global; before the app_user FK parent
   await db.delete(appUser).where(and(eq(appUser.email, stuEmail)));
   await db.delete(appUser).where(eq(appUser.email, stuQEmail));
   await db.delete(appUser).where(eq(appUser.email, `img-tut-${tag}@example.com`));

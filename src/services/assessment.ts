@@ -163,6 +163,60 @@ CALIBRATION: confidence clashing with execution quality → calibrationFlag ('ov
 
 Return applicable=false when the question/answer offered no real execution to read.`;
 
+// ── Slice CORRECTNESS-JUDGE ──────────────────────────────────────────────────
+// The fallback for answers that are CORRECT BUT TERSE — a one-line answer, or a
+// multi-part question ("(a)… (b)…") answered as short answers — which the
+// reasoning scorers above abstain on (no "why" exposed). Here we grade the answer
+// for CORRECTNESS against the reference and write ONE capped conceptual read, so
+// nothing a student actually answered is invisible or uncounted. Runs ONLY after
+// both reasoning reads abstain (never overrides a real reasoning read). Capped at
+// 4 — a correct-but-unexplained answer never demonstrates the reasoning a 5 needs.
+const correctnessJudgeSchema = z.object({
+  applicable: z.boolean(),
+  level: z.number().int().min(1).max(5).nullable(), // capped to 4 in code
+  reasoning: z.string().min(1),
+});
+type CorrectnessJudge = z.infer<typeof correctnessJudgeSchema>;
+
+const correctnessResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    applicable: {
+      type: Type.BOOLEAN,
+      description:
+        "false ONLY when there is nothing to grade (empty/gibberish/entirely unrelated); a wrong-but-relevant answer is applicable with a LOW level",
+    },
+    level: {
+      type: Type.INTEGER,
+      nullable: true,
+      description: "correctness rung 1–4 when applicable (never 5 — no reasoning shown); null when applicable=false",
+    },
+    reasoning: {
+      type: Type.STRING,
+      description: "which of the question's required parts the answer got right/wrong",
+    },
+  },
+  required: ["applicable", "reasoning"],
+} as const;
+
+const CORRECTNESS_SYSTEM = `You grade ONE student answer for CORRECTNESS against the reference answer — how much of what the question ASKED FOR the student actually got right — NOT how much reasoning they showed. This is a fallback for answers that are correct but TERSE (a bare choice, a one-line answer, or a multi-part question answered with short answers) that the reasoning scorer could not read.
+
+You are BLIND to the student's history and level. Judge only THIS answer against THIS reference.
+
+STEP 1 — Identify what the question asks for. If it is MULTI-PART (e.g. "(a)… (b)…"), list each part and, from the REFERENCE ANSWER, what a correct response to each part is. Match the student's answer to each part — their answer may be terse (a letter, a word, a phrase) and usually lists the parts in order.
+
+STEP 2 — Grade correctness/completeness on 4 rungs. A correct-but-unexplained answer can NEVER be a 5 (no reasoning was demonstrated) — the ceiling here is 4:
+1 Wrong / irrelevant: none of the required points correct.
+2 Mostly wrong: a small part correct, the main point wrong or missing.
+3 Mostly right: the main point(s) correct, a part missing or partly wrong.
+4 Fully correct: every part matches the reference's required points.
+
+Accept answers that MEAN the same as the reference even if worded differently or far briefer (reference "rain / wet weather", student "rain" → correct for that part). For a multi-part answer, credit each part it got right; the level reflects how many parts are correct.
+
+applicable=false ONLY when there is NOTHING to grade: the answer is empty, gibberish, or entirely unrelated to the question. A wrong-but-relevant attempt is applicable with a LOW level, never inapplicable.
+
+Return the structured JSON: applicable, level (1–4 when applicable, null otherwise), reasoning (name which parts were right/wrong).`;
+
 // ───────────────────────── the read ─────────────────────────
 
 interface ScoreResult {
@@ -365,6 +419,52 @@ export async function scoreAttempt(
       written++;
     }
 
+    // CORRECTNESS-JUDGE fallback (ratified: all abstained text answers, AI-graded
+    // 1–4 capped). Both reasoning reads abstained AND the deterministic MCQ path
+    // didn't apply, but the student DID write something — grade it for correctness
+    // against the reference (terse-correct earns credit; multi-part credited as one)
+    // and write ONE conceptual read so it shows in assess AND counts. Text only; a
+    // photo answer stays on the method path. Never overrides a reasoning read (only
+    // runs when written===0). Capped at 4 — no reasoning was demonstrated.
+    if (written === 0 && images.length === 0 && a.answerText && a.answerText.trim().length > 0) {
+      const judge = await runCorrectnessJudge({
+        subTopicName,
+        stem: q.stem,
+        referenceAnswer: q.referenceAnswer,
+        explanation: q.explanation,
+        answerText: a.answerText,
+        confidence: a.confidence,
+        attemptId,
+      });
+      if (judge.applicable && judge.level != null) {
+        const level = Math.min(judge.level, 4); // hard cap: no reasoning shown
+        const overConfident = a.confidence != null && a.confidence >= 4 && level <= 2;
+        await tx.insert(observation).values({
+          boardId,
+          studentId: a.appUserId,
+          subTopicId: q.subTopicId,
+          questionId: q.id,
+          attemptId,
+          axis: "conceptual",
+          observationLevel: level,
+          reasoning: judge.reasoning,
+          signals: {
+            kind: "correctness_judge",
+            cappedAt: 4,
+            rawLevel: judge.level,
+            guessable: false,
+            confidence: a.confidence ?? null,
+            timeMs: a.timeMs ?? null,
+            model: process.env.GEMINI_MODEL ?? "gemini-3-flash-preview",
+          },
+          calibrationFlag: overConfident ? "over" : null,
+          pedagogicalComment: q.pedagogicalNote,
+          source: STAGE1_SOURCE,
+        });
+        written++;
+      }
+    }
+
     return {
       attemptId,
       scored: true,
@@ -442,6 +542,45 @@ Read this single answer on the ${axis} axis per your instructions. Return the st
   });
 
   return axisReadSchema.parse(raw);
+}
+
+interface CorrectnessJudgeInput {
+  subTopicName: string;
+  stem: string;
+  referenceAnswer: string;
+  explanation: string | null;
+  answerText: string;
+  confidence: number | null;
+  attemptId: string;
+}
+
+// The correctness-judge call (Slice CORRECTNESS-JUDGE). Grades the answer against
+// the reference for CORRECTNESS, not reasoning — the terse-correct / multi-part
+// fallback. Mirrors runAxisCall's plumbing; different system + schema.
+async function runCorrectnessJudge(i: CorrectnessJudgeInput): Promise<CorrectnessJudge> {
+  const prompt = `SUB-TOPIC: ${i.subTopicName}
+
+QUESTION (may be multi-part — read every part it asks for):
+${i.stem}
+
+REFERENCE ANSWER (what a correct response looks like, per part):
+${i.referenceAnswer}${i.explanation ? `\n\nEXPLANATION: ${i.explanation}` : ""}
+
+STUDENT ANSWER (may be terse — a letter, a word, a phrase; usually one line per part):
+${i.answerText}
+
+SIGNALS: self-rated confidence = ${i.confidence ?? "n/a"}/5.
+
+Grade this answer for CORRECTNESS against the reference per your instructions. Return the structured JSON.`;
+
+  const raw = await geminiJson<unknown>({
+    label: `correctness:${i.attemptId}`,
+    systemInstruction: CORRECTNESS_SYSTEM,
+    prompt,
+    responseSchema: correctnessResponseSchema as never,
+  });
+
+  return correctnessJudgeSchema.parse(raw);
 }
 
 // ════════════════════════════ Stage-2 — the mastery move ════════════════════════════

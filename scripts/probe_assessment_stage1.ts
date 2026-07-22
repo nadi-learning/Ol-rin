@@ -229,6 +229,46 @@ async function main() {
     check("mcq E2E: correct choice → no over-flag", r?.calibrationFlag !== "over");
   }
 
+  // ── 6c. CORRECTNESS-JUDGE (Slice) — a multi-part question answered tersely but
+  // CORRECTLY ("C" + "rain"): the conceptual reasoning read abstains (no "why"), so
+  // the correctness judge grades it against the reference and writes ONE capped (≤4)
+  // conceptual read. Real vendor → GUARD on abstention, SOFT the exact level.
+  const qMulti = await withBoard(P.id, async (tx: Tx) => {
+    const [q] = await tx.insert(question).values({
+      boardId: P.id, subTopicId: fx.st, axis: "conceptual", kind: "subjective",
+      stem: "In weeks the shop sells more umbrellas, more people also slip on the pavements.\n(a) Choose: A umbrellas cause slipping; B slipping causes buying; C they rise and fall together, neither causing the other.\n(b) Name one thing that could raise both.",
+      referenceAnswer: "(a) C — co-occurrence; neither causes the other. (b) A common cause such as rain / wet weather.",
+      explanation: null, pedagogicalNote: "Correlation vs causation; terse correct answers are common.", ordinal: 7, source: "b2c_authoring",
+    }).returning();
+    return q!.id;
+  });
+
+  const aMulti = await mkAttempt(qMulti, "C\n\nrain", 3, 20000, null);
+  await scoreAttempt(P.id, aMulti);
+  const oMulti = await obsFor(P.id, aMulti);
+  const reasoningWrote = oMulti.filter((o: any) => o.signals?.kind !== "correctness_judge");
+  if (reasoningWrote.length > 0) {
+    soft("cj E2E: reasoning read did NOT abstain on the terse answer — judge not exercised (rare)", reasoningWrote.length);
+  } else {
+    const cj = oMulti.find((o: any) => o.signals?.kind === "correctness_judge") as any;
+    check("cj E2E: terse multi-part correct → 1 conceptual correctness_judge observation", oMulti.length === 1 && cj?.axis === "conceptual");
+    check("cj E2E: level within 1–4 (capped — no reasoning shown)", cj?.observationLevel >= 1 && cj?.observationLevel <= 4);
+    check("cj E2E: flagged not-guessable, cappedAt 4, model recorded", cj?.signals?.guessable === false && cj?.signals?.cappedAt === 4 && typeof cj?.signals?.model === "string");
+    soft("cj E2E: judged level for a BOTH-parts-correct answer (expect 3–4)", cj?.observationLevel);
+  }
+
+  // wrong terse answer → still applicable, low level (SOFT — AI discretion).
+  const aMultiWrong = await mkAttempt(qMulti, "A\n\nsunshine", 4, 15000, null);
+  await scoreAttempt(P.id, aMultiWrong);
+  const oMultiWrong = await obsFor(P.id, aMultiWrong);
+  const cjW = oMultiWrong.find((o: any) => o.signals?.kind === "correctness_judge") as any;
+  if (cjW) {
+    check("cj E2E: wrong terse answer still scored (applicable, level 1–4)", cjW.observationLevel >= 1 && cjW.observationLevel <= 4);
+    soft("cj E2E: judged level for a WRONG answer (expect 1–2)", cjW.observationLevel);
+  } else {
+    soft("cj E2E: wrong-answer judge wrote nothing (reasoning read scored, or applicable=false)", oMultiWrong.length);
+  }
+
   // 7. SOFT calibration — confident but weak
   const aCalib = await mkAttempt(fx.qCalib, "idk, maybe because metal is heavier and heavy things are colder.", 5, 8000, null);
   await scoreAttempt(P.id, aCalib);

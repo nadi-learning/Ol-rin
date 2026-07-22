@@ -227,6 +227,49 @@ export async function requireMembership(
 }
 
 /**
+ * "Does this email belong on this board in ANY capacity?" — the gate for a
+ * NON-SENSITIVE, role-agnostic byte read (question figures, `/content/image`).
+ *
+ * `requireMembership` answers belonging for ONE named profile, and it defaults
+ * to `student` when no profile is given. But a plain `<img src>` cannot send the
+ * `x-profile` header, so the byte routes have no persona to name — and a TUTOR
+ * (or admin) viewing an authored figure has no `student` row, so the student
+ * default 403s them (the spranav authoring-image bug). A rendered figure is not
+ * a secret (it is shown to students by design; RLS still hides cross-board rows),
+ * so the right question is simply "is this a real identity that belongs here" —
+ * true if ANY of the person's profiles (student on this board / tutor serving it
+ * / admin) belongs. Enumerate the person's real profiles and reuse the exact
+ * per-role logic in `requireMembership`; allow if any passes.
+ *
+ * Runs inside withBoard(board.id) — the student branch's read is RLS-scoped, as
+ * requireMembership requires.
+ */
+export async function belongsToBoardAnyRole(
+  tx: Tx,
+  args: { email: string; board: { id: string; slug: string } },
+): Promise<boolean> {
+  const profiles = await tx
+    .select({ userType: appUser.userType })
+    .from(appUser)
+    .where(eq(appUser.email, args.email));
+
+  for (const { userType } of profiles) {
+    try {
+      await requireMembership(tx, {
+        email: args.email,
+        board: args.board,
+        profile: userType as Role,
+      });
+      return true;
+    } catch (e) {
+      if (e instanceof NoMembershipError) continue; // this profile doesn't belong; try the next
+      throw e;
+    }
+  }
+  return false;
+}
+
+/**
  * The SET side for a role (admin People + seeds) — grants a profile its
  * role-DETAIL row, the only way out of the waiting room. Upserts the profile
  * shell, then creates/activates the detail row for the role:

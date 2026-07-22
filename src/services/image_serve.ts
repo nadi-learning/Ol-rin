@@ -7,22 +7,29 @@
  *
  *   1. board by slug (global)                       — unknown → 404
  *   2. app_user by email (global)                   — unknown → 403
- *   3. withBoard(board): requireMembership(email)   — non-member → 403
+ *   3. withBoard(board): belongsToBoardAnyRole      — non-belonger → 403
  *      then read question_image by id UNDER the claim (RLS) — a row on ANOTHER
  *      board is invisible → 404. Then read the bytes off local FS.
  *
- * The query-param board is not a trust hole: a non-member fails membership (403),
- * and a member naming a board they belong to but an imageId from a DIFFERENT
- * board is RLS-hidden (404). Answer keys don't apply here — a rendered figure is
- * shown to students by design; the M11 gate protects reference answers, not
- * diagrams.
+ * ROLE-AGNOSTIC belonging (not student-only): an <img src> can't send x-profile,
+ * so we can't name the viewer's persona. A rendered figure is non-sensitive
+ * (shown to students by design; RLS still hides cross-board rows), so the gate is
+ * "does this email belong on this board in ANY capacity" — student on this board,
+ * tutor serving it, or admin. This is what lets a TUTOR authoring image questions
+ * see the preview; the old student-default check 403'd them (they have no student
+ * row). See belongsToBoardAnyRole.
+ *
+ * The query-param board is not a trust hole: a non-belonger fails the check (403),
+ * and a belonger naming a board they belong to but an imageId from a DIFFERENT
+ * board is RLS-hidden (404). Answer keys don't apply here — the M11 gate protects
+ * reference answers, not diagrams.
  */
 import { eq } from "drizzle-orm";
 import { appUser, board as boardTable, questionImage } from "@b2c/kernel/schema";
 import { db } from "../db/client";
 import { withBoard } from "../db/with-board";
 import { readImage } from "./image_storage";
-import { NoMembershipError, requireMembership } from "./membership";
+import { belongsToBoardAnyRole } from "./membership";
 
 export class ImageError extends Error {
   constructor(
@@ -63,12 +70,8 @@ export async function resolveImageBytes(args: {
   if (!user) throw new ImageError(403, "NO_MEMBERSHIP");
 
   return withBoard(b.id, async (tx) => {
-    try {
-      await requireMembership(tx, { email, board: b });
-    } catch (e) {
-      if (e instanceof NoMembershipError) throw new ImageError(403, "NO_MEMBERSHIP");
-      throw e;
-    }
+    const belongs = await belongsToBoardAnyRole(tx, { email, board: b });
+    if (!belongs) throw new ImageError(403, "NO_MEMBERSHIP");
 
     const [img] = await tx
       .select({ storageKey: questionImage.storageKey, mime: questionImage.mime })
