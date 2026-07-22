@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // `import.meta.env.DEV` branch, so Vite drops both the call and the import from
 // production builds (verified by bundle grep, S123).
 import { signIn, devLogin } from "../lib/auth";
-import { setPersona, getPersona, clearPersona } from "../trpc";
+import { setPersona, clearPersona } from "../trpc";
 import "./landing.css";
 
 // Orion persona-select front door (logged-out). Ported from design artifact
@@ -56,24 +56,13 @@ function markSplashSeen(): void {
   }
 }
 
-/**
- * S125 — the persona this browser last picked, if it is one of the three lanes.
- *
- * Seeds `chosen` so that clicking a card, leaving the tab, and coming back (a
- * mobile browser evicting a backgrounded tab reloads it) restores the EXPANDED
- * card the person chose, not the collapsed picker. `splashSeen` already survives
- * that reload; the selection did not, because it lived only in React state — so
- * a returning visitor was dropped back to the front door they thought they had
- * already walked through.
- *
- * Guarded to the three lanes: `getPersona()` can also be "admin" (set per
- * request by the URL, never stored — see trpc.ts), and even a stray value must
- * never expand a lane that does not exist.
- */
-function initialChosen(): Persona | null {
-  const p = getPersona();
-  return p === "student" || p === "parent" || p === "tutor" ? p : null;
-}
+// S125 (REVERSED, founder's call): the landing no longer re-opens on the lane
+// this browser last picked. A logged-OUT visit — first or return — always starts
+// on the NEUTRAL persona picker (the true front door). The persona is still
+// written on click (`setPersona`) so the CLAIM rides into signup, but it never
+// seeds the initial view: a persisted "student" must not silently drop a returning
+// visitor back onto the Student sign-in lane instead of the picker. (Signed-in
+// routing is unaffected — App.tsx `boot()` resumes onboarding-or-dashboard.)
 
 const EnterArrow = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -90,9 +79,9 @@ export function LandingPage() {
   // frame on a return visit.
   const doneRef = useRef(splashSeen());
   const [revealed, setRevealed] = useState(splashSeen);
-  // Seeded from the persisted persona (S125): a returning visitor re-opens on
-  // the expanded card they picked, rather than being bounced to the picker.
-  const [chosen, setChosen] = useState<Persona | null>(initialChosen);
+  // Always starts on the neutral picker for a logged-out visit (S125 reversed
+  // above) — the persisted persona no longer seeds the expanded lane.
+  const [chosen, setChosen] = useState<Persona | null>(null);
   // S122 — `email` and `busy` went with the dev-login form. `err` stays: the
   // Google path still has failures worth showing.
   const [err, setErr] = useState<string | null>(null);

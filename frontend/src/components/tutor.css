@@ -1517,6 +1517,28 @@
   opacity: 0.5;
   cursor: default;
 }
+/* AUTHUI-FS toggle — mirrors the New chat pill; filled when maximized. */
+.tut-chat-fsbtn {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-pill);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.tut-chat-fsbtn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.tut-chat-fsbtn[aria-pressed="true"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
 .tut-chat-authmeta {
   font-size: 13px;
 }
@@ -1813,6 +1835,22 @@
      tab capsule + Chat/Authored subtabs); dvh keeps it honest on mobile. */
   height: calc(100dvh - 280px);
   min-height: 460px;
+}
+/* AUTHUI-FS: maximize the whole authoring workspace (Chat/Authored subtabs +
+   context strip + preview + chat) into a viewport overlay, above every page
+   chrome layer (student header, tab capsule, board switcher, the recall lightbox
+   at z 1000). Scoped to AuthorChat → unmounts on tab switch; Esc / the toolbar
+   button also exit. */
+.tut-authwrap.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  height: 100dvh;
+  min-height: 0;
+  margin: 0;
+  padding: 14px 20px 18px;
+  background: var(--page, #eef0f3);
+  overflow: hidden;
 }
 .tut-auth-modes {
   display: inline-flex;

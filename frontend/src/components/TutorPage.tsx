@@ -2860,6 +2860,11 @@ function AuthorChat({
   // once drafts exist; the tutor can collapse it back to full-width chat without
   // discarding the drafts (re-open via the topbar chip) — D-AUTHUI-1.
   const [previewMinimized, setPreviewMinimized] = useState(false);
+  // AUTHUI-FS: maximize the whole authoring workspace (context strip + preview +
+  // chat) into a viewport overlay, hiding the student header / tabs / board switcher
+  // so the tutor can focus on drafting. Distinct from previewMinimized (which just
+  // collapses the left pane to widen the chat). Esc exits; reset on chat switch.
+  const [fullscreen, setFullscreen] = useState(false);
   // ASG-AUTO: on approve, also push the questions to the student as an assignment
   // (find-and-extend, split per chapter/subject). Default ON — the founder's call.
   const [assignOnApprove, setAssignOnApprove] = useState(true);
@@ -2923,6 +2928,18 @@ function AuthorChat({
     setError(null);
     setInput("");
   }
+
+  // AUTHUI-FS: Esc exits the maximized workspace (the overlay is scoped to this
+  // component, so leaving the Author tab unmounts it — this only guards the
+  // in-tab "stuck fullscreen" case). Bound only while maximized.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   // Re-hydrate the review form from a RESUMED chat's still-unapproved drafts.
   // getChat now returns them (pendingDrafts), so every resume entry point — the
@@ -3586,7 +3603,7 @@ function AuthorChat({
   const chapterName = chapters.find((c) => c.id === chat.chapterId)?.name ?? null;
 
   return (
-    <div className="tut-authwrap">
+    <div className={`tut-authwrap${fullscreen ? " is-fullscreen" : ""}`}>
     {segmented}
     <div className="tut-chat">
       {error && <p className="tut-error">{error}</p>}
@@ -3617,6 +3634,16 @@ function AuthorChat({
           />
           <button className="tut-chat-newbtn" onClick={newChat} disabled={saving || authoring}>
             + New chat
+          </button>
+          {/* AUTHUI-FS: maximize just this workspace (chat + preview) to the whole
+              viewport, over the student header / tabs / board switcher. */}
+          <button
+            className="tut-chat-fsbtn"
+            onClick={() => setFullscreen((v) => !v)}
+            title={fullscreen ? "Exit full screen (Esc)" : "Full screen — focus on authoring"}
+            aria-pressed={fullscreen}
+          >
+            {fullscreen ? "⤡ Exit full screen" : "⤢ Full screen"}
           </button>
         </div>
       </div>
