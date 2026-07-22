@@ -59,7 +59,7 @@ import {
 import { ImageError, resolveImageBytes } from "../src/services/image_serve";
 import { pyrenderHealth } from "../src/services/matplotlib";
 import { saveQuestions, type SaveItem } from "../src/services/authoring";
-import { generateImageQueue } from "../src/worker/queue";
+import { generateImageQueue, getActiveImageJobId } from "../src/worker/queue";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -227,6 +227,15 @@ async function main() {
   const jobNo = await generateImageQueue.getJob(`image-${noImgId}`);
   check("M11: saveQuestions enqueues a render for the figure-spec question", !!jobWith && jobWith.data.questionId === withImgId && jobWith.data.boardId === P.id);
   check("M11: saveQuestions does NOT enqueue for the spec-less question", !jobNo);
+
+  // Resume handle (durable "Regenerating…" loader): the FE finds a live render job
+  // by (board, question) on mount to re-attach its poll after a page refresh.
+  const activeJob = await getActiveImageJobId(P.id, withImgId!);
+  check("resume: getActiveImageJobId finds the live render job for the question", activeJob === jobWith?.id);
+  const noActive = await getActiveImageJobId(P.id, fx.qNoImg);
+  check("resume: getActiveImageJobId → null for a question with no live job", noActive === null);
+  const wrongBoard = await getActiveImageJobId(Q.id, withImgId!);
+  check("resume: getActiveImageJobId → null under a different board (isolation)", wrongBoard === null);
 
   // ── cleanup (FK-safe) ──
   await generateImageQueue.obliterate({ force: true }).catch(() => {});

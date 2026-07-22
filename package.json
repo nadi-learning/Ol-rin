@@ -69,6 +69,7 @@
     "probe:imagefailfast": "bun scripts/probe_image_failfast.ts",
     "probe:imageverify": "bun scripts/probe_image_verify.ts",
     "probe:imageread": "bun scripts/probe_image_read.ts",
+    "probe:reviseasync": "bun scripts/probe_revise_async.ts",
     "probe:chatlist": "bun scripts/probe_authoring_chat_list.ts",
     "probe:figauth": "bun scripts/probe_fig_auth.ts",
     "probe:voice": "bun scripts/probe_voice.ts",

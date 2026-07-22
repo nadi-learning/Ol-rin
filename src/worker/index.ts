@@ -1,7 +1,9 @@
 import { UnrecoverableError, Worker } from "bullmq";
 import { redisConnection } from "../redis/connection";
+import { withBoard } from "../db/with-board";
 import { __aiConfigured } from "../services/ai/gemini";
 import { extractTopicsMd } from "../services/admin_ingest";
+import { reviseDraft } from "../services/authoring_chat";
 import { scoreAttempt } from "../services/assessment";
 import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
@@ -11,6 +13,8 @@ import {
   type ExtractTopicsJobData,
   GENERATE_IMAGE_QUEUE,
   type GenerateImageJobData,
+  REVISE_QUEUE,
+  type ReviseJobData,
   type Stage1JobData,
 } from "./queue";
 
@@ -118,8 +122,38 @@ contentWorker.on("failed", (job, err) =>
   ),
 );
 
+// Slice REVISE-ASYNC — per-question draft revision moved OFF the request path (was
+// a synchronous ~10–30s Gemini mutation; now a background job so its loader is
+// durable across a refresh and a slow revise never hits the nginx wall). One
+// Gemini call per job (single attempt — reviseDraft PERSISTS in place, so a retry
+// would re-author + re-persist). Runs under the job's board claim (RLS); the
+// PERSISTED draft is BOTH written in place AND returned as the job value so the
+// FE's poll can patch its card. concurrency 2 — another AI rate surface.
+const reviseWorker = new Worker<ReviseJobData>(
+  REVISE_QUEUE,
+  async (job) =>
+    withBoard(job.data.boardId, (tx) =>
+      reviseDraft(tx, {
+        tutorUserId: job.data.tutorUserId,
+        chatId: job.data.chatId,
+        questionId: job.data.questionId,
+        refinementNote: job.data.refinementNote,
+      }),
+    ),
+  { connection: redisConnection, concurrency: 2 },
+);
+
+reviseWorker.on("completed", (job) =>
+  console.log(`[b2c-worker] revised draft ${job.data.questionId} (chat ${job.data.chatId})`),
+);
+reviseWorker.on("failed", (job, err) =>
+  console.error(
+    `[b2c-worker] revise FAILED question ${job?.data.questionId}: ${err.message}`,
+  ),
+);
+
 console.log(
-  `[b2c-worker] up — assessment + image-render + content-extract processors registered ` +
+  `[b2c-worker] up — assessment + image-render + content-extract + revise processors registered ` +
     `(AI ${__aiConfigured() ? "configured" : "DISABLED: no GEMINI_API_KEY — jobs will fail loudly"})`,
 );
 

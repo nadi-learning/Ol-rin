@@ -1,10 +1,39 @@
 import { Queue } from "bullmq";
 import { redisConnection } from "../redis/connection";
-// Type-only (erased at compile → no runtime import cycle): the extraction's
-// result shape IS the job return value the poll hands back.
+// Type-only (erased at compile → no runtime import cycle): the job's result shape
+// IS the value the poll hands back.
 import type { extractTopicsMd } from "../services/admin_ingest";
+import type { reviseDraft } from "../services/authoring_chat";
 
 type ExtractResult = Awaited<ReturnType<typeof extractTopicsMd>>;
+type ReviseResult = Awaited<ReturnType<typeof reviseDraft>>;
+
+/**
+ * Shared helper: find the id of an in-flight job (active/queued) whose data
+ * matches this (board, question). Used by the tutor UI to RESUME a progress
+ * loader across a page refresh / close-reopen — the client keeps no durable
+ * handle to the job (the jobId embeds a timestamp / is BullMQ-assigned), so on
+ * mount it asks "is work still running for this question?" and re-attaches its
+ * poll. Scans only the not-yet-terminal states; completed/failed jobs are read
+ * by their own status pollers. Returns null on any Redis error (loader stays off).
+ */
+async function activeJobIdForQuestion<D extends { boardId: string; questionId: string }>(
+  queue: Queue<D>,
+  boardId: string,
+  questionId: string,
+): Promise<string | null> {
+  try {
+    // Not-yet-terminal states only. At our scale (a handful of concurrent AI
+    // jobs) this list is tiny; there is no per-data index in BullMQ to do better.
+    const jobs = await queue.getJobs(["active", "waiting", "delayed", "prioritized", "paused"]);
+    const match = jobs.find(
+      (j) => j?.data?.questionId === questionId && j?.data?.boardId === boardId,
+    );
+    return match?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * BullMQ wiring.
@@ -214,4 +243,100 @@ export async function getImageJobState(jobId: string): Promise<ImageJobState> {
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Id of an in-flight render job for this draft, or null — the resume handle for
+ * the tutor's "Regenerating…" loader after a page refresh (D-FIG-2 loaders are
+ * durable now). See activeJobIdForQuestion.
+ */
+export function getActiveImageJobId(boardId: string, questionId: string): Promise<string | null> {
+  return activeJobIdForQuestion(generateImageQueue, boardId, questionId);
+}
+
+// ───────────────────────── Slice REVISE-ASYNC: per-question revise ─────────────
+// The per-question mini-chat revise was a SYNCHRONOUS mutation (a ~10–30s Gemini
+// call blocking the request), so its "Revising…" loader lived only in the open
+// tab and a refresh lost it — and a slow revise risked the nginx wall. Now it is
+// a background job (mirrors AIJOB-1 extraction): the route enqueues + returns a
+// jobId; the worker runs reviseDraft OFF the request path and PERSISTS the draft
+// in place; the FE polls the job for the revised draft (the job's return value)
+// and resumes its loader across refresh via getActiveReviseJobId.
+
+export const REVISE_QUEUE = "b2c.revise";
+
+export interface ReviseJobData {
+  boardId: string;
+  tutorUserId: string;
+  chatId: string;
+  questionId: string;
+  refinementNote: string;
+}
+
+export const reviseQueue = new Queue<ReviseJobData>(REVISE_QUEUE, {
+  connection: redisConnection,
+  defaultJobOptions: {
+    // ONE attempt — a revise is a paid Gemini call that also PERSISTS in place; a
+    // silent BullMQ retry would re-author + re-persist. Surface a failure instead.
+    attempts: 1,
+    // Age-based retention so the FE can poll the revised draft out (occasional
+    // tutor action, not a firehose).
+    removeOnComplete: { age: 3_600 },
+    removeOnFail: { age: 3_600 },
+  },
+});
+
+/**
+ * Enqueue one draft revision; returns the BullMQ job id the FE polls. NOT
+ * best-effort (like extraction, unlike the fire-and-forget render/score enqueues):
+ * if Redis is down the tutor must SEE the failure — there is no job id to poll
+ * otherwise — so errors propagate. BullMQ assigns the id (unique per click; each
+ * revise is a fresh run, never deduped).
+ */
+export async function enqueueRevise(data: ReviseJobData): Promise<string> {
+  const job = await reviseQueue.add("revise", data);
+  if (!job.id) throw new Error("BullMQ did not assign a job id");
+  return job.id;
+}
+
+/**
+ * Poll state for one revise job. Mirrors getExtractJobStatus: carries the RESULT
+ * — the revised, already-persisted draft, stored as the job's return value so the
+ * FE can patch its card without a second read. `boardId` is checked against the
+ * caller's board so one tutor can't poll another board's job by id. 'unknown'
+ * when the job has aged out of Redis or Redis is unreachable.
+ */
+export type ReviseJobStatus =
+  | { state: "waiting" | "active" | "unknown" }
+  | { state: "completed"; result: ReviseResult }
+  | { state: "failed"; error: string };
+
+export async function getReviseJobStatus(
+  jobId: string,
+  boardId: string,
+): Promise<ReviseJobStatus> {
+  try {
+    const job = await reviseQueue.getJob(jobId);
+    if (!job) return { state: "unknown" };
+    if (job.data?.boardId && job.data.boardId !== boardId) return { state: "unknown" };
+    const state = await job.getState();
+    if (state === "completed") {
+      return { state: "completed", result: job.returnvalue as ReviseResult };
+    }
+    if (state === "failed") {
+      return { state: "failed", error: job.failedReason ?? "revision failed" };
+    }
+    if (state === "active") return { state: "active" };
+    return { state: "waiting" };
+  } catch {
+    return { state: "unknown" };
+  }
+}
+
+/**
+ * Id of an in-flight revise job for this draft, or null — the resume handle for
+ * the tutor's "Revising…" loader after a page refresh. See activeJobIdForQuestion.
+ */
+export function getActiveReviseJobId(boardId: string, questionId: string): Promise<string | null> {
+  return activeJobIdForQuestion(reviseQueue, boardId, questionId);
 }

@@ -202,15 +202,18 @@ import {
   proposeTarget,
   proposeTargetSet,
   ProposeTargetError,
-  reviseDraft,
   sendTurn,
   startChat,
 } from "../services/authoring_chat";
 import {
   enqueueExtractTopics,
   enqueueImageGeneration,
+  enqueueRevise,
+  getActiveImageJobId,
+  getActiveReviseJobId,
   getExtractJobStatus,
   getImageJobState,
+  getReviseJobStatus,
 } from "../worker/queue";
 import {
   ImageNotOverridableError,
@@ -1847,7 +1850,12 @@ export const appRouter = router({
       }),
 
     // Revise ONE drafted question per a tutor instruction (the per-question
-    // mini-chat). Pre-save; returns the revised draft (the tutor still edits/saves).
+    // mini-chat). Slice REVISE-ASYNC: ENQUEUES the (paid ~10–30s) revise off the
+    // request path and returns a jobId at once; the worker runs reviseDraft (which
+    // PERSISTS the revised draft in place) and the FE polls getReviseJobStatus for
+    // the revised draft. Ownership guarded HERE before enqueue (mirrors
+    // generateQuestionImage — a non-owner can't queue a revise on someone's draft);
+    // the worker re-guards the chat + draft inside reviseDraft.
     reviseDraftQuestion: tutorProcedure
       .input(
         z.object({
@@ -1858,23 +1866,37 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         try {
-          return await reviseDraft(ctx.tx, {
-            tutorUserId: ctx.membership.userId,
-            chatId: input.chatId,
-            questionId: input.questionId,
-            refinementNote: input.refinementNote,
-          });
+          await assertOwnedDraft(ctx.tx, ctx.membership.userId, input.questionId);
         } catch (e) {
-          if (
-            e instanceof AuthoringChatNotFoundError ||
-            e instanceof DraftNotFoundError ||
-            e instanceof StudentNotFoundError
-          ) {
+          if (e instanceof DraftNotFoundError || e instanceof StudentNotFoundError) {
             throw new TRPCError({ code: "NOT_FOUND", message: (e as { code: string }).code });
           }
           throw e;
         }
+        const jobId = await enqueueRevise({
+          boardId: ctx.board.id,
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+          questionId: input.questionId,
+          refinementNote: input.refinementNote,
+        });
+        return { jobId };
       }),
+
+    // Poll state for one revise job (waiting/active/completed/failed/unknown).
+    // On completed it carries the revised, already-persisted draft (the job's
+    // return value) so the FE patches its card without a second read. Board-checked.
+    getReviseJobStatus: tutorProcedure
+      .input(z.object({ jobId: z.string().max(200) }))
+      .query(({ ctx, input }) => getReviseJobStatus(input.jobId, ctx.board.id)),
+
+    // Resume handle: is a revise still running for this draft? Lets the FE restore
+    // the "Revising…" loader after a page refresh / close-reopen. { jobId } | null.
+    getActiveReviseJob: tutorProcedure
+      .input(z.object({ questionId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => ({
+        jobId: await getActiveReviseJobId(ctx.board.id, input.questionId),
+      })),
 
     // The separate structured authoring call (fork 4): conversation → questions
     // to the student's weakness. Reads-only/re-runnable; vendor honored.
@@ -2042,6 +2064,14 @@ export const appRouter = router({
       .query(async ({ input }) => {
         return { state: await getImageJobState(input.jobId) };
       }),
+
+    // Resume handle: is a render still running for this draft? Lets the FE restore
+    // the "Regenerating…" loader after a page refresh / close-reopen. { jobId } | null.
+    getActiveImageJob: tutorProcedure
+      .input(z.object({ questionId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => ({
+        jobId: await getActiveImageJobId(ctx.board.id, input.questionId),
+      })),
 
     // Poll the current rendered figure for a draft (thumbnail + verifier badge).
     getQuestionImage: tutorProcedure

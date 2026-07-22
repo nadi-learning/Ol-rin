@@ -2801,6 +2801,21 @@ function AuthorChat({
     cardsRef.current = cards;
   }, [cards]);
   const [revisingIdx, setRevisingIdx] = useState<number | null>(null);
+  // REVISE-ASYNC: a revise is a background job now, so its loader is durable. The
+  // jobId + poll timer are refs (survive re-renders); the loader is resumed across
+  // a page refresh by scanning for a live revise job in restoreDrafts.
+  const reviseJobRef = useRef<string | null>(null);
+  const revisePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (revisePollRef.current) clearTimeout(revisePollRef.current);
+    },
+    [],
+  );
+  const REVISE_FAILED_MSG =
+    "We couldn't revise this question. Please try again — if it keeps failing, simplify the instruction.";
+  const REVISE_SLOW_MSG =
+    "This revision is taking longer than usual. Leave this open — it'll appear here when it's done.";
   // The authored-question preview is a left pane shown side-by-side with the chat
   // once drafts exist; the tutor can collapse it back to full-width chat without
   // discarding the drafts (re-open via the topbar chip) — D-AUTHUI-1.
@@ -2854,6 +2869,11 @@ function AuthorChat({
     setCards(null);
     setPreviewMinimized(false);
     setRevisingIdx(null);
+    // Stop any in-flight revise poll from a prior student/chat (the job keeps
+    // running server-side; this session just stops tracking it).
+    if (revisePollRef.current) clearTimeout(revisePollRef.current);
+    revisePollRef.current = null;
+    reviseJobRef.current = null;
     setSaved(null);
     setError(null);
     setInput("");
@@ -2874,6 +2894,23 @@ function AuthorChat({
       subTopicName: first.subTopicName,
       nextOrdinal: first.ordinal,
     });
+    // REVISE-ASYNC: re-attach the "Revising…" loader if a revise is still running
+    // for one of these drafts (durable across a page refresh / close-reopen). Only
+    // one revise runs at a time (the UI blocks others), so resume the first live one.
+    if (reviseJobRef.current) return;
+    void (async () => {
+      for (let i = 0; i < drafts.length; i++) {
+        const { jobId } = await trpc.tutor.getActiveReviseJob
+          .query({ questionId: drafts[i]!.id })
+          .catch(() => ({ jobId: null as string | null }));
+        if (jobId) {
+          reviseJobRef.current = jobId;
+          setRevisingIdx(i);
+          pollRevise(i, jobId, 0);
+          return;
+        }
+      }
+    })();
   }
 
   // Rehydrate the active chat for this student on mount / student change. In launch
@@ -3215,7 +3252,47 @@ function AuthorChat({
       .catch((e) => setError(String(e?.message ?? e)));
   }
 
+  // Poll a revise job until the revised draft lands (REVISE-ASYNC). On completion
+  // the job carries the already-persisted draft → patch the card in place. Reads
+  // the card fresh from cardsRef so a slow revise still patches the right row.
+  // 'unknown' is treated as still-working (a transient Redis blip inside our ~6-min
+  // window, never the 1h age-out) so a hiccup doesn't drop the loader.
+  function pollRevise(i: number, jobId: string, tries: number) {
+    if (tries > 120) {
+      reviseJobRef.current = null;
+      setRevisingIdx(null);
+      setError(REVISE_SLOW_MSG);
+      return;
+    }
+    trpc.tutor.getReviseJobStatus
+      .query({ jobId })
+      .then((s) => {
+        if (s.state === "completed") {
+          const card = cardsRef.current?.[i];
+          if (card) patch(i, toCard(s.result, card.subTopicId, card.subTopicName));
+          reviseJobRef.current = null;
+          setRevisingIdx(null);
+          return;
+        }
+        if (s.state === "failed") {
+          reviseJobRef.current = null;
+          setRevisingIdx(null);
+          setError(REVISE_FAILED_MSG);
+          return;
+        }
+        // waiting / active / unknown → keep polling.
+        revisePollRef.current = setTimeout(() => pollRevise(i, jobId, tries + 1), 3000);
+      })
+      .catch(() => {
+        reviseJobRef.current = null;
+        setRevisingIdx(null);
+        setError(REVISE_FAILED_MSG);
+      });
+  }
+
   // Per-question mini-chat: revise ONE draft in place per a tutor instruction.
+  // REVISE-ASYNC: enqueues the revise off the request path and polls the job so
+  // the "Revising…" loader is durable (survives a refresh; resumed in restoreDrafts).
   function revise(i: number, note: string) {
     if (!chat || !cards) return;
     const card = cards[i];
@@ -3230,9 +3307,14 @@ function AuthorChat({
           refinementNote: note,
         }),
       )
-      .then((d) => patch(i, toCard(d, card.subTopicId, card.subTopicName)))
-      .catch((e) => setError(String(e?.message ?? e)))
-      .finally(() => setRevisingIdx(null));
+      .then(({ jobId }) => {
+        reviseJobRef.current = jobId;
+        pollRevise(i, jobId, 0);
+      })
+      .catch((e) => {
+        setRevisingIdx(null);
+        setError(String(e?.message ?? e));
+      });
   }
 
   // Approve = the M11 ENABLEMENT side: flip the reviewed drafts to status='approved'
@@ -4280,6 +4362,30 @@ function DraftFigureSection({
     },
     [],
   );
+
+  // Resume a render that is still in progress across a page refresh / close-reopen.
+  // The loader state is local (lost on reload), but the render job lives in Redis,
+  // so on mount we ask the server "is a render still running for this draft?" and,
+  // if so, re-attach the poll — the "Regenerating…" loader comes back and tracks to
+  // completion instead of the tutor having to refresh to discover the result.
+  useEffect(() => {
+    let alive = true;
+    trpc.tutor.getActiveImageJob
+      .query({ questionId: card.id })
+      .then(({ jobId }) => {
+        // Skip if a user-initiated generate already started (jobRef set) — don't
+        // clobber a live poll with the resume.
+        if (!alive || !jobId || jobRef.current) return;
+        jobRef.current = jobId;
+        setGenerating(true);
+        poll(0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id]);
 
   // Every tutor-facing message here is plain English — no server/exception text
   // reaches the UI. The worker's technical detail stays in the logs.
