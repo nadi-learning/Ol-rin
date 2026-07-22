@@ -960,6 +960,39 @@
 }
 .tut-tab.is-active .tut-tab-badge { background: rgba(255, 255, 255, 0.28); color: #fff; }
 
+/* ── Board switcher (multi-board tutors) — centered segmented capsule ── */
+.tut-boardswitch-row {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 18px;
+}
+.tut-boardswitch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-sunk, #e7e9f0);
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: var(--r-pill, 999px);
+}
+.tut-boardswitch-opt {
+  border: none;
+  background: transparent;
+  border-radius: var(--r-pill, 999px);
+  padding: 8px 22px;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+.tut-boardswitch-opt:hover { color: var(--ink, #15162b); }
+.tut-boardswitch-opt.is-on {
+  color: var(--primary, #2f63ff);
+  background: var(--surface, #fff);
+  box-shadow: 0 1px 3px rgba(20, 30, 60, 0.12);
+}
+
 /* ───────── header mode switch (Students / Author) ───────── */
 .tut-header-actions {
   display: flex;

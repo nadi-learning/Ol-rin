@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { trpc, getBoard } from "../trpc";
+import { trpc, getBoard, setBoard } from "../trpc";
 import { MathText } from "./MathText";
 import "./tutor.css";
 
@@ -59,6 +59,11 @@ type ReportSummary = Awaited<
 >[number];
 type ReportDetail = Awaited<ReturnType<typeof trpc.tutor.assembleReport.mutate>>;
 
+// A board this tutor serves — the switchable set. Derived from `whoami`, which
+// (session_boards.ts) already yields one entry per board in the tutor's
+// `boards[]`. Both fields are non-null for an enabled tutor entry.
+type TutorBoard = { slug: string; name: string };
+
 export function TutorPage({
   tutorName,
   onSignOut,
@@ -69,13 +74,56 @@ export function TutorPage({
   const [students, setStudents] = useState<Student[] | null>(null);
   const [selected, setSelected] = useState<Student | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The boards this tutor serves + the one currently active. null activeBoard =
+  // whoami hasn't resolved the board yet, so listStudents must WAIT (a fetch
+  // before the header is pinned would read the stale localStorage board).
+  const [boards, setBoards] = useState<TutorBoard[] | null>(null);
+  const [activeBoard, setActiveBoard] = useState<string | null>(null);
 
+  // Resolve the tutor's switchable boards once, and pin the active board BEFORE
+  // any student read fires. The tutor boot path (App.tsx) never sets `x-board`,
+  // so `getBoard()` here can be stale (a board they don't serve) or unset — in
+  // which case default to their first board, else nothing would load.
   useEffect(() => {
+    trpc.session.whoami
+      .query()
+      .then((who) => {
+        const seen = new Set<string>();
+        const tb: TutorBoard[] = [];
+        for (const m of who.memberships) {
+          if (m.role !== "tutor" || !m.enabled || !m.slug || !m.name) continue;
+          if (seen.has(m.slug)) continue;
+          seen.add(m.slug);
+          tb.push({ slug: m.slug, name: m.name });
+        }
+        setBoards(tb);
+        const stored = getBoard();
+        const active =
+          stored && tb.some((b) => b.slug === stored) ? stored : tb[0]?.slug ?? null;
+        if (active) setBoard(active);
+        setActiveBoard(active);
+      })
+      .catch((e) => setError(String(e?.message ?? e)));
+  }, []);
+
+  // Student list is keyed on the active board: switching boards re-scopes every
+  // tutor read (all board-scoped via RLS), so a re-fetch here is the whole switch.
+  useEffect(() => {
+    if (!activeBoard) return;
+    setStudents(null);
     trpc.tutor.listStudents
       .query()
       .then((r) => setStudents(r))
       .catch((e) => setError(String(e?.message ?? e)));
-  }, []);
+  }, [activeBoard]);
+
+  function switchBoard(slug: string) {
+    if (slug === activeBoard) return;
+    setBoard(slug); // the x-board header every tutor read reads per-request
+    setSelected(null); // the open student belongs to the old board
+    setError(null);
+    setActiveBoard(slug); // re-runs the listStudents effect above
+  }
 
   return (
     <div className="tut-root graph-paper">
@@ -90,6 +138,26 @@ export function TutorPage({
           </button>
         </div>
       </header>
+
+      {/* Board switcher — only when the tutor serves more than one board. A
+          single-board tutor never sees it. Centered row under the header. */}
+      {boards && boards.length > 1 && activeBoard && (
+        <div className="tut-boardswitch-row">
+          <div className="tut-boardswitch" role="tablist" aria-label="Board">
+            {boards.map((b) => (
+              <button
+                key={b.slug}
+                role="tab"
+                aria-selected={b.slug === activeBoard}
+                className={`tut-boardswitch-opt${b.slug === activeBoard ? " is-on" : ""}`}
+                onClick={() => switchBoard(b.slug)}
+              >
+                {b.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && <p className="tut-error">{error}</p>}
 
