@@ -1513,6 +1513,13 @@ function AssessmentSitting({
   function openSitting() {
     setError(null);
     setPhase("drafting");
+    // BOARD-PIN — re-assert THIS student's board on the shared global x-board key
+    // immediately before the write. The key is a single localStorage value shared
+    // across tabs (and mutated by the board switcher / a second tab on another
+    // board), so it can drift out from under an open sitting between mount and this
+    // click. A drifted x-board RLS-hides the sitting → ASSESSMENT_SESSION_NOT_FOUND.
+    // Re-pinning synchronously here guarantees the request carries the right board.
+    setBoard(student.board);
     trpc.tutor.openAssessmentSession
       .mutate({ studentId: student.studentId, assignmentId: entry.assignmentId })
       .then((s) => {
@@ -1535,6 +1542,12 @@ function AssessmentSitting({
       subTopicId,
       final,
     }));
+    // BOARD-PIN (see openSitting) — the shared x-board global can have drifted
+    // since the sitting was drafted; re-assert this student's board so finalize
+    // (and its getAssessmentSession re-read below) hit the right tenant instead of
+    // 404ing with ASSESSMENT_SESSION_NOT_FOUND. This is the exact fault that lost
+    // a real finalize (Kian/cbse sitting submitted under a drifted x-board:cambridge).
+    setBoard(student.board);
     trpc.tutor.finalizeAssessmentSession
       .mutate({ sessionId: session.id, items: items.length ? items : undefined })
       .then(async () => {
@@ -1662,6 +1675,7 @@ function AssessmentSitting({
       })}
       <SittingChat
         sessionId={session!.id}
+        board={student.board}
         initial={session!.messages}
         disabled={saving}
       />
@@ -1689,10 +1703,12 @@ function AssessmentSitting({
 // lost at the one moment the system reasons across the sitting.
 function SittingChat({
   sessionId,
+  board,
   initial,
   disabled,
 }: {
   sessionId: string;
+  board: string;
   initial: SessionChatMessage[];
   disabled: boolean;
 }) {
@@ -1715,6 +1731,7 @@ function SittingChat({
     setBusy(true);
     setError(null);
     setDraft("");
+    setBoard(board); // BOARD-PIN (see openSitting) — this sitting's tenant, defended against a drifted global
     trpc.tutor.sendAssessmentChat
       .mutate({ sessionId, text })
       .then((r) => setMessages(r.messages))

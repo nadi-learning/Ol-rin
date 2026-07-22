@@ -862,6 +862,19 @@ async function main() {
   }
   check("RLS: a P sitting read under board Q → NOT_FOUND (row invisible)", rlsRead);
 
+  // ── 14b. RLS — FINALIZE a P sitting under board Q. This is the Kian fault: the
+  //     tutor's shared x-board global drifted to another board, so a real, valid
+  //     sitting was submitted under the wrong tenant. The write MUST fail loudly
+  //     (NOT_FOUND), never silently no-op — that loud failure is exactly why the FE
+  //     re-pins the sitting's board before finalize (TutorPage BOARD-PIN). ──
+  let rlsFinalize = false;
+  try {
+    await rows(Q.id, (tx) => finalizeAssessmentSession(tx, { boardId: Q.id, tutorUserId: tut.id, sessionId: opened.id }));
+  } catch (e) {
+    rlsFinalize = e instanceof AssessmentSessionNotFoundError;
+  }
+  check("RLS: a P sitting FINALIZED under board Q → NOT_FOUND (drifted-x-board fails loudly, never a silent no-op)", rlsFinalize);
+
   // ── cleanup (FK-safe) ──
   await withBoard(P.id, async (tx: Tx) => {
     // ⚠️ ORDER: cross_concept_flag now FKs assessment_session (S2R-3's synthesis
