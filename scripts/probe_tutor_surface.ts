@@ -227,6 +227,8 @@ async function main() {
     const [aTyped] = await tx.insert(attempt).values({
       boardId: P.id, practiceSessionId: ps!.id, questionId: q!.id, appUserId: userS1,
       answerText: "A mixture keeps each part RECALL_ANSWER", confidence: 4, timeMs: 30000,
+      // the student-facing marks this answer earned — the tutor must see the SAME score
+      feedback: { verdict: "partial", feedback: "good start", marksAwarded: 3, marksMax: 5 },
     }).returning();
     // photo attempt (+ 2 images)
     const [aPhoto] = await tx.insert(attempt).values({
@@ -246,6 +248,8 @@ async function main() {
   check("recall: typed obs carries the question stem", typedObs?.questionStem === "What is a mixture? RECALL_STEM");
   check("recall: typed obs carries the student's answer + confidence", typedObs?.answerText === "A mixture keeps each part RECALL_ANSWER" && typedObs?.answerConfidence === 4);
   check("recall: typed obs has NO photo ids", typedObs?.answerPhotoIds.length === 0);
+  check("marks: typed obs surfaces the answer's marks (3/5)", typedObs?.marksAwarded === 3 && typedObs?.marksMax === 5);
+  check("marks: photo obs (no feedback) has null marks", photoObs?.marksAwarded === null && photoObs?.marksMax === null);
   check("recall: photo obs carries ordered image ids, null answerText", photoObs?.answerText === null && photoObs?.answerPhotoIds.length === 2 && photoObs?.answerPhotoIds[0] === recall.im0 && photoObs?.answerPhotoIds[1] === recall.im1);
   check("recall: reference answer NEVER surfaces in the recall payload", !/REF_SECRET/.test(JSON.stringify(obsB)));
 
@@ -269,6 +273,8 @@ async function main() {
     const [aAbstain] = await tx.insert(attempt).values({
       boardId: P.id, practiceSessionId: ps2!.id, questionId: recall.qId, appUserId: userS1,
       answerText: "A", confidence: 5, timeMs: 4000,
+      // an answer Stage-1 abstained on can STILL have earned practice-time marks
+      feedback: { verdict: "off_track", feedback: "just the letter", marksAwarded: 1, marksMax: 4 },
     }).returning();
     const [aSkip] = await tx.insert(attempt).values({
       boardId: P.id, practiceSessionId: ps2!.id, questionId: recall.qId, appUserId: userS1,
@@ -288,6 +294,10 @@ async function main() {
     byAttempt.get(roster.abstainId)?.questionStem === "What is a mixture? RECALL_STEM");
   check("roster: submittedAt-ordered (abstain before skip)",
     unB[0]!.attemptId === roster.abstainId && unB[1]!.attemptId === roster.skipId);
+  check("marks: abstained answer surfaces its practice marks (1/4)",
+    byAttempt.get(roster.abstainId)?.marksAwarded === 1 && byAttempt.get(roster.abstainId)?.marksMax === 4);
+  check("marks: skip (no feedback) has null marks",
+    byAttempt.get(roster.skipId)?.marksAwarded === null && byAttempt.get(roster.skipId)?.marksMax === null);
   check("roster: NO reference-answer / observation-level leak in the payload",
     !/REF_SECRET|observationLevel|effectiveLevel/.test(JSON.stringify(unB)));
 

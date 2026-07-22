@@ -138,15 +138,43 @@ export type ObservationView = {
   answerText: string | null;
   answerConfidence: number | null;
   answerPhotoIds: string[];
+  // The student-facing marks this answer earned (attempt.feedback) — the same
+  // score the student saw at practice time. A per-ANSWER number, distinct from
+  // the per-axis mastery level; null when the attempt was never given feedback
+  // (skip / teach-back / legacy pre-marks cache).
+  marksAwarded: number | null;
+  marksMax: number | null;
 };
 
 // What a correction returns: the read fields only. The recall context (question +
-// student answer) is invariant to a correction, so overrideObservation doesn't
-// re-fetch it — the client merges the returned fields onto the existing row.
+// student answer + marks) is invariant to a correction, so overrideObservation
+// doesn't re-fetch it — the client merges the returned fields onto the existing row.
 export type ObservationCorrection = Omit<
   ObservationView,
-  "questionStem" | "answerText" | "answerConfidence" | "answerPhotoIds"
+  | "questionStem"
+  | "answerText"
+  | "answerConfidence"
+  | "answerPhotoIds"
+  | "marksAwarded"
+  | "marksMax"
 >;
+
+// The marks the student saw (attempt.feedback jsonb → answerFeedbackSchema).
+// Read defensively: feedback is nullable + legacy pre-marks caches carry null
+// marks, so anything non-numeric collapses to null (never throws on a read).
+function readMarks(feedback: unknown): {
+  marksAwarded: number | null;
+  marksMax: number | null;
+} {
+  const fb = feedback as
+    | { marksAwarded?: unknown; marksMax?: unknown }
+    | null
+    | undefined;
+  return {
+    marksAwarded: typeof fb?.marksAwarded === "number" ? fb.marksAwarded : null,
+    marksMax: typeof fb?.marksMax === "number" ? fb.marksMax : null,
+  };
+}
 
 /** ROLE gate — the CHECK side (M11). tutorProcedure calls this. */
 export function assertTutor(role: string): void {
@@ -572,6 +600,7 @@ export async function getObservations(
       attemptId: observation.attemptId,
       answerText: attempt.answerText,
       answerConfidence: attempt.confidence,
+      feedback: attempt.feedback,
     })
     .from(observation)
     .leftJoin(question, eq(question.id, observation.questionId))
@@ -604,8 +633,9 @@ export async function getObservations(
 
   // Surface BOTH numbers + the one that counts, so the tutor always sees what the
   // machine said next to what they changed it to (never a silently-replaced value).
-  return rows.map(({ attemptId, ...r }) => ({
+  return rows.map(({ attemptId, feedback, ...r }) => ({
     ...r,
+    ...readMarks(feedback),
     effectiveLevel: r.tutorLevel ?? r.observationLevel,
     answerPhotoIds: attemptId ? photosByAttempt.get(attemptId) ?? [] : [],
   }));
@@ -629,6 +659,11 @@ export type UnassessedAttemptView = {
   answerPhotoIds: string[];
   skipReason: string | null;
   submittedAt: Date;
+  // The marks the student saw for this answer (attempt.feedback). An abstained
+  // answer can still have earned marks at practice time even though Stage-1 read
+  // nothing to certify; null for skips / teach-backs / legacy pre-marks caches.
+  marksAwarded: number | null;
+  marksMax: number | null;
 };
 
 /**
@@ -652,6 +687,7 @@ export async function getUnassessedAttempts(
       skipReason: attempt.skipReason,
       submittedAt: attempt.submittedAt,
       questionStem: question.stem,
+      feedback: attempt.feedback,
     })
     .from(attempt)
     .innerJoin(practiceSession, eq(practiceSession.id, attempt.practiceSessionId))
@@ -703,6 +739,7 @@ export async function getUnassessedAttempts(
     answerPhotoIds: photosByAttempt.get(r.attemptId) ?? [],
     skipReason: r.skipReason,
     submittedAt: r.submittedAt,
+    ...readMarks(r.feedback),
   }));
 }
 

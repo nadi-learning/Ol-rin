@@ -2023,6 +2023,14 @@ function UnassessedAttempts({ rows }: { rows: UnassessedAttemptView[] }) {
           >
             {r.status === "skipped" ? "Skipped" : "Answered · not assessed"}
           </span>
+          {r.marksAwarded != null && r.marksMax != null && (
+            <span
+              className="tut-marks"
+              title="marks the student earned on this answer (what they saw at practice)"
+            >
+              {r.marksAwarded}/{r.marksMax} marks
+            </span>
+          )}
           {r.questionStem && (
             <span className="tut-unassessed-stem">{r.questionStem}</span>
           )}
@@ -2190,6 +2198,14 @@ function ObservationRow({
           </>
         ) : (
           <span className="tut-level">L{o.observationLevel}</span>
+        )}
+        {o.marksAwarded != null && o.marksMax != null && (
+          <span
+            className="tut-marks"
+            title="marks the student earned on this answer (what they saw at practice)"
+          >
+            {o.marksAwarded}/{o.marksMax} marks
+          </span>
         )}
         {o.calibrationFlag && (
           <span className="tut-calib">calibration: {o.calibrationFlag}</span>

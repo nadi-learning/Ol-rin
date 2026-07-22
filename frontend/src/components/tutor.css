@@ -237,6 +237,17 @@
   border-radius: 6px;
   padding: 2px 7px;
 }
+/* Marks the student earned on this answer (attempt.feedback) — a per-answer
+   score, deliberately styled apart from the per-axis mastery level. */
+.tut-marks {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #1b47b8;
+  background: #e7eeff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
 .tut-obs-date {
   margin-left: auto;
   font-size: 12px;
