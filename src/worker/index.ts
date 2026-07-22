@@ -1,11 +1,14 @@
 import { UnrecoverableError, Worker } from "bullmq";
 import { redisConnection } from "../redis/connection";
 import { __aiConfigured } from "../services/ai/gemini";
+import { extractTopicsMd } from "../services/admin_ingest";
 import { scoreAttempt } from "../services/assessment";
 import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
 import {
   ASSESSMENT_QUEUE,
+  CONTENT_QUEUE,
+  type ExtractTopicsJobData,
   GENERATE_IMAGE_QUEUE,
   type GenerateImageJobData,
   type Stage1JobData,
@@ -92,8 +95,31 @@ imageWorker.on("failed", (job, err) =>
   ),
 );
 
+// AIJOB-1 — async topics.md extraction. One Gemini call per job (600s single
+// attempt, set inside extractTopicsMd), OFF the request path so it has no nginx
+// wall. concurrency 1: admin ingest is occasional + this is a heavy AI leg. The
+// return value (the extracted skeleton + validation) is stored by BullMQ and
+// read back by admin.getExtractJob.
+const contentWorker = new Worker<ExtractTopicsJobData>(
+  CONTENT_QUEUE,
+  async (job) => extractTopicsMd(job.data.rawMd),
+  { connection: redisConnection, concurrency: 1 },
+);
+
+contentWorker.on("completed", (job, res) =>
+  console.log(
+    `[b2c-worker] extracted topics.md (${job.data.rawMd.length} chars): ` +
+      `${res?.extracted?.topics?.length ?? 0} topics, valid=${res?.validation?.ok ?? "?"}`,
+  ),
+);
+contentWorker.on("failed", (job, err) =>
+  console.error(
+    `[b2c-worker] topics.md extraction FAILED (${job?.data.rawMd.length ?? "?"} chars): ${err.message}`,
+  ),
+);
+
 console.log(
-  `[b2c-worker] up — assessment + image-render processors registered ` +
+  `[b2c-worker] up — assessment + image-render + content-extract processors registered ` +
     `(AI ${__aiConfigured() ? "configured" : "DISABLED: no GEMINI_API_KEY — jobs will fail loudly"})`,
 );
 

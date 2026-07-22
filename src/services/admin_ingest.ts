@@ -393,6 +393,16 @@ export async function extractTopicsMd(
     prompt: `Extract the skeleton from this topics.md. Return the structured JSON.\n\n---\n${rawMd}`,
     responseSchema: geminiExtractSchema as never,
     maxOutputTokens: null,
+    // AIJOB-1: this now runs in the WORKER (off the HTTP request), so its wall
+    // is Redis/BullMQ, not nginx's 700s. A full-chapter extraction legitimately
+    // takes 150–260s (measured — replay of the input that timed out at prod's
+    // 120s cap), so the leash is 600s. SINGLE attempt: two 600s legs would be
+    // 1200s and the model returns valid JSON well inside one leg — a retry only
+    // doubles a stuck call. thinkingBudget is deliberately NOT set: the same
+    // replay showed gemini-3.5-flash blows past the budget (asked 16k, spent
+    // 31k), so it bounds nothing here; the timeout is the real guard.
+    timeoutMs: 600_000,
+    maxAttempts: 1,
   });
   const extracted = extractedTopicsMdSchema.parse(raw);
   return { extracted, validation: validateExtracted(extracted) };

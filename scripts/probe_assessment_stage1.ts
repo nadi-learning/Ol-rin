@@ -49,7 +49,12 @@ import {
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { redisConnection } from "../src/redis/connection";
-import { AttemptNotFoundError, scoreAttempt } from "../src/services/assessment";
+import {
+  AttemptNotFoundError,
+  detectBareChoice,
+  extractCorrectOption,
+  scoreAttempt,
+} from "../src/services/assessment";
 import { __aiConfigured } from "../src/services/ai/gemini";
 import {
   ASSESSMENT_QUEUE,
@@ -168,6 +173,61 @@ async function main() {
   check("observation: signals carry confidence + timeMs + model", o0.signals?.confidence === 4 && o0.signals?.timeMs === 55000 && typeof o0.signals?.model === "string");
   check("observation: pedagogical_comment carried", typeof o0.pedagogicalComment === "string" && o0.pedagogicalComment.length > 0);
   check("observation: reasoning is non-empty", typeof o0.reasoning === "string" && o0.reasoning.length > 0);
+
+  // ── 6b. MCQ-CORRECTNESS (Slice) — a bare option letter exposes no method, so
+  // the method scorer abstains; we grade the CHOICE against the reference key and
+  // write a CAPPED CONCEPTUAL read so it shows in assess and counts (never
+  // procedural). FIRM deterministic core first — the helpers, no AI:
+  check("mcq helper: detectBareChoice — 'A'/'(b)'/'C.' → letter",
+    detectBareChoice("A") === "A" && detectBareChoice(" (b) ") === "B" && detectBareChoice("C.") === "C");
+  check("mcq helper: detectBareChoice — non-bare / null → null",
+    detectBareChoice("C\n\n4 holes because folded twice") === null && detectBareChoice(null) === null && detectBareChoice("A because it is upright") === null);
+  check("mcq helper: extractCorrectOption('(a) B. [2 marks]') → 'B' (real prod ref)",
+    extractCorrectOption("(a) B. [2 marks]") === "B");
+  check("mcq helper: extractCorrectOption abstains when ambiguous / absent",
+    extractCorrectOption("Either A or C could be argued") === null && extractCorrectOption("no clean option letter here") === null);
+
+  // E2E — a procedural bare-choice question; wrong pick 'A', correct is 'B'. The
+  // method axis abstains on a lone letter (prod-verified), which is what lets the
+  // correctness fallback fire. Assertions are GUARDED on that abstention so the
+  // real vendor's discretion can't flake the gate.
+  const qMcq = await withBoard(P.id, async (tx: Tx) => {
+    const [q] = await tx.insert(question).values({
+      boardId: P.id, subTopicId: fx.st, axis: "procedural", kind: "subjective",
+      stem: "Rotate the F a quarter-turn clockwise, then mirror it. Choose the option A–D that shows the result.",
+      referenceAnswer: "(a) B. [2 marks]", explanation: null,
+      pedagogicalNote: "Spatial transform; a bare letter shows no method.", ordinal: 6, source: "b2c_authoring",
+    }).returning();
+    return q!.id;
+  });
+
+  const aWrong = await mkAttempt(qMcq, "A", 5, 4000, null);
+  const rWrong = await scoreAttempt(P.id, aWrong);
+  const oWrong = await obsFor(P.id, aWrong);
+  const wrongMethod = oWrong.filter((o: any) => o.signals?.kind !== "mcq_correctness");
+  if (wrongMethod.length > 0) {
+    soft("mcq E2E: method axis unexpectedly scored a bare letter — fallback not exercised (rare)", wrongMethod.length);
+  } else {
+    const w = oWrong.find((o: any) => o.signals?.kind === "mcq_correctness") as any;
+    check("mcq E2E: wrong bare choice → 1 conceptual correctness observation", oWrong.length === 1 && w?.axis === "conceptual");
+    check("mcq E2E: wrong → level 2, correct=false, guessable, selected 'A' / correct 'B'",
+      w?.observationLevel === 2 && w?.signals?.correct === false && w?.signals?.guessable === true && w?.signals?.selected === "A" && w?.signals?.correctOption === "B");
+    check("mcq E2E: wrong choice → NO procedural observation (no method shown)", oWrong.filter((o: any) => o.axis === "procedural").length === 0);
+    check("mcq E2E: confident (5) + wrong → calibration flag 'over'", w?.calibrationFlag === "over");
+    check("mcq E2E: scoreAttempt reports observationsWritten = 1", rWrong.observationsWritten === 1);
+  }
+
+  const aRight = await mkAttempt(qMcq, "B", 3, 5000, null);
+  await scoreAttempt(P.id, aRight);
+  const oRight = await obsFor(P.id, aRight);
+  const rightMethod = oRight.filter((o: any) => o.signals?.kind !== "mcq_correctness");
+  if (rightMethod.length > 0) {
+    soft("mcq E2E: method axis unexpectedly scored the correct bare letter (rare)", rightMethod.length);
+  } else {
+    const r = oRight.find((o: any) => o.signals?.kind === "mcq_correctness") as any;
+    check("mcq E2E: correct bare choice → level 3 conceptual, correct=true", r?.observationLevel === 3 && r?.axis === "conceptual" && r?.signals?.correct === true);
+    check("mcq E2E: correct choice → no over-flag", r?.calibrationFlag !== "over");
+  }
 
   // 7. SOFT calibration — confident but weak
   const aCalib = await mkAttempt(fx.qCalib, "idk, maybe because metal is heavier and heavy things are colder.", 5, 8000, null);

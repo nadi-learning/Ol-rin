@@ -24,7 +24,7 @@
  * (mastery_state.updated_at), or ALL of them when the sub_topic has no mastery
  * yet. No new column: mastery_state.updated_at IS the last-finalize marker (D-T-2).
  */
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notExists } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
@@ -36,6 +36,7 @@ import {
   horizontalSkillState,
   masteryState,
   observation,
+  practiceSession,
   question,
   student,
   studentChapterInsight,
@@ -595,6 +596,101 @@ export async function getObservations(
     ...r,
     effectiveLevel: r.tutorLevel ?? r.observationLevel,
     answerPhotoIds: attemptId ? photosByAttempt.get(attemptId) ?? [] : [],
+  }));
+}
+
+// Slice TUT-ASSESS-ROSTER — an attempt the student actually made that produced
+// NO Stage-1 observation, so `getObservations` (observation-derived) never shows
+// it. Two kinds: a SKIP (skip_reason set), and an ANSWERED-but-abstained attempt
+// (Stage-1 read nothing to score — e.g. a bare option letter, the BOUND rule).
+// Surfaced to the tutor as CONTEXT only, explicitly NOT mastery evidence: no
+// level, never certified. This is a read-only completeness overlay — the scoring
+// pipeline is untouched, so it cannot move mastery. Scored vs unscored stay
+// distinct (separate read, separate UI group) by design.
+export type UnassessedAttemptView = {
+  attemptId: string;
+  status: "answered_unassessed" | "skipped";
+  questionId: string | null;
+  questionStem: string | null;
+  answerText: string | null;
+  answerConfidence: number | null;
+  answerPhotoIds: string[];
+  skipReason: string | null;
+  submittedAt: Date;
+};
+
+/**
+ * The student's attempts in one sub_topic that have zero Stage-1 observations —
+ * the evidence the observation-based assess view is structurally blind to. Same
+ * ownership guard + board RLS as getObservations. `notExists` against the
+ * stage1-source observations keys on attempt_id, so an attempt that DID score
+ * (one row per axis) is excluded; a skip or an abstained answer (no rows) stays.
+ */
+export async function getUnassessedAttempts(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string; subTopicId: string },
+): Promise<UnassessedAttemptView[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  const rows = await tx
+    .select({
+      attemptId: attempt.id,
+      questionId: attempt.questionId,
+      answerText: attempt.answerText,
+      answerConfidence: attempt.confidence,
+      skipReason: attempt.skipReason,
+      submittedAt: attempt.submittedAt,
+      questionStem: question.stem,
+    })
+    .from(attempt)
+    .innerJoin(practiceSession, eq(practiceSession.id, attempt.practiceSessionId))
+    .leftJoin(question, eq(question.id, attempt.questionId))
+    .where(
+      and(
+        eq(attempt.appUserId, args.studentId),
+        eq(practiceSession.subTopicId, args.subTopicId),
+        notExists(
+          tx
+            .select({ n: observation.id })
+            .from(observation)
+            .where(
+              and(
+                eq(observation.attemptId, attempt.id),
+                eq(observation.source, STAGE1_SOURCE),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(asc(attempt.submittedAt));
+
+  // Photo answers: same one-pass fetch as getObservations.
+  const attemptIds = rows.map((r) => r.attemptId);
+  const imgRows = attemptIds.length
+    ? await tx
+        .select({ id: attemptImage.id, attemptId: attemptImage.attemptId })
+        .from(attemptImage)
+        .where(inArray(attemptImage.attemptId, attemptIds))
+        .orderBy(asc(attemptImage.ordinal))
+    : [];
+  const photosByAttempt = new Map<string, string[]>();
+  for (const im of imgRows) {
+    const list = photosByAttempt.get(im.attemptId) ?? [];
+    list.push(im.id);
+    photosByAttempt.set(im.attemptId, list);
+  }
+
+  return rows.map((r) => ({
+    attemptId: r.attemptId,
+    status: (r.skipReason != null ? "skipped" : "answered_unassessed") as
+      | "skipped"
+      | "answered_unassessed",
+    questionId: r.questionId,
+    questionStem: r.questionStem,
+    answerText: r.answerText,
+    answerConfidence: r.answerConfidence,
+    answerPhotoIds: photosByAttempt.get(r.attemptId) ?? [],
+    skipReason: r.skipReason,
+    submittedAt: r.submittedAt,
   }));
 }
 

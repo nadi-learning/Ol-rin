@@ -99,6 +99,15 @@ export interface GeminiJsonArgs {
    * the JSON).
    */
   thinkingBudget?: number;
+  /**
+   * How many attempts before giving up. Defaults to 2 (retry once on an
+   * empty/bad-JSON/timeout response — the transient-blip guard). Pass 1 for a
+   * LONG call whose 2× worst case would otherwise blow a wall downstream: a
+   * single 600s attempt is 600s, but two are 1200s (past nginx's 700s). The
+   * async worker path uses maxAttempts:1 + a long timeout — it isn't behind a
+   * proxy, so the bound it needs is a predictable single leg, not resilience.
+   */
+  maxAttempts?: number;
   /** Best-effort ai_call_log attribution (no RLS on that table — not a boundary). */
   boardId?: string | null;
   userId?: string | null;
@@ -113,8 +122,9 @@ export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T> {
   const model = env.GEMINI_MODEL;
   const timeoutMs = args.timeoutMs ?? TIMEOUT_MS;
 
+  const maxAttempts = args.maxAttempts ?? 2;
   let lastErr: unknown;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const startedAt = Date.now();
     try {
       // Text-only → pass the bare string (unchanged). Multimodal → one user turn

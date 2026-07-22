@@ -48,6 +48,7 @@ import { grantRole } from "../src/services/membership";
 import {
   assertTutor,
   getObservations,
+  getUnassessedAttempts,
   getSubTopicQuestions,
   getStudentMastery,
   listPendingStage2,
@@ -254,6 +255,51 @@ async function main() {
   check("assign-preview: exactly 1 question (draft + private excluded)", asgQs.length === 1 && asgQs[0]!.stem === "What is a mixture? RECALL_STEM");
   check("assign-preview: carries the pedagogical 'why' + axis", asgQs[0]!.pedagogicalNote === "WHY_NOTE: establish the mixture baseline" && asgQs[0]!.axis === "conceptual");
   check("assign-preview: no reference-answer leak", !/REF_SECRET|reference/i.test(JSON.stringify(asgQs)));
+
+  // 6d. TUT-ASSESS-ROSTER — attempts that produced NO Stage-1 observation must be
+  // visible to the tutor as CONTEXT (tagged), while the observation-derived
+  // getObservations stays blind to them. Under sub_topic B (which already holds
+  // aTyped + aPhoto, both WITH observations) seed one abstained answer (a bare
+  // "A", no observation) and one skip. getUnassessedAttempts(B) must return
+  // EXACTLY those two — the notExists filter excludes the scored pair.
+  const roster = await withBoard(P.id, async (tx: Tx) => {
+    const [ps2] = await tx.insert(practiceSession).values({
+      boardId: P.id, appUserId: userS1, subTopicId: fx.B, questionIds: [recall.qId],
+    }).returning();
+    const [aAbstain] = await tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: ps2!.id, questionId: recall.qId, appUserId: userS1,
+      answerText: "A", confidence: 5, timeMs: 4000,
+    }).returning();
+    const [aSkip] = await tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: ps2!.id, questionId: recall.qId, appUserId: userS1,
+      answerText: null, confidence: null, timeMs: null, skipReason: "too_hard",
+    }).returning();
+    return { abstainId: aAbstain!.id, skipId: aSkip!.id };
+  });
+
+  const unB = await withBoard(P.id, (tx) => getUnassessedAttempts(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.B }));
+  const byAttempt = new Map(unB.map((u) => [u.attemptId, u]));
+  check("roster: getUnassessedAttempts(B) → exactly 2 (the scored pair excluded)", unB.length === 2);
+  check("roster: the abstained answer is present, tagged 'answered_unassessed'",
+    byAttempt.get(roster.abstainId)?.status === "answered_unassessed" && byAttempt.get(roster.abstainId)?.answerText === "A");
+  check("roster: the skip is present, tagged 'skipped' with its reason, null answer",
+    byAttempt.get(roster.skipId)?.status === "skipped" && byAttempt.get(roster.skipId)?.skipReason === "too_hard" && byAttempt.get(roster.skipId)?.answerText === null);
+  check("roster: carries the question stem for recall",
+    byAttempt.get(roster.abstainId)?.questionStem === "What is a mixture? RECALL_STEM");
+  check("roster: submittedAt-ordered (abstain before skip)",
+    unB[0]!.attemptId === roster.abstainId && unB[1]!.attemptId === roster.skipId);
+  check("roster: NO reference-answer / observation-level leak in the payload",
+    !/REF_SECRET|observationLevel|effectiveLevel/.test(JSON.stringify(unB)));
+
+  // getObservations(B) is UNCHANGED — the two unscored attempts don't appear there.
+  const obsBAfter = await withBoard(P.id, (tx) => getObservations(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.B }));
+  check("roster: getObservations(B) UNCHANGED by the unscored attempts (still scored reads only)", obsBAfter.length === obsB.length);
+
+  // ownership + RLS mirror getObservations.
+  check("roster: getUnassessedAttempts(unlinked S2) → StudentNotFoundError",
+    await ownerFail(() => withBoard(P.id, (tx) => getUnassessedAttempts(tx, { tutorUserId: userT, studentId: userS2, subTopicId: fx.B }))));
+  check("roster: getUnassessedAttempts under another board → StudentNotFoundError",
+    await ownerFail(() => withBoard(Q.id, (tx) => getUnassessedAttempts(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.B }))));
 
   // An observation belonging to the UNLINKED student S2 — the ownership guard on
   // overrideObservation must reject it (RLS scopes by board, not by user).

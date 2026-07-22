@@ -36,7 +36,6 @@ import {
   commitTopicsMd,
   createSubjectForAdmin,
   extractedTopicsMdSchema,
-  extractTopicsMd,
   listChaptersForAdmin,
   listSubjectsForAdmin,
   SubjectNotFoundError,
@@ -99,6 +98,7 @@ import {
 import { env } from "../config/env";
 import {
   getObservations,
+  getUnassessedAttempts,
   getProgressTree,
   getStudentInsights,
   getStudentMastery,
@@ -206,7 +206,12 @@ import {
   sendTurn,
   startChat,
 } from "../services/authoring_chat";
-import { enqueueImageGeneration, getImageJobState } from "../worker/queue";
+import {
+  enqueueExtractTopics,
+  enqueueImageGeneration,
+  getExtractJobStatus,
+  getImageJobState,
+} from "../worker/queue";
 import {
   ImageNotOverridableError,
   overrideImageVerdict,
@@ -1130,6 +1135,31 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         try {
           return await getObservations(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+            subTopicId: input.subTopicId,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // TUT-ASSESS-ROSTER — attempts the student made in this sub_topic that
+    // produced NO Stage-1 observation (skips + abstained answers). Read-only
+    // completeness overlay next to getObservations; never mastery evidence.
+    getUnassessedAttempts: tutorProcedure
+      .input(
+        z.object({
+          studentId: z.string().uuid(),
+          subTopicId: z.string().uuid(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getUnassessedAttempts(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             studentId: input.studentId,
             subTopicId: input.subTopicId,
@@ -2206,9 +2236,20 @@ export const appRouter = router({
     // A MUTATION (one AI call, not cacheable). Runs INLINE — the admin waits for
     // the extraction, then reviews the preview before committing (D-QA3-b-1). Does
     // not write; returns { extracted, validation } so the FE can gate Confirm.
+    // AIJOB-1 — enqueue the (150–260s) extraction and return its job id at once;
+    // the worker runs it OFF the request path (no nginx 700s wall) and the FE
+    // polls `getExtractJob`. This is the "show progress, deliver when the model
+    // returns" path — the request no longer holds open for the whole call.
     extractTopicsMd: adminProcedure
       .input(z.object({ rawMd: z.string().min(1) }))
-      .mutation(({ input }) => extractTopicsMd(input.rawMd)),
+      .mutation(async ({ ctx, input }) => ({
+        jobId: await enqueueExtractTopics({ boardId: ctx.board.id, rawMd: input.rawMd }),
+      })),
+
+    /** Poll one extraction job — {state} while running, {result} on completion. */
+    getExtractJob: adminProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(({ ctx, input }) => getExtractJobStatus(input.jobId, ctx.board.id)),
 
     // Commit the reviewed skeleton: re-validate → refuse-if-dependent → upsert
     // spine by slug → store the raw blob in chapter.metadata.topicsMd.

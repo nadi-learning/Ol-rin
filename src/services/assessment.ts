@@ -176,6 +176,32 @@ interface ScoreResult {
  * Score one attempt (opens its own board-scoped tx — the worker job and the
  * probe both call this with just boardId + attemptId; RLS binds inside).
  */
+// ── Slice MCQ-CORRECTNESS ────────────────────────────────────────────────────
+// Some questions present option letters (A–D) but are authored `subjective`; a
+// student who answers with a BARE letter and no working exposes no method, so the
+// method scorer abstains and the tutor sees nothing. Below we grade the CHOICE
+// itself against the reference answer — deterministically, no AI — and write it as
+// a CAPPED, guessable CONCEPTUAL read (never procedural: a letter shows no method).
+
+// The whole answer is a single option token, e.g. "A", "(b)", "C." → the letter.
+const BARE_CHOICE_RE = /^\s*\(?([A-Da-d])[.)]?\s*$/;
+export function detectBareChoice(answerText: string | null): string | null {
+  if (!answerText) return null;
+  const m = BARE_CHOICE_RE.exec(answerText);
+  return m ? m[1]!.toUpperCase() : null;
+}
+
+// Pull the single correct option from a free-text reference answer, e.g.
+// "(a) B. [2 marks]" → "B". Uppercase A–D only (lowercase "(a)" part labels are
+// ignored). Deterministic: if it finds zero or MORE THAN ONE distinct letter it
+// returns null — the caller then abstains rather than guess (ratified: don't guess).
+export function extractCorrectOption(reference: string): string | null {
+  const found = reference.match(/(?<![A-Za-z])[A-D](?![A-Za-z])/g);
+  if (!found) return null;
+  const distinct = Array.from(new Set(found.map((s) => s.toUpperCase())));
+  return distinct.length === 1 ? distinct[0]! : null;
+}
+
 export async function scoreAttempt(
   boardId: string,
   attemptId: string,
@@ -290,6 +316,49 @@ export async function scoreAttempt(
         // readers fall back.
         nonSubtopicNote: read.nonSubtopicNote,
         calibrationFlag: read.calibrationFlag,
+        pedagogicalComment: q.pedagogicalNote,
+        source: STAGE1_SOURCE,
+      });
+      written++;
+    }
+
+    // MCQ-CORRECTNESS fallback: the method scorer wrote nothing (a bare option
+    // exposes no working) but the answer IS a gradeable choice. Score the pick
+    // against the key and write ONE capped conceptual read so it shows in assess
+    // AND counts — never procedural. Text answers only; a photo answer went to the
+    // method path above. Abstains (writes nothing, as today) if the reference has
+    // no single unambiguous option letter.
+    const picked = written === 0 && images.length === 0
+      ? detectBareChoice(a.answerText)
+      : null;
+    const correctOption = picked ? extractCorrectOption(q.referenceAnswer) : null;
+    if (picked && correctOption) {
+      const isCorrect = picked === correctOption;
+      const overConfident = !isCorrect && a.confidence != null && a.confidence >= 4;
+      await tx.insert(observation).values({
+        boardId,
+        studentId: a.appUserId,
+        subTopicId: q.subTopicId,
+        questionId: q.id,
+        attemptId,
+        // Ratified: a bare choice evidences the RESULT, not the method → conceptual,
+        // capped (correct 3 / wrong 2), never procedural.
+        axis: "conceptual",
+        observationLevel: isCorrect ? 3 : 2,
+        reasoning: isCorrect
+          ? `Selected the correct option (${picked}) but showed no working — recognised the result, method unread.`
+          : `Selected ${picked}; the correct option is ${correctOption}. No working shown.`,
+        signals: {
+          kind: "mcq_correctness",
+          selected: picked,
+          correctOption,
+          correct: isCorrect,
+          guessable: true,
+          confidence: a.confidence ?? null,
+          timeMs: a.timeMs ?? null,
+          model: null, // deterministic — no AI call
+        },
+        calibrationFlag: overConfident ? "over" : null,
         pedagogicalComment: q.pedagogicalNote,
         source: STAGE1_SOURCE,
       });

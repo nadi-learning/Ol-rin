@@ -27,6 +27,11 @@ type AssessmentSessionView = Awaited<
 type ObservationView = Awaited<
   ReturnType<typeof trpc.tutor.getObservations.query>
 >[number];
+// Attempts with no Stage-1 read (skips + abstained answers) — shown as context,
+// never mastery evidence (TUT-ASSESS-ROSTER).
+type UnassessedAttemptView = Awaited<
+  ReturnType<typeof trpc.tutor.getUnassessedAttempts.query>
+>[number];
 // A correction returns the read fields only (no recall context) — merged onto the row.
 type ObservationCorrection = Awaited<
   ReturnType<typeof trpc.tutor.overrideObservation.mutate>
@@ -1943,30 +1948,79 @@ function Observations({
   subTopicId: string;
 }) {
   const [obs, setObs] = useState<ObservationView[] | null>(null);
+  const [unassessed, setUnassessed] = useState<UnassessedAttemptView[] | null>(null);
   useEffect(() => {
     trpc.tutor.getObservations
       .query({ studentId, subTopicId })
       .then((r) => setObs(r))
       .catch(() => setObs([]));
+    trpc.tutor.getUnassessedAttempts
+      .query({ studentId, subTopicId })
+      .then((r) => setUnassessed(r))
+      .catch(() => setUnassessed([]));
   }, [studentId, subTopicId]);
 
   if (obs === null) return <p className="tut-muted tut-obs-loading">Loading reads…</p>;
-  if (obs.length === 0) return <p className="tut-muted tut-obs-loading">No reads.</p>;
   return (
     <div className="tut-obs-list">
-      {obs.map((o) => (
-        <ObservationRow
-          key={o.id}
-          o={o}
-          onChanged={(next) =>
-            // Merge — the correction carries only the read fields; the recall
-            // context (question + answer) on the existing row is invariant to it.
-            setObs(
-              (prev) =>
-                prev?.map((x) => (x.id === next.id ? { ...x, ...next } : x)) ?? null,
-            )
-          }
-        />
+      {obs.length === 0 ? (
+        <p className="tut-muted tut-obs-loading">No reads.</p>
+      ) : (
+        obs.map((o) => (
+          <ObservationRow
+            key={o.id}
+            o={o}
+            onChanged={(next) =>
+              // Merge — the correction carries only the read fields; the recall
+              // context (question + answer) on the existing row is invariant to it.
+              setObs(
+                (prev) =>
+                  prev?.map((x) => (x.id === next.id ? { ...x, ...next } : x)) ?? null,
+              )
+            }
+          />
+        ))
+      )}
+      {unassessed && unassessed.length > 0 && (
+        <UnassessedAttempts rows={unassessed} />
+      )}
+    </div>
+  );
+}
+
+// TUT-ASSESS-ROSTER — the attempts the student made that the Stage-1 scorer never
+// turned into a read (a skip, or a bare answer it abstained on). Shown so the
+// tutor sees the FULL roster of what happened, clearly marked NOT counted toward
+// mastery — never to be mistaken for a scored, certifiable read.
+function UnassessedAttempts({ rows }: { rows: UnassessedAttemptView[] }) {
+  return (
+    <div className="tut-unassessed">
+      <p className="tut-unassessed-head">Attempted · not counted toward mastery</p>
+      {rows.map((r) => (
+        <div key={r.attemptId} className="tut-unassessed-row">
+          <span
+            className={`tut-tag ${r.status === "skipped" ? "tut-tag-skip" : "tut-tag-unread"}`}
+          >
+            {r.status === "skipped" ? "Skipped" : "Answered · not assessed"}
+          </span>
+          {r.questionStem && (
+            <span className="tut-unassessed-stem">{r.questionStem}</span>
+          )}
+          {r.status === "skipped"
+            ? r.skipReason && (
+                <span className="tut-unassessed-ans">Reason: {r.skipReason}</span>
+              )
+            : r.answerText
+              ? <span className="tut-unassessed-ans">“{r.answerText}”</span>
+              : r.answerPhotoIds.length > 0
+                ? (
+                  <span className="tut-unassessed-ans">
+                    {r.answerPhotoIds.length} photo answer
+                    {r.answerPhotoIds.length === 1 ? "" : "s"}
+                  </span>
+                )
+                : null}
+        </div>
       ))}
     </div>
   );

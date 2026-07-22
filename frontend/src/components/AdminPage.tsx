@@ -14,7 +14,11 @@ type BoardOption = Awaited<ReturnType<typeof trpc.session.listBoards.query>>[num
 // to dodge the global revision-shell.css landmine (same discipline as .par-/.tut-).
 
 type Chapter = Awaited<ReturnType<typeof trpc.admin.listChapters.query>>[number];
-type Extraction = Awaited<ReturnType<typeof trpc.admin.extractTopicsMd.mutate>>;
+// AIJOB-1: extraction is async now — the mutation returns a job id and the
+// result arrives via getExtractJob's `completed` state, so the shape the UI
+// renders is that job's `result`, not the mutation's return.
+type ExtractJobStatus = Awaited<ReturnType<typeof trpc.admin.getExtractJob.query>>;
+type Extraction = Extract<ExtractJobStatus, { state: "completed" }>["result"];
 
 export function AdminPage({
   adminName,
@@ -112,7 +116,32 @@ export function AdminPage({
     setExtraction(null);
     setBusy("extract");
     try {
-      setExtraction(await trpc.admin.extractTopicsMd.mutate({ rawMd }));
+      // AIJOB-1: enqueue → poll. The worker runs the (150–260s) extraction OFF
+      // the request path, so the request returns a job id in ms and we poll for
+      // the result instead of holding a POST open (which used to 120s-timeout).
+      // `busy === "extract"` keeps the elapsed-seconds timer ticking the whole
+      // time — that IS the "in progress" the admin sees.
+      const { jobId } = await trpc.admin.extractTopicsMd.mutate({ rawMd });
+      // Ceiling: 320 × 2.5s = ~13 min, comfortably over the worker's 600s leash
+      // so a real result is never cut off; only a truly wedged job trips it.
+      for (let i = 0; i < 320; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const s = await trpc.admin.getExtractJob.query({ jobId });
+        if (s.state === "completed") {
+          setExtraction(s.result);
+          return;
+        }
+        if (s.state === "failed") {
+          setError(s.error);
+          return;
+        }
+        if (s.state === "unknown") {
+          setError("Extraction job not found (it may have expired). Please retry.");
+          return;
+        }
+        // waiting / active → still running; keep polling.
+      }
+      setError("Extraction is taking unusually long — it may still finish. Reload to check, or retry.");
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {

@@ -1,5 +1,10 @@
 import { Queue } from "bullmq";
 import { redisConnection } from "../redis/connection";
+// Type-only (erased at compile → no runtime import cycle): the extraction's
+// result shape IS the job return value the poll hands back.
+import type { extractTopicsMd } from "../services/admin_ingest";
+
+type ExtractResult = Awaited<ReturnType<typeof extractTopicsMd>>;
 
 /**
  * BullMQ wiring.
@@ -16,11 +21,80 @@ import { redisConnection } from "../redis/connection";
  * Also BEST-EFFORT / FAULT-ISOLATED — a render is never load-bearing for the save
  * or for the student's practice (see enqueueImageGeneration).
  *
- * `b2c.content` — kept idle for the later content-pull slice (no processor yet).
+ * `b2c.content` — AIJOB-1: async topics.md extraction. `admin.extractTopicsMd`
+ * enqueues one job and returns its id; the worker runs the (150–260s) Gemini
+ * extraction OFF the request path and stores the result as the job's return
+ * value; `admin.getExtractJob` polls it. This moves the slow call off nginx's
+ * 700s wall entirely — the request that enqueues returns in ms.
  */
-export const contentQueue = new Queue("b2c.content", {
+export const CONTENT_QUEUE = "b2c.content";
+
+export interface ExtractTopicsJobData {
+  boardId: string;
+  rawMd: string;
+}
+
+export const contentQueue = new Queue<ExtractTopicsJobData>(CONTENT_QUEUE, {
   connection: redisConnection,
+  defaultJobOptions: {
+    // ONE attempt — a full extraction is a paid ~150–260s call; a BullMQ retry
+    // would silently re-run it. Surface a failure, don't loop it.
+    attempts: 1,
+    // Keep results in Redis long enough for the FE to poll them out (age-based,
+    // not count — one admin extracting occasionally, not a firehose).
+    removeOnComplete: { age: 3_600 },
+    removeOnFail: { age: 3_600 },
+  },
 });
+
+/**
+ * Enqueue one topics.md extraction; returns the BullMQ job id the FE polls.
+ * NOT best-effort (unlike the fire-and-forget enqueues below): if Redis is down
+ * the admin must SEE the failure — there is no job id to poll otherwise — so
+ * errors propagate to the caller. BullMQ assigns the id (unique per click; each
+ * Extract is a fresh run, never deduped).
+ */
+export async function enqueueExtractTopics(data: ExtractTopicsJobData): Promise<string> {
+  const job = await contentQueue.add("extract-topics-md", data);
+  if (!job.id) throw new Error("BullMQ did not assign a job id");
+  return job.id;
+}
+
+/**
+ * Poll state for one extraction job. Mirrors getImageJobState, but carries the
+ * RESULT: the extraction's whole point is a value to hand back, stored as the
+ * job's return value. `boardId` is checked against the caller's board so one
+ * admin can't poll another board's job by id. 'unknown' when the job has aged
+ * out of Redis or Redis is unreachable.
+ */
+export type ExtractJobStatus =
+  | { state: "waiting" | "active" | "unknown" }
+  | { state: "completed"; result: ExtractResult }
+  | { state: "failed"; error: string };
+
+export async function getExtractJobStatus(
+  jobId: string,
+  boardId: string,
+): Promise<ExtractJobStatus> {
+  try {
+    const job = await contentQueue.getJob(jobId);
+    if (!job) return { state: "unknown" };
+    // Board isolation: the job carries the board it was enqueued under.
+    if (job.data?.boardId && job.data.boardId !== boardId) return { state: "unknown" };
+    const state = await job.getState();
+    if (state === "completed") {
+      return { state: "completed", result: job.returnvalue as ExtractResult };
+    }
+    if (state === "failed") {
+      return { state: "failed", error: job.failedReason ?? "extraction failed" };
+    }
+    if (state === "active") return { state: "active" };
+    // waiting / delayed / prioritized / waiting-children → still queued
+    return { state: "waiting" };
+  } catch {
+    return { state: "unknown" };
+  }
+}
 
 export const ASSESSMENT_QUEUE = "b2c.assessment";
 
