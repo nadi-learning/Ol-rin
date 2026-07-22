@@ -3,12 +3,14 @@ import { redisConnection } from "../redis/connection";
 import { withBoard } from "../db/with-board";
 import { __aiConfigured } from "../services/ai/gemini";
 import { extractTopicsMd } from "../services/admin_ingest";
-import { reviseDraft } from "../services/authoring_chat";
+import { authorFromChat, reviseDraft } from "../services/authoring_chat";
 import { scoreAttempt } from "../services/assessment";
 import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
 import {
   ASSESSMENT_QUEUE,
+  AUTHORING_QUEUE,
+  type AuthoringJobData,
   CONTENT_QUEUE,
   type ExtractTopicsJobData,
   GENERATE_IMAGE_QUEUE,
@@ -152,8 +154,44 @@ reviseWorker.on("failed", (job, err) =>
   ),
 );
 
+// Slice AUTHOR-ASYNC — draft the questions OFF the request path (was inline in
+// sendAuthoringChatTurn / authorFromChat → the tutor sat on "Thinking…" for up to
+// 524s → 500 on a slow/truncated Gemini author). One authorFromChat per job (single
+// attempt — it PERSISTS draft rows, so a retry would re-author + re-persist);
+// authorFromChat internally spawns the scoped worker (Gemini now drafts
+// per-question so a heavy batch can't truncate) and PERSISTS the drafts under the
+// job's board claim (RLS). The AuthorFromChatResult (chosen sub-topic + persisted
+// drafts) is both persisted AND returned as the job value so the FE opens the
+// review form from the poll. concurrency 1 — a heavy multi-question AI sequence.
+const authoringWorker = new Worker<AuthoringJobData>(
+  AUTHORING_QUEUE,
+  async (job) =>
+    withBoard(job.data.boardId, (tx) =>
+      authorFromChat(tx, {
+        tutorUserId: job.data.tutorUserId,
+        chatId: job.data.chatId,
+        subTopicId: job.data.subTopicId,
+        count: job.data.count,
+      }),
+    ),
+  { connection: redisConnection, concurrency: 1 },
+);
+
+authoringWorker.on("completed", (job, res) =>
+  console.log(
+    `[b2c-worker] authored ${res?.drafts?.length ?? 0} draft(s) for ` +
+      `${res?.subTopicName ?? job.data.subTopicId} (chat ${job.data.chatId})`,
+  ),
+);
+authoringWorker.on("failed", (job, err) =>
+  console.error(
+    `[b2c-worker] authoring FAILED sub-topic ${job?.data.subTopicId} ` +
+      `(chat ${job?.data.chatId}): ${err.message}`,
+  ),
+);
+
 console.log(
-  `[b2c-worker] up — assessment + image-render + content-extract + revise processors registered ` +
+  `[b2c-worker] up — assessment + image-render + content-extract + revise + authoring processors registered ` +
     `(AI ${__aiConfigured() ? "configured" : "DISABLED: no GEMINI_API_KEY — jobs will fail loudly"})`,
 );
 

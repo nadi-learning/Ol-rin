@@ -7,3 +7,4 @@ bun.lockb
 tsconfig.tsbuildinfo
 frontend/node_modules/
 data/uploads/
+data/images/

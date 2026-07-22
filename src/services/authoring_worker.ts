@@ -204,7 +204,10 @@ export async function spawnAuthoringWorker(
         .join("\n")
     : "  (none authored yet)";
 
-  const prompt = `===== SOURCE MATERIAL (the chapter's topics.md — human-authored prose; read this) =====
+  // The scoped world MINUS the "how many" instruction — shared by both vendors.
+  // Gemini re-uses it per-question (carry-forward drafting, below); Claude appends
+  // the batch tail for its single call.
+  const basePrompt = `===== SOURCE MATERIAL (the chapter's topics.md — human-authored prose; read this) =====
 ${rawTopicsMd ?? "(no topics.md on record for this chapter — author from the LOs below)"}
 ===== END SOURCE MATERIAL =====
 
@@ -223,7 +226,12 @@ ${bankList}
 
 ===== BRIEF FROM THE TUTOR =====
 ${args.brief.trim() || "(no specific brief — author to this sub-topic's LOs at a sensible default depth, applying the spiral default)"}
-===== END BRIEF =====
+===== END BRIEF =====`;
+
+  // Claude's single-call batch prompt (the whole set in one call — Claude has no
+  // JSON-truncation problem, so it keeps the coherent batch). Also the fingerprint
+  // / worker-row `brief` of record for both vendors.
+  const batchPrompt = `${basePrompt}
 
 HOW MANY: write exactly ${args.count} question${args.count === 1 ? "" : "s"}, as an ordered scaffolded sequence, aimed at this student's weakness as established in the brief.
 
@@ -236,7 +244,9 @@ Author the set now. Apply the bar and the palette, and self-score each on the ru
     subTopicId: args.subTopicId,
     vendor: args.vendor,
     pack,
-    prompt,
+    basePrompt,
+    batchPrompt,
+    count: args.count,
   });
 
   // 7. Log the spawn (D-QA3-8): session id + fingerprint + brief + output.
@@ -244,7 +254,7 @@ Author the set now. Apply the bar and the palette, and self-score each on the ru
     args.vendor === "claude_cli"
       ? computeSessionFingerprint({
           systemPrompt: claudeSystemFor(pack),
-          userMessage: prompt,
+          userMessage: batchPrompt,
           endpoint: WORKER_ENDPOINT,
           slotId: WORKER_ENDPOINT,
           model: "",
@@ -259,7 +269,7 @@ Author the set now. Apply the bar and the palette, and self-score each on the ru
       vendor: args.vendor,
       aiSessionId,
       sessionFingerprint: fingerprint,
-      brief: prompt,
+      brief: batchPrompt,
       output: { count: drafts.length },
     })
     .returning({ id: authoringWorker.id });
@@ -267,10 +277,28 @@ Author the set now. Apply the bar and the palette, and self-score each on the ru
   return { workerId: workerRow!.id, drafts, aiSessionId, resumed };
 }
 
+// Carry-forward block (Gemini per-question drafting): the questions already
+// drafted in THIS set, so the next single-question call is a coherent next step in
+// the scaffold rather than a fresh isolated question. Kept SHORT (axis + stem) —
+// enough for coherence, small enough to stay well clear of the truncation ceiling.
+function draftedSoFarBlock(drafts: DraftItem[]): string {
+  if (drafts.length === 0) {
+    return "QUESTIONS ALREADY DRAFTED IN THIS SET: (none yet — this is the first)";
+  }
+  const lines = drafts.map((d, n) => `  ${n + 1}. [${d.axis}] ${d.stem}`).join("\n");
+  return `QUESTIONS ALREADY DRAFTED IN THIS SET (build the next one to FOLLOW ON from these as a coherent scaffolded progression; do NOT repeat them):\n${lines}`;
+}
+
 /**
  * The vendor branch. Gemini = schema-constrained generation (stateless, no
- * session). Claude CLI = prompted JSON + extractJsonObject, with worker-session
- * RESUME when a valid prior session exists for this (chat, sub_topic).
+ * session), drafted PER-QUESTION (Slice AUTHOR-ASYNC truncation fix): asking for
+ * the whole batch in one call returned TRUNCATED JSON on heavy content (stems cut
+ * mid-word at ~265s) → an unparseable-JSON failure. Each single-question call has a
+ * tiny output that can't truncate, and the already-drafted questions are fed back
+ * as carry-forward so the set stays a coherent scaffold. N× calls is fine now that
+ * authoring runs OFF the request path (no nginx wall). Claude CLI = prompted JSON +
+ * extractJsonObject with worker-session RESUME (no truncation problem → one batch
+ * call, unchanged).
  */
 async function runWorkerCall(
   tx: Tx,
@@ -280,31 +308,56 @@ async function runWorkerCall(
     subTopicId: string;
     vendor: VendorChoice;
     pack: string;
-    prompt: string;
+    basePrompt: string;
+    batchPrompt: string;
+    count: number;
   },
 ): Promise<{ drafts: DraftItem[]; aiSessionId: string | null; resumed: boolean }> {
   if (opts.vendor === "gemini_api") {
-    const raw = await geminiJson<unknown>({
-      label: `authoring-worker:${opts.subTopicId}`,
-      systemInstruction: opts.pack,
-      prompt: opts.prompt,
-      responseSchema: geminiQuestionSchema as never,
-      // Bounds + rationale at AUTHORING_TIMEOUT_MS above (incl. the nginx
-      // dependency). Runs on the global GEMINI_MODEL (= gemini-3.5-flash).
-      timeoutMs: AUTHORING_TIMEOUT_MS,
-      thinkingBudget: AUTHORING_THINKING_BUDGET,
-      // Stays null on purpose (M28): thinking is capped above instead. Capping
-      // maxOutputTokens on a thinking model truncates the JSON mid-answer.
-      maxOutputTokens: null,
-    });
-    return { drafts: draftBatchSchema.parse(raw).questions, aiSessionId: null, resumed: false };
+    const drafts: DraftItem[] = [];
+    for (let i = 0; i < opts.count; i++) {
+      const perQuestionPrompt = `${opts.basePrompt}
+
+${draftedSoFarBlock(drafts)}
+
+HOW MANY: write EXACTLY ONE question — number ${i + 1} of ${opts.count} in an ordered, scaffolded sequence aimed at this student's weakness (per the brief). ${
+        i === 0
+          ? "This is the FIRST question in the set."
+          : "It must FOLLOW ON from the questions already drafted above — the natural next step, not a repeat."
+      }
+
+Apply the bar and the palette, and self-score on the rubric (honest low on at least one axis). Return the structured JSON object with a "questions" array containing EXACTLY ONE question.`;
+      const raw = await geminiJson<unknown>({
+        label: `authoring-worker:${opts.subTopicId}:${i + 1}/${opts.count}`,
+        systemInstruction: opts.pack,
+        prompt: perQuestionPrompt,
+        responseSchema: geminiQuestionSchema as never,
+        // Bounds + rationale at AUTHORING_TIMEOUT_MS above. A single question is a
+        // small output; this timeout is a backstop, not the working bound. Runs on
+        // the global GEMINI_MODEL (= gemini-3.5-flash). geminiJson retries once on a
+        // blip; a genuine double-failure fails the job (surfaced to the FE).
+        timeoutMs: AUTHORING_TIMEOUT_MS,
+        thinkingBudget: AUTHORING_THINKING_BUDGET,
+        // Stays null on purpose (M28): thinking is capped above instead. Capping
+        // maxOutputTokens on a thinking model truncates the JSON mid-answer.
+        maxOutputTokens: null,
+      });
+      const q = draftBatchSchema.parse(raw).questions[0];
+      if (!q) {
+        throw new Error(
+          `authoring-worker gemini returned no question for ${opts.subTopicId} (${i + 1}/${opts.count})`,
+        );
+      }
+      drafts.push(q);
+    }
+    return { drafts, aiSessionId: null, resumed: false };
   }
 
   // Claude CLI.
   const claudeSystem = claudeSystemFor(opts.pack);
   const fingerprint = computeSessionFingerprint({
     systemPrompt: claudeSystem,
-    userMessage: opts.prompt,
+    userMessage: opts.batchPrompt,
     endpoint: WORKER_ENDPOINT,
     slotId: WORKER_ENDPOINT,
     model: "",
@@ -327,7 +380,7 @@ async function runWorkerCall(
     try {
       const ai = await complete({
         systemPrompt: claudeSystem,
-        userMessage: opts.prompt,
+        userMessage: opts.batchPrompt,
         endpoint: WORKER_ENDPOINT,
         model: "", // vendor default (opus)
         timeoutSec: WORKER_TIMEOUT_SEC,

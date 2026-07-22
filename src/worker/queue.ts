@@ -3,10 +3,11 @@ import { redisConnection } from "../redis/connection";
 // Type-only (erased at compile → no runtime import cycle): the job's result shape
 // IS the value the poll hands back.
 import type { extractTopicsMd } from "../services/admin_ingest";
-import type { reviseDraft } from "../services/authoring_chat";
+import type { authorFromChat, reviseDraft } from "../services/authoring_chat";
 
 type ExtractResult = Awaited<ReturnType<typeof extractTopicsMd>>;
 type ReviseResult = Awaited<ReturnType<typeof reviseDraft>>;
+type AuthoringResult = Awaited<ReturnType<typeof authorFromChat>>;
 
 /**
  * Shared helper: find the id of an in-flight job (active/queued) whose data
@@ -28,6 +29,29 @@ async function activeJobIdForQuestion<D extends { boardId: string; questionId: s
     const jobs = await queue.getJobs(["active", "waiting", "delayed", "prioritized", "paused"]);
     const match = jobs.find(
       (j) => j?.data?.questionId === questionId && j?.data?.boardId === boardId,
+    );
+    return match?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sibling of activeJobIdForQuestion, keyed by (board, chat) instead of
+ * (board, question). Used by the async AUTHORING loader: unlike a revise (which
+ * targets an existing draft row), an in-flight author has NO draft yet — the
+ * drafts are the job's OUTPUT — so the resume handle is the chat, not a question.
+ * Returns null on any Redis error (loader stays off).
+ */
+async function activeJobIdForChat<D extends { boardId: string; chatId: string }>(
+  queue: Queue<D>,
+  boardId: string,
+  chatId: string,
+): Promise<string | null> {
+  try {
+    const jobs = await queue.getJobs(["active", "waiting", "delayed", "prioritized", "paused"]);
+    const match = jobs.find(
+      (j) => j?.data?.chatId === chatId && j?.data?.boardId === boardId,
     );
     return match?.id ?? null;
   } catch {
@@ -339,4 +363,98 @@ export async function getReviseJobStatus(
  */
 export function getActiveReviseJobId(boardId: string, questionId: string): Promise<string | null> {
   return activeJobIdForQuestion(reviseQueue, boardId, questionId);
+}
+
+// ───────────────────────── Slice AUTHOR-ASYNC: draft the questions ─────────────
+// The authoring WORKER (spawnAuthoringWorker → geminiJson) is a paid, HIGH-VARIANCE
+// call (measured 60–265s; on heavy content it returned truncated JSON at 265s then
+// TIMED OUT the retry at ~247s). It used to run INLINE inside sendAuthoringChatTurn
+// / authorFromChat → the tutor sat on "Thinking…" for up to 524s → 500 (the
+// 2026-07-22 "waiting forever" freeze). Now it is a background job (the AIJOB-1 /
+// revise pattern): the request path resolves the target (fast) + enqueues; the
+// worker runs authorFromChat OFF the request path (no nginx wall, retries
+// non-blocking) and PERSISTS the drafts; the FE polls for the AuthorFromChatResult
+// (the job's return value) and its "Drafting…" loader survives a refresh via
+// getActiveAuthoringJobId(chatId).
+
+export const AUTHORING_QUEUE = "b2c.authoring";
+
+export interface AuthoringJobData {
+  boardId: string;
+  tutorUserId: string;
+  chatId: string;
+  subTopicId: string;
+  count: number;
+}
+
+export const authoringQueue = new Queue<AuthoringJobData>(AUTHORING_QUEUE, {
+  connection: redisConnection,
+  defaultJobOptions: {
+    // ONE attempt — a full author is a paid, per-question sequence that PERSISTS
+    // draft rows; a silent BullMQ retry would re-author + re-persist. Surface a
+    // failure instead (the FE shows "drafting failed, try again").
+    attempts: 1,
+    // Age-based retention so the FE can poll the drafts out (occasional tutor
+    // action, not a firehose).
+    removeOnComplete: { age: 3_600 },
+    removeOnFail: { age: 3_600 },
+  },
+});
+
+/**
+ * Enqueue one authoring draft; returns the BullMQ job id the FE polls. NOT
+ * best-effort (like extraction/revise, unlike the fire-and-forget render/score
+ * enqueues): if Redis is down the tutor must SEE the failure — there is no job id
+ * to poll otherwise — so errors propagate. A `delay` lets the request tx (which
+ * just appended the tutor's go-ahead turn to the chat) COMMIT before the worker's
+ * authorFromChat reads the chat history for its brief. BullMQ assigns the id.
+ */
+export async function enqueueAuthoring(data: AuthoringJobData): Promise<string> {
+  const job = await authoringQueue.add("author-draft", data, { delay: 2_000 });
+  if (!job.id) throw new Error("BullMQ did not assign a job id");
+  return job.id;
+}
+
+/**
+ * Poll state for one authoring job. Mirrors getReviseJobStatus: on completed it
+ * carries the AuthorFromChatResult (chosen sub-topic + the persisted drafts, the
+ * job's return value) so the FE opens the review form without a second read.
+ * `boardId` is checked against the caller's board so one tutor can't poll another
+ * board's job by id. 'unknown' when the job has aged out of Redis or Redis is
+ * unreachable.
+ */
+export type AuthoringJobStatus =
+  | { state: "waiting" | "active" | "unknown" }
+  | { state: "completed"; result: AuthoringResult }
+  | { state: "failed"; error: string };
+
+export async function getAuthoringJobStatus(
+  jobId: string,
+  boardId: string,
+): Promise<AuthoringJobStatus> {
+  try {
+    const job = await authoringQueue.getJob(jobId);
+    if (!job) return { state: "unknown" };
+    if (job.data?.boardId && job.data.boardId !== boardId) return { state: "unknown" };
+    const state = await job.getState();
+    if (state === "completed") {
+      return { state: "completed", result: job.returnvalue as AuthoringResult };
+    }
+    if (state === "failed") {
+      return { state: "failed", error: job.failedReason ?? "authoring failed" };
+    }
+    if (state === "active") return { state: "active" };
+    return { state: "waiting" };
+  } catch {
+    return { state: "unknown" };
+  }
+}
+
+/**
+ * Id of an in-flight authoring job for this chat, or null — the resume handle for
+ * the tutor's "Drafting…" loader after a page refresh / close-reopen. Keyed by
+ * chat (not question — the drafts don't exist yet). See activeJobIdForChat.
+ */
+export function getActiveAuthoringJobId(boardId: string, chatId: string): Promise<string | null> {
+  return activeJobIdForChat(authoringQueue, boardId, chatId);
 }

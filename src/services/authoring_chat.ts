@@ -60,6 +60,7 @@ import { SubTopicNotFoundError } from "./assessment";
 import { assertTutorsStudent, getStudentMastery } from "./tutor";
 import { jsonlExists } from "./cli_session";
 import { withBoard } from "../db/with-board";
+import { enqueueAuthoring } from "../worker/queue";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -477,7 +478,20 @@ export type ChatView = {
   // questions the FE routes into the review form (same shape as authorFromChat;
   // persisted as status='draft'/private, the tutor edits + approves). Absent on
   // every ordinary discussion turn.
+  //
+  // Slice AUTHOR-ASYNC: in-chat authoring no longer drafts inline (it hung the
+  // request up to 524s). `draft` is therefore NEVER populated by sendTurn now;
+  // instead a background job is enqueued and its id returned as `draftJobId`. The
+  // FE shows a durable "Drafting…" loader and polls getAuthoringJobStatus for the
+  // AuthorFromChatResult. (`draft` is kept on the type — the review form still
+  // consumes that shape from the poll result.)
   draft?: AuthorFromChatResult;
+  // Slice AUTHOR-ASYNC: set on a sendTurn where an in-chat author fired — the
+  // BullMQ job id drafting the questions off the request path. Mutually exclusive
+  // with `draft`. The FE polls getAuthoringJobStatus(draftJobId) and opens the
+  // review form when it completes; the loader survives a refresh via
+  // getActiveAuthoringJob(chatId).
+  draftJobId?: string;
   // The student's still-unapproved (status='draft') authored questions, flat
   // across sub-topics (interleaved may span several). Populated ONLY by getChat so
   // that RESUMING a chat mid-review (from either the landing history picker or a
@@ -664,69 +678,61 @@ export async function listAuthoringChats(
 }
 
 /**
- * Shared in-chat authoring core (both the Gemini tool branch and the Claude marker
- * branch call this). Resolve the numbered target — clamped INTO the chapter
- * allowlist so it can never escape to a raw id (M15) — pin it on the chat, spawn a
- * scoped worker (method pack + O1/O2), and persist the drafts as status='draft' /
- * private. Both paths therefore draft to the SAME craft bar (QA3-e master→worker).
+ * Shared in-chat authoring core (both the Gemini sentinel branch and the Claude
+ * marker branch call this). Resolve the numbered target — clamped INTO the chapter
+ * allowlist so it can never escape to a raw id (M15) — pin it on the chat, and
+ * ENQUEUE a background authoring job (Slice AUTHOR-ASYNC). The slow, high-variance
+ * worker draft (spawnAuthoringWorker → geminiJson) used to run INLINE here → the
+ * request hung up to 524s → 500. Now the worker runs authorFromChat OFF the request
+ * path and persists the drafts; this call returns the job id + the chosen target so
+ * sendTurn can return a "Drafting…" view the FE polls. Both in-chat paths therefore
+ * enqueue the SAME job the authorFromChat button enqueues (one worker, one craft bar).
  */
-async function resolveAndAuthor(
+async function resolveTargetAndEnqueue(
   tx: Tx,
   a: {
     row: Awaited<ReturnType<typeof ownedChat>>;
+    tutorUserId: string;
     subs: SubRef[];
     subTopicNumber: number;
     count: number;
-    history: ChatMessage[];
-    text: string;
-    vendor: VendorChoice;
   },
-): Promise<{ chosen: SubRef; nextOrdinal: number; persisted: PersistedDraft[] }> {
+): Promise<{ chosen: SubRef; count: number; jobId: string }> {
   const idx = Math.min(Math.max(a.subTopicNumber, 1), a.subs.length) - 1;
   const chosen = a.subs[idx]!;
   const count = Math.min(Math.max(a.count, 1), 8);
-  const nextOrdinal = await nextOrdinalFor(tx, chosen.subTopicId);
 
-  // Persist the resolved focus (mirrors proposeTarget/authorFromChat).
+  // Pin the resolved focus now (mirrors proposeTarget/authorFromChat) so the
+  // returned ChatView reflects the target while the job drafts. authorFromChat sets
+  // it again in the worker — idempotent.
   await tx
     .update(authoringChat)
     .set({ subTopicId: chosen.subTopicId, updatedAt: new Date() })
     .where(eq(authoringChat.id, a.row.id));
 
-  // The master SELECTED the target; spawn a fresh scoped worker to author (method
-  // pack + O1/O2 + the scoped slice) so both in-chat paths draft to the SAME bar
-  // as the structured authorFromChat path.
-  const brief = [
-    ...a.history.map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`),
-    `TUTOR: ${a.text}`,
-  ].join("\n\n");
-  const { drafts } = await spawnAuthoringWorker(tx, {
+  // Enqueue the (slow, high-variance) worker draft OFF the request path. The delay
+  // in enqueueAuthoring lets THIS tx (which persists the go-ahead turn back in
+  // sendTurn) COMMIT before the worker's authorFromChat reads the chat history for
+  // its brief. The worker resolves the brief from the chat itself — nothing else
+  // to thread through the job.
+  const jobId = await enqueueAuthoring({
     boardId: a.row.boardId,
+    tutorUserId: a.tutorUserId,
     chatId: a.row.id,
     subTopicId: chosen.subTopicId,
-    vendor: a.vendor,
     count,
-    brief,
   });
-  // FIG-AUTH (D-FIG-5): persist as status='draft' rows so each has a real id — the
-  // review form renders + previews before approve. Still NOT live (D-FIG-1).
-  const persisted = await persistDrafts(tx, {
-    boardId: a.row.boardId,
-    subTopicId: chosen.subTopicId,
-    targetStudentId: a.row.studentId,
-    drafts,
-  });
-  return { chosen, nextOrdinal, persisted };
+  return { chosen, count, jobId };
 }
 
-/** Build the ChatView returned when an in-chat author fired (drafts → review). */
-function buildAuthoredView(
+/** Build the ChatView returned when an in-chat author fired: the drafts are being
+ *  authored ASYNC (jobId), so no `draft` payload yet — the FE polls for it. */
+function buildDraftingView(
   row: Awaited<ReturnType<typeof ownedChat>>,
   vendor: VendorChoice,
   chosen: SubRef,
-  nextOrdinal: number,
-  persisted: PersistedDraft[],
   messages: ChatMessage[],
+  jobId: string,
 ): ChatView {
   return {
     chatId: row.id,
@@ -737,16 +743,7 @@ function buildAuthoredView(
     subTopicId: chosen.subTopicId,
     vendor,
     messages,
-    draft: {
-      chatId: row.id,
-      studentId: row.studentId,
-      subTopicId: chosen.subTopicId,
-      subTopicName: chosen.subTopicName,
-      topicName: chosen.topicName,
-      chapterName: chosen.chapterName,
-      nextOrdinal,
-      drafts: persisted,
-    },
+    draftJobId: jobId,
   };
 }
 
@@ -916,22 +913,23 @@ export async function sendTurn(
         multiChapter: turnChapterIds.length > 1,
         label: row.id,
       });
-      const { chosen, nextOrdinal, persisted } = await resolveAndAuthor(tx, {
+      // Slice AUTHOR-ASYNC: resolve the target + ENQUEUE the draft off the request
+      // path (the worker was the 524s inline hang). The FE polls the job.
+      const { chosen, count, jobId } = await resolveTargetAndEnqueue(tx, {
         row,
+        tutorUserId: args.tutorUserId,
         subs,
         subTopicNumber: intent.choice,
         count: intent.count,
-        history,
-        text,
-        vendor,
       });
 
       // Wrap-up = the model's own confirming prose with the sentinel stripped (no
       // follow-up call needed — the reply already announced the drafting); fall
-      // back to a canned line if stripping left nothing.
+      // back to a canned line if stripping left nothing. The drafts are authored
+      // ASYNC now, so the fallback speaks to that ("drafting… appears below").
       const wrapText =
         stripAuthorSentinel(sanitiseAssistantText(ai.text)) ||
-        `Drafted ${persisted.length} question${persisted.length === 1 ? "" : "s"} for ${chosen.subTopicName} — review, edit, and save them below.`;
+        `On it — drafting ${count} question${count === 1 ? "" : "s"} for ${chosen.subTopicName} now. They'll appear in the review form below when they're ready.`;
 
       const assistantMsg: ChatMessage = {
         id: randomUUID(),
@@ -948,7 +946,7 @@ export async function sendTurn(
         .set({ messages, updatedAt: new Date() })
         .where(eq(authoringChat.id, row.id));
 
-      return buildAuthoredView(row, vendor, chosen, nextOrdinal, persisted, messages);
+      return buildDraftingView(row, vendor, chosen, messages, jobId);
     } catch (err) {
       // Resolve/author failed (resolver bad JSON, worker error, …) → degrade to a
       // normal reply. The tutor sees the confirming text and can re-ask or use the
@@ -968,22 +966,22 @@ export async function sendTurn(
   if (!isGemini && subs.length > 0) {
     const marker = parseAuthorMarker(ai.text);
     if (marker) {
-      const { chosen, nextOrdinal, persisted } = await resolveAndAuthor(tx, {
+      // Slice AUTHOR-ASYNC: same as the Gemini path — resolve + ENQUEUE off the
+      // request path (the worker draft was the inline hang), the FE polls the job.
+      const { chosen, count, jobId } = await resolveTargetAndEnqueue(tx, {
         row,
+        tutorUserId: args.tutorUserId,
         subs,
         subTopicNumber: marker.subTopicNumber,
         count: marker.count,
-        history,
-        text,
-        vendor,
       });
 
       // Wrap-up = Claude's own prose with the directive block removed (no follow-up
       // call — Claude has no tool schema to hand a result back to); fall back to a
-      // canned line if stripping left nothing.
+      // canned line if stripping left nothing. Drafts are authored ASYNC now.
       const wrapText =
         stripAuthorMarker(ai.text) ||
-        `Drafted ${persisted.length} question${persisted.length === 1 ? "" : "s"} for ${chosen.subTopicName} — review, edit, and save them below.`;
+        `On it — drafting ${count} question${count === 1 ? "" : "s"} for ${chosen.subTopicName} now. They'll appear in the review form below when they're ready.`;
 
       const assistantMsg: ChatMessage = {
         id: randomUUID(),
@@ -1000,7 +998,7 @@ export async function sendTurn(
         .set({ messages, updatedAt: new Date() })
         .where(eq(authoringChat.id, row.id));
 
-      return buildAuthoredView(row, vendor, chosen, nextOrdinal, persisted, messages);
+      return buildDraftingView(row, vendor, chosen, messages, jobId);
     }
   }
 
@@ -1052,9 +1050,39 @@ export type AuthorFromChatResult = {
 };
 
 /**
+ * Fast-fail guard for the authorFromChat BUTTON route (Slice AUTHOR-ASYNC). The
+ * route enqueues the draft and returns a jobId at once, so it validates the target
+ * on the request path FIRST — a bogus/cross-scope sub_topic or a non-owned chat
+ * must 404 the click, not fail silently in a queued job the tutor then polls. The
+ * worker's authorFromChat re-runs the same guard (cheap). Mirrors reviseDraftQuestion
+ * asserting ownership before enqueue.
+ */
+export async function assertAuthorTarget(
+  tx: Tx,
+  args: { tutorUserId: string; chatId: string; subTopicId: string },
+): Promise<void> {
+  const row = await ownedChat(tx, args.tutorUserId, args.chatId); // → AuthoringChatNotFoundError
+  const [st] = await tx
+    .select({ chapterId: chapter.id })
+    .from(subTopic)
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .where(eq(subTopic.id, args.subTopicId));
+  if (!st) throw new SubTopicNotFoundError(args.subTopicId);
+  const scopeChapterIds = chatChapterIds(row);
+  if (scopeChapterIds.length > 0 && !scopeChapterIds.includes(st.chapterId)) {
+    throw new SubTopicNotFoundError(args.subTopicId);
+  }
+}
+
+/**
  * Author N subjective questions to the student's weakness, using the chat as
  * intent. ONE structured call, reads-only/re-runnable. Honors the chat's vendor:
  * Gemini → geminiJson (responseSchema); Claude CLI → prompted JSON + extractJson.
+ *
+ * Slice AUTHOR-ASYNC: this now runs IN THE WORKER (off the request path). Both the
+ * authorFromChat button route and the in-chat sentinel/marker paths enqueue a job
+ * that lands here; the request path only resolves the target + enqueues.
  */
 export async function authorFromChat(
   tx: Tx,
@@ -1235,7 +1263,7 @@ OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"choice":<1-based numbe
 // conversation + numbered targets and returns {choice,count} via the robust
 // runVendoredJson plumbing (Gemini → responseSchema; a parse failure throws →
 // sendTurn catches it and degrades to a normal reply). choice/count are clamped
-// into the allowlist + 1–8 downstream by resolveAndAuthor. Reuses proposeTarget's
+// into the allowlist + 1–8 downstream by resolveTargetAndEnqueue. Reuses proposeTarget's
 // schema (choice==subTopicNumber) — this is a SEPARATE call from the conversation
 // (fork 4 preserved).
 const AUTHOR_INTENT_SYSTEM = `The tutor has just given a clear go-ahead to author practice questions, in a conversation with an authoring partner. From the conversation and a NUMBERED list of the chapter's sub-topics, identify the ONE sub-topic the tutor wants authored RIGHT NOW and how many questions (1–8; use 3 if no number was stated). If several sub-topics were discussed, pick the one the tutor's most recent go-ahead refers to. Choose BY the list's number — never invent a sub-topic. Return ONLY {choice, count, rationale}.`;

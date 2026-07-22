@@ -2674,7 +2674,10 @@ function ReportStat({ label, value }: { label: string; value: string }) {
 type VendorChoice = "claude_cli" | "gemini_api";
 type ChatView = Awaited<ReturnType<typeof trpc.tutor.getAuthoringChat.query>>;
 type ChatTurn = ChatView["messages"][number];
-type AuthorDraft = Awaited<ReturnType<typeof trpc.tutor.authorFromChat.mutate>>;
+// Slice AUTHOR-ASYNC: authorFromChat now returns { jobId } (the draft is authored
+// off the request path); the review-form payload is the completed job's `result`.
+type AuthorJobStatus = Awaited<ReturnType<typeof trpc.tutor.getAuthoringJobStatus.query>>;
+type AuthorDraft = Extract<AuthorJobStatus, { state: "completed" }>["result"];
 type AuthorDraftItem = AuthorDraft["drafts"][number];
 type ProposeResult = Awaited<
   ReturnType<typeof trpc.tutor.proposeAuthoringTarget.mutate>
@@ -2836,6 +2839,23 @@ function AuthorChat({
     "We couldn't revise this question. Please try again — if it keeps failing, simplify the instruction.";
   const REVISE_SLOW_MSG =
     "This revision is taking longer than usual. Leave this open — it'll appear here when it's done.";
+  // AUTHOR-ASYNC: drafting the questions is a background job now (the worker used to
+  // hang the request up to 524s). Its "Drafting…" loader is durable — the jobId +
+  // poll timer are refs (survive re-renders), and the loader resumes across a page
+  // refresh by scanning for a live authoring job for this chat (resumeDrafting).
+  const [drafting, setDrafting] = useState(false);
+  const draftJobRef = useRef<string | null>(null);
+  const draftPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (draftPollRef.current) clearTimeout(draftPollRef.current);
+    },
+    [],
+  );
+  const DRAFT_FAILED_MSG =
+    "We couldn't draft these questions. Please try again — if it keeps failing, ask for fewer at a time.";
+  const DRAFT_SLOW_MSG =
+    "Drafting is taking longer than usual. Leave this open — the questions will appear here when they're ready.";
   // The authored-question preview is a left pane shown side-by-side with the chat
   // once drafts exist; the tutor can collapse it back to full-width chat without
   // discarding the drafts (re-open via the topbar chip) — D-AUTHUI-1.
@@ -2894,6 +2914,11 @@ function AuthorChat({
     if (revisePollRef.current) clearTimeout(revisePollRef.current);
     revisePollRef.current = null;
     reviseJobRef.current = null;
+    // Same for an in-flight authoring (drafting) poll.
+    setDrafting(false);
+    if (draftPollRef.current) clearTimeout(draftPollRef.current);
+    draftPollRef.current = null;
+    draftJobRef.current = null;
     setSaved(null);
     setError(null);
     setInput("");
@@ -2904,6 +2929,19 @@ function AuthorChat({
   // landing history picker AND a plain remount — restores identically; no path
   // can silently drop a mid-review form. No-op when there's nothing pending.
   function restoreDrafts(c: ChatView) {
+    // AUTHOR-ASYNC: resume the "Drafting…" loader if an author is still drafting for
+    // this chat (durable across a refresh / close-reopen). The drafts don't exist
+    // yet, so this scan runs BEFORE the pendingDrafts short-circuit below. One
+    // author runs at a time.
+    if (!draftJobRef.current) {
+      void (async () => {
+        const { jobId } = await trpc.tutor.getActiveAuthoringJob
+          .query({ chatId: c.chatId })
+          .catch(() => ({ jobId: null as string | null }));
+        if (jobId && !draftJobRef.current) startDraftingPoll(jobId);
+      })();
+    }
+
     const drafts = c.pendingDrafts ?? [];
     if (drafts.length === 0) return;
     setCards(drafts.map((d) => toCard(d, d.subTopicId, d.subTopicName)));
@@ -3070,7 +3108,9 @@ function AuthorChat({
 
   function send() {
     const text = input.trim();
-    if (!chat || !text || sending) return;
+    // Block a new turn while an author is drafting — one author at a time (the
+    // durable loader tracks a single job).
+    if (!chat || !text || sending || drafting) return;
     setError(null);
     setSending(true);
     setInput("");
@@ -3089,20 +3129,10 @@ function AuthorChat({
       .mutate({ chatId: chat.chatId, text })
       .then((c) => {
         setChat(c); // authoritative list replaces the optimistic turn
-        // Gemini authored in-chat via the author_questions tool → route its
-        // drafts into the SAME review form the button flow uses (decision 2b).
-        if (c.draft) {
-          const d = c.draft;
-          setSaved(null);
-          setProposal(null);
-          setTarget({
-            subTopicId: d.subTopicId,
-            subTopicName: d.subTopicName,
-            nextOrdinal: d.nextOrdinal,
-          });
-          setCards(d.drafts.map((x) => toCard(x, d.subTopicId, d.subTopicName)));
-          setPreviewMinimized(false);
-        }
+        // AUTHOR-ASYNC: an in-chat author fired (Gemini sentinel / Claude marker) →
+        // the drafts are being authored off the request path. Start the durable
+        // "Drafting…" loader + poll; the review form opens when the job completes.
+        if (c.draftJobId) startDraftingPoll(c.draftJobId);
       })
       .catch((e) => {
         setError(String(e?.message ?? e));
@@ -3115,7 +3145,7 @@ function AuthorChat({
   // Consent-in-chat: ask the AI to propose ONE target (sub_topic + count) from the
   // conversation + grounding, scoped to the chat's chapter. The tutor confirms.
   function propose() {
-    if (!chat || proposing) return;
+    if (!chat || proposing || drafting) return;
     setError(null);
     setSaved(null);
     setProposing(true);
@@ -3137,7 +3167,7 @@ function AuthorChat({
 
   // The tutor accepted the proposal → author the questions for that target.
   function authorConfirmed() {
-    if (!chat || !proposal) return;
+    if (!chat || !proposal || drafting) return;
     const p = proposal;
     setError(null);
     setSaved(null);
@@ -3149,15 +3179,9 @@ function AuthorChat({
         subTopicId: p.subTopicId,
         count: proposeCount,
       })
-      .then((r) => {
-        setTarget({
-          subTopicId: r.subTopicId,
-          subTopicName: r.subTopicName,
-          nextOrdinal: r.nextOrdinal,
-        });
-        setCards(r.drafts.map((x) => toCard(x, r.subTopicId, r.subTopicName)));
-        setPreviewMinimized(false);
-      })
+      // AUTHOR-ASYNC: returns a jobId now (drafting runs off the request path) →
+      // hand off to the durable "Drafting…" loader; the review form opens on poll.
+      .then(({ jobId }) => startDraftingPoll(jobId))
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setAuthoring(false));
   }
@@ -3270,6 +3294,65 @@ function AuthorChat({
         }),
       )
       .catch((e) => setError(String(e?.message ?? e)));
+  }
+
+  // Open the review form from an authored-draft result (the completed job's
+  // payload). Shared by the async poll for BOTH the in-chat author and the button,
+  // so the review form opens identically however drafting was triggered.
+  function openReviewForm(d: AuthorDraft) {
+    setSaved(null);
+    setProposal(null);
+    setTarget({
+      subTopicId: d.subTopicId,
+      subTopicName: d.subTopicName,
+      nextOrdinal: d.nextOrdinal,
+    });
+    setCards(d.drafts.map((x) => toCard(x, d.subTopicId, d.subTopicName)));
+    setPreviewMinimized(false);
+  }
+
+  // Poll an authoring job until the drafts land (AUTHOR-ASYNC). On completion the
+  // job carries the AuthorFromChatResult → open the review form. 'unknown' is
+  // treated as still-working (a transient Redis blip inside our poll window, never
+  // the 1h age-out) so a hiccup doesn't drop the loader. Mirrors pollRevise; the
+  // cap (200 × 3s ≈ 10min) covers a per-question set of up to 8 questions.
+  function pollAuthoring(jobId: string, tries: number) {
+    if (tries > 200) {
+      draftJobRef.current = null;
+      setDrafting(false);
+      setError(DRAFT_SLOW_MSG);
+      return;
+    }
+    trpc.tutor.getAuthoringJobStatus
+      .query({ jobId })
+      .then((s) => {
+        if (s.state === "completed") {
+          draftJobRef.current = null;
+          setDrafting(false);
+          openReviewForm(s.result);
+          return;
+        }
+        if (s.state === "failed") {
+          draftJobRef.current = null;
+          setDrafting(false);
+          setError(DRAFT_FAILED_MSG);
+          return;
+        }
+        // waiting / active / unknown → keep polling.
+        draftPollRef.current = setTimeout(() => pollAuthoring(jobId, tries + 1), 3000);
+      })
+      .catch(() => {
+        draftJobRef.current = null;
+        setDrafting(false);
+        setError(DRAFT_FAILED_MSG);
+      });
+  }
+
+  // Start (or resume) the durable "Drafting…" loader + poll for a job id.
+  function startDraftingPoll(jobId: string) {
+    draftJobRef.current = jobId;
+    setDrafting(true);
+    pollAuthoring(jobId, 0);
   }
 
   // Poll a revise job until the revised draft lands (REVISE-ASYNC). On completion
@@ -3785,6 +3868,15 @@ function AuthorChat({
             Authoring the set in parallel - one worker per sub-topic… (~20–40s)
           </p>
         )}
+        {/* AUTHOR-ASYNC: the durable drafting loader (survives a refresh; resumed
+            via getActiveAuthoringJob). Shown for both the in-chat author and the
+            button — both hand off to the same background job. */}
+        {drafting && (
+          <p className="tut-muted tut-chat-authmeta tut-chat-drafting">
+            Drafting the questions… this can take a minute — you can leave this open
+            and the questions will appear below when they're ready.
+          </p>
+        )}
       </div>
 
       {/* BOTTOM of the chat column: the input + the consent trigger. Now a normal
@@ -3807,7 +3899,7 @@ function AuthorChat({
         <button
           className="tut-chat-suggest"
           onClick={propose}
-          disabled={proposing || authoring || !!proposal}
+          disabled={proposing || authoring || drafting || !!proposal}
           title="Ask the AI to propose a sub-topic + count to author for"
         >
           {proposing ? "Thinking…" : "Suggest what to work on"}

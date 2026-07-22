@@ -8,12 +8,14 @@
  * Real DB + real RLS + REAL vendors, throwaway boards P/Q (M22) with full cleanup.
  * Two-tier (don't over-read a single AI response — M13/M28):
  *   FIRM — the plumbing we control: on an explicit go-ahead the model emits the
- *     [[AUTHOR_NOW]] sentinel, the resolver picks the target, and sendTurn returns
- *     a `draft`; the target sub_topic is resolved BY NUMBER inside the chapter
- *     allowlist; the drafts are valid; NOTHING is saved (the 2b guarantee —
- *     question bank unchanged after authoring); the chat focus is persisted; the
+ *     [[AUTHOR_NOW]] sentinel, the resolver picks the target, and sendTurn ENQUEUES
+ *     a draft JOB (Slice AUTHOR-ASYNC — the worker drafts off the request path),
+ *     returning its id as `draftJobId`; the resume handle finds that job; the
+ *     target sub_topic is pinned BY NUMBER inside the chapter allowlist; the WORKER
+ *     draft path (authorFromChat, driven directly here) produces valid drafts and
+ *     APPROVES nothing (the 2b guarantee); the chat focus is persisted; the
  *     assistant wrap-up leaks neither pseudocode NOR the raw sentinel; the Claude
- *     path authors via its own fenced marker; cross-board RLS; 401.
+ *     path enqueues via its own fenced marker; cross-board RLS; 401.
  *   SOFT — which sub_topic + the drafted question quality (logged).
  */
 import { and, asc, eq, sql } from "drizzle-orm";
@@ -38,7 +40,15 @@ import {
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
-import { getChat, sendTurn, startChat, type ChatView } from "../src/services/authoring_chat";
+import {
+  authorFromChat,
+  getChat,
+  sendTurn,
+  startChat,
+  type ChatView,
+} from "../src/services/authoring_chat";
+import { authoringQueue, getActiveAuthoringJobId } from "../src/worker/queue";
+import { redisConnection } from "../src/redis/connection";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -133,9 +143,9 @@ async function main() {
   // ─────────── Gemini sentinel + resolver path (Slice AUTH-fix B) ───────────
   const gchat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "gemini_api", chapterId: fx.chapterId }));
 
-  // Turn 1 — discussion (no go-ahead): must NOT author yet (no sentinel).
+  // Turn 1 — discussion (no go-ahead): must NOT author yet (no sentinel → no job).
   const g1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Where is this student weakest, and what kind of question would target it?" }));
-  check("gemini discuss turn: no draft (author held until go-ahead)", g1.draft === undefined);
+  check("gemini discuss turn: no draft job (author held until go-ahead)", g1.draftJobId === undefined);
   check("gemini discuss turn: assistant text non-empty, vendorId=gemini_api", g1.messages.at(-1)!.text.trim().length > 0 && g1.messages.at(-1)!.vendorId === "gemini_api");
   check("gemini discuss turn: no raw [[AUTHOR_NOW]] sentinel leak in shown text", !/\[\[\s*AUTHOR_NOW/i.test(g1.messages.at(-1)!.text));
   soft("gemini discuss reply (first 140ch)", g1.messages.at(-1)!.text.slice(0, 140));
@@ -143,22 +153,44 @@ async function main() {
   const before = await authoredCount();
 
   // Turn 2 — explicit go-ahead → the model emits [[AUTHOR_NOW]] → the resolver
-  // picks the target → sendTurn returns a draft. One retry with an even more
-  // explicit instruction (AI variance; the FIRM claim is "an explicit go-ahead
-  // produces a draft", not "on the very first phrasing").
+  // picks the target → sendTurn ENQUEUES a draft JOB (Slice AUTHOR-ASYNC — the
+  // worker runs off the request path) and returns its id as `draftJobId`. One
+  // retry with a more explicit instruction (AI variance; the FIRM claim is "an
+  // explicit go-ahead enqueues a draft", not "on the very first phrasing").
   let g2: ChatView = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Yes — go ahead and author 3 questions on Acceleration (target 1) right now." }));
-  if (!g2.draft) {
+  if (!g2.draftJobId) {
     g2 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Go ahead now — author 3 questions on Acceleration (target 1). This is the go-ahead." }));
   }
 
-  check("gemini go-ahead: sentinel fired + resolver authored → sendTurn returned a draft", !!g2.draft);
-  if (g2.draft) {
-    const d = g2.draft;
-    check("author: sub_topic resolved BY NUMBER inside the chapter allowlist", fx.allowedSubTopicIds.includes(d.subTopicId));
-    check("author: chose sub-topic 1 (Acceleration) as instructed", d.subTopicId === fx.subTopicId);
-    check("author: ≥1 draft returned, all valid (id/axis/stem/ref)", d.drafts.length >= 1 && d.drafts.every(validDraft));
-    check("author: nextOrdinal = canonical max (0) + 1 = 1", d.nextOrdinal === 1);
-    soft("gemini drafted", { subTopic: d.subTopicName, n: d.drafts.length, axes: d.drafts.map((x) => x.axis) });
+  check("gemini go-ahead: sentinel fired + resolver → sendTurn ENQUEUED a draft job (async)", !!g2.draftJobId);
+  // The resume handle finds the just-enqueued job for this chat (the FE's durable
+  // "Drafting…" loader restore path). Keyed by (board, chat).
+  const activeJob = await getActiveAuthoringJobId(P.id, gchat.chatId);
+  check("author: getActiveAuthoringJobId finds the enqueued job for this chat", !!g2.draftJobId && activeJob === g2.draftJobId);
+
+  // Focus pinned on the request path (resolveTargetAndEnqueue) → the chat now
+  // points at the resolved target, resolved BY NUMBER inside the chapter allowlist.
+  const afterChat = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: gchat.chatId }));
+  check("author: chat focus pinned to a sub_topic inside the chapter allowlist", !!afterChat.subTopicId && fx.allowedSubTopicIds.includes(afterChat.subTopicId));
+  check("author: chose sub-topic 1 (Acceleration) as instructed", afterChat.subTopicId === fx.subTopicId);
+
+  // Wrap-up carries no pseudocode leak AND no raw sentinel leak (persisted turn).
+  const wrap = g2.messages.at(-1)!;
+  check("author: assistant wrap-up persisted (assistant role, non-empty)", wrap.role === "assistant" && wrap.text.trim().length > 0);
+  check("author: wrap-up carries NO pseudocode leak (sanitised)", !LEAK_RE.test(wrap.text));
+  check("author: wrap-up carries NO raw [[AUTHOR_NOW]] sentinel (stripped)", !/\[\[\s*AUTHOR_NOW/i.test(wrap.text));
+  soft("gemini wrap-up (first 140ch)", wrap.text.slice(0, 140));
+
+  // ── The WORKER draft path (what the authoring processor runs off the queue) ──
+  // No worker runs in this probe, so drive authorFromChat directly (same call the
+  // processor makes) on the pinned target to prove the per-question Gemini draft
+  // still produces valid drafts, PERSISTS them (status='draft'), and APPROVES
+  // nothing — the M11 gate holds (decision 2b). This is the real-Gemini draft E2E.
+  if (afterChat.subTopicId) {
+    const worked = await rows(P.id, (tx) => authorFromChat(tx, { tutorUserId: tut.id, chatId: gchat.chatId, subTopicId: afterChat.subTopicId!, count: 3 }));
+    check("worker draft: ≥1 draft returned, all valid (id/axis/stem/ref)", worked.drafts.length >= 1 && worked.drafts.every(validDraft));
+    check("worker draft: nextOrdinal = canonical max (0) + 1 = 1", worked.nextOrdinal === 1);
+    soft("gemini drafted (per-question)", { subTopic: worked.subTopicName, n: worked.drafts.length, axes: worked.drafts.map((x) => x.axis) });
   }
 
   // FIG-AUTH 2b: authoring PERSISTS drafts (status='draft') so they can be
@@ -166,29 +198,21 @@ async function main() {
   // until the tutor approves (the M11 gate holds; decision 2b's spirit preserved).
   const after = await authoredCount();
   const liveAfter = await approvedCount();
-  check("FIG-AUTH: authoring persisted drafts (after > before)", g2.draft ? after > before : after === before);
+  check("FIG-AUTH: authoring persisted drafts (after > before)", afterChat.subTopicId ? after > before : after === before);
   check("FIG-AUTH: nothing APPROVED (no question reaches a student)", liveAfter === 0);
 
-  // Focus persisted; wrap-up carries no pseudocode leak AND no raw sentinel leak.
-  const afterChat = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: gchat.chatId }));
-  check("author: chat focus persisted to the chosen sub_topic", !g2.draft || afterChat.subTopicId === g2.draft.subTopicId);
-  const wrap = g2.messages.at(-1)!;
-  check("author: assistant wrap-up persisted (assistant role, non-empty)", wrap.role === "assistant" && wrap.text.trim().length > 0);
-  check("author: wrap-up carries NO pseudocode leak (sanitised)", !LEAK_RE.test(wrap.text));
-  check("author: wrap-up carries NO raw [[AUTHOR_NOW]] sentinel (stripped)", !/\[\[\s*AUTHOR_NOW/i.test(wrap.text));
-  soft("gemini wrap-up (first 140ch)", wrap.text.slice(0, 140));
-
   // ─────────── Claude path: in-chat authoring via the fenced marker (parity) ───────────
-  // Claude has no native tool, but a clear go-ahead now authors IN-CHAT via the
-  // `author_questions` fenced marker (same review-form drafts as the Gemini tool).
-  // One retry absorbs model nondeterminism. (Deep coverage lives in probe:authoringchat.)
+  // Claude has no native tool, but a clear go-ahead authors via the
+  // `author_questions` fenced marker → sendTurn ENQUEUES the same draft job (Slice
+  // AUTHOR-ASYNC). One retry absorbs model nondeterminism. (The real Claude draft
+  // path is covered by probe:authoringchat's direct authorFromChat call.)
   try {
     const cchat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "claude_cli", chapterId: fx.chapterId }));
     let c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Go ahead and author 3 questions on sub-topic 1 now." }));
-    if (!c1.draft) {
+    if (!c1.draftJobId) {
       c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Author 3 on sub-topic 1 now — emit the author_questions block." }));
     }
-    check("claude go-ahead: authored IN-CHAT via marker (draft present, ≤2 tries)", !!c1.draft && c1.draft.drafts.length >= 1 && c1.draft.drafts.every(validDraft));
+    check("claude go-ahead: marker parsed → ENQUEUED a draft job (≤2 tries)", !!c1.draftJobId);
     check("claude: assistant text non-empty, vendorId=claude_cli, no raw marker leak", c1.messages.at(-1)!.text.trim().length > 0 && c1.messages.at(-1)!.vendorId === "claude_cli" && !/```\s*author_questions/.test(c1.messages.at(-1)!.text));
   } catch (e) {
     check("claude path smoke", false);
@@ -212,6 +236,9 @@ async function main() {
   }
 
   // ── cleanup (FK-safe) ──
+  // Drain the draft jobs this probe enqueued (no worker ran them — they'd age out
+  // anyway, but leave the queue clean for probe:authoringasync).
+  await authoringQueue.obliterate({ force: true }).catch(() => {});
   await withBoard(P.id, async (tx: Tx) => {
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
     await tx.delete(authoringWorker).where(eq(authoringWorker.boardId, P.id));
@@ -238,12 +265,15 @@ async function main() {
   await db.delete(board).where(eq(board.id, Q.id));
 
   console.log(`\nprobe_authoring_tool: ${passed} passed, ${failed} failed`);
+  await authoringQueue.close().catch(() => {});
+  await redisConnection.quit().catch(() => {});
   await queryClient.end();
   process.exit(failed === 0 ? 0 : 1);
 }
 
 main().catch(async (err) => {
   console.error("probe_authoring_tool FAILED:", err);
+  await redisConnection.quit().catch(() => {});
   await queryClient.end();
   process.exit(1);
 });

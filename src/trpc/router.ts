@@ -193,8 +193,8 @@ import {
   updateDraft,
 } from "../services/authoring";
 import {
+  assertAuthorTarget,
   AuthoringChatNotFoundError,
-  authorFromChat,
   authorSetFromChat,
   ChapterNotInBoardError,
   getChat,
@@ -206,11 +206,14 @@ import {
   startChat,
 } from "../services/authoring_chat";
 import {
+  enqueueAuthoring,
   enqueueExtractTopics,
   enqueueImageGeneration,
   enqueueRevise,
+  getActiveAuthoringJobId,
   getActiveImageJobId,
   getActiveReviseJobId,
+  getAuthoringJobStatus,
   getExtractJobStatus,
   getImageJobState,
   getReviseJobStatus,
@@ -1899,7 +1902,12 @@ export const appRouter = router({
       })),
 
     // The separate structured authoring call (fork 4): conversation → questions
-    // to the student's weakness. Reads-only/re-runnable; vendor honored.
+    // to the student's weakness. Slice AUTHOR-ASYNC: ENQUEUES the (paid,
+    // high-variance ~60–265s) draft off the request path and returns a jobId at
+    // once — the worker runs authorFromChat (which PERSISTS the drafts) and the FE
+    // polls getAuthoringJobStatus for the review-form payload. The target is
+    // GUARDED here before enqueue (assertAuthorTarget — a bogus/cross-scope
+    // sub_topic or non-owned chat 404s the click, not a silently-failing job).
     authorFromChat: tutorProcedure
       .input(
         z.object({
@@ -1910,11 +1918,10 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         try {
-          return await authorFromChat(ctx.tx, {
+          await assertAuthorTarget(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             chatId: input.chatId,
             subTopicId: input.subTopicId,
-            count: input.count,
           });
         } catch (e) {
           if (
@@ -1925,7 +1932,33 @@ export const appRouter = router({
           }
           throw e;
         }
+        const jobId = await enqueueAuthoring({
+          boardId: ctx.board.id,
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+          subTopicId: input.subTopicId,
+          count: input.count,
+        });
+        return { jobId };
       }),
+
+    // Poll state for one authoring job (waiting/active/completed/failed/unknown).
+    // On completed it carries the AuthorFromChatResult (chosen sub-topic + the
+    // persisted drafts) so the FE opens the review form without a second read.
+    // Board-checked. Serves BOTH the button (authorFromChat) and the in-chat
+    // sentinel/marker paths (sendAuthoringChatTurn → draftJobId).
+    getAuthoringJobStatus: tutorProcedure
+      .input(z.object({ jobId: z.string().max(200) }))
+      .query(({ ctx, input }) => getAuthoringJobStatus(input.jobId, ctx.board.id)),
+
+    // Resume handle: is an author still drafting for this chat? Lets the FE restore
+    // the "Drafting…" loader after a page refresh / close-reopen. Keyed by chat
+    // (the drafts don't exist yet). { jobId } | null.
+    getActiveAuthoringJob: tutorProcedure
+      .input(z.object({ chatId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => ({
+        jobId: await getActiveAuthoringJobId(ctx.board.id, input.chatId),
+      })),
 
     // ── Slice FIG-AUTH: the DRAFT lifecycle (D-FIG-1/2/5) ──
     // Chat authoring PERSISTS drafts (authorFromChat / the tool) as status='draft'
