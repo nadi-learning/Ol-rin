@@ -1,16 +1,19 @@
 /**
- * probe_authoring_tool — Slice tool-authoring exit gate (Gemini in-chat
- * author_questions tool; hybrid vendor model, decision 2b: the tool DRAFTS into
- * the review form, it does NOT save).
+ * probe_authoring_tool — Slice AUTH-fix B+A exit gate (Gemini in-chat authoring
+ * via the [[AUTHOR_NOW]] sentinel + a responseSchema author-intent resolver,
+ * REPLACING the native author_questions function-call that 400'd on malformed
+ * function-call JSON; hybrid vendor model, decision 2b: authoring DRAFTS into the
+ * review form, it does NOT save).
  *
  * Real DB + real RLS + REAL vendors, throwaway boards P/Q (M22) with full cleanup.
  * Two-tier (don't over-read a single AI response — M13/M28):
- *   FIRM — the plumbing we control: on an explicit go-ahead the Gemini tool
- *     fires and sendTurn returns a `draft`; the target sub_topic is resolved BY
- *     NUMBER inside the chapter allowlist; the drafts are valid; NOTHING is saved
- *     (the 2b guarantee — question bank unchanged after the tool fires); the chat
- *     focus is persisted; the assistant wrap-up carries no pseudocode leak; the
- *     Claude path returns NO draft (tool is Gemini-only); cross-board RLS; 401.
+ *   FIRM — the plumbing we control: on an explicit go-ahead the model emits the
+ *     [[AUTHOR_NOW]] sentinel, the resolver picks the target, and sendTurn returns
+ *     a `draft`; the target sub_topic is resolved BY NUMBER inside the chapter
+ *     allowlist; the drafts are valid; NOTHING is saved (the 2b guarantee —
+ *     question bank unchanged after authoring); the chat focus is persisted; the
+ *     assistant wrap-up leaks neither pseudocode NOR the raw sentinel; the Claude
+ *     path authors via its own fenced marker; cross-board RLS; 401.
  *   SOFT — which sub_topic + the drafted question quality (logged).
  */
 import { and, asc, eq, sql } from "drizzle-orm";
@@ -127,50 +130,53 @@ async function main() {
         ),
     ).then((r) => r.length);
 
-  // ─────────── Gemini tool path ───────────
+  // ─────────── Gemini sentinel + resolver path (Slice AUTH-fix B) ───────────
   const gchat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "gemini_api", chapterId: fx.chapterId }));
 
-  // Turn 1 — discussion (no go-ahead): tool must NOT fire yet.
+  // Turn 1 — discussion (no go-ahead): must NOT author yet (no sentinel).
   const g1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Where is this student weakest, and what kind of question would target it?" }));
-  check("gemini discuss turn: no draft (tool held until go-ahead)", g1.draft === undefined);
+  check("gemini discuss turn: no draft (author held until go-ahead)", g1.draft === undefined);
   check("gemini discuss turn: assistant text non-empty, vendorId=gemini_api", g1.messages.at(-1)!.text.trim().length > 0 && g1.messages.at(-1)!.vendorId === "gemini_api");
+  check("gemini discuss turn: no raw [[AUTHOR_NOW]] sentinel leak in shown text", !/\[\[\s*AUTHOR_NOW/i.test(g1.messages.at(-1)!.text));
   soft("gemini discuss reply (first 140ch)", g1.messages.at(-1)!.text.slice(0, 140));
 
   const before = await authoredCount();
 
-  // Turn 2 — explicit go-ahead → the author_questions tool should fire. One
-  // retry with an even more explicit instruction (AI variance; the FIRM claim is
-  // "an explicit go-ahead produces a draft", not "on the very first phrasing").
+  // Turn 2 — explicit go-ahead → the model emits [[AUTHOR_NOW]] → the resolver
+  // picks the target → sendTurn returns a draft. One retry with an even more
+  // explicit instruction (AI variance; the FIRM claim is "an explicit go-ahead
+  // produces a draft", not "on the very first phrasing").
   let g2: ChatView = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Yes — go ahead and author 3 questions on Acceleration (target 1) right now." }));
   if (!g2.draft) {
-    g2 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Please call author_questions now: 3 questions, subTopicNumber 1." }));
+    g2 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Go ahead now — author 3 questions on Acceleration (target 1). This is the go-ahead." }));
   }
 
-  check("gemini go-ahead: the author_questions tool fired → sendTurn returned a draft", !!g2.draft);
+  check("gemini go-ahead: sentinel fired + resolver authored → sendTurn returned a draft", !!g2.draft);
   if (g2.draft) {
     const d = g2.draft;
-    check("tool: sub_topic resolved BY NUMBER inside the chapter allowlist", fx.allowedSubTopicIds.includes(d.subTopicId));
-    check("tool: chose sub-topic 1 (Acceleration) as instructed", d.subTopicId === fx.subTopicId);
-    check("tool: ≥1 draft returned, all valid (id/axis/stem/ref)", d.drafts.length >= 1 && d.drafts.every(validDraft));
-    check("tool: nextOrdinal = canonical max (0) + 1 = 1", d.nextOrdinal === 1);
-    soft("tool drafted", { subTopic: d.subTopicName, n: d.drafts.length, axes: d.drafts.map((x) => x.axis) });
+    check("author: sub_topic resolved BY NUMBER inside the chapter allowlist", fx.allowedSubTopicIds.includes(d.subTopicId));
+    check("author: chose sub-topic 1 (Acceleration) as instructed", d.subTopicId === fx.subTopicId);
+    check("author: ≥1 draft returned, all valid (id/axis/stem/ref)", d.drafts.length >= 1 && d.drafts.every(validDraft));
+    check("author: nextOrdinal = canonical max (0) + 1 = 1", d.nextOrdinal === 1);
+    soft("gemini drafted", { subTopic: d.subTopicName, n: d.drafts.length, axes: d.drafts.map((x) => x.axis) });
   }
 
-  // FIG-AUTH 2b: the tool now PERSISTS drafts (status='draft') so they can be
+  // FIG-AUTH 2b: authoring PERSISTS drafts (status='draft') so they can be
   // rendered/previewed — but NOTHING is APPROVED, so nothing reaches a student
   // until the tutor approves (the M11 gate holds; decision 2b's spirit preserved).
   const after = await authoredCount();
   const liveAfter = await approvedCount();
-  check("FIG-AUTH: the tool persisted drafts (after > before)", g2.draft ? after > before : after === before);
-  check("FIG-AUTH: nothing APPROVED by the tool (no question reaches a student)", liveAfter === 0);
+  check("FIG-AUTH: authoring persisted drafts (after > before)", g2.draft ? after > before : after === before);
+  check("FIG-AUTH: nothing APPROVED (no question reaches a student)", liveAfter === 0);
 
-  // Focus persisted; wrap-up carries no pseudocode leak.
+  // Focus persisted; wrap-up carries no pseudocode leak AND no raw sentinel leak.
   const afterChat = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: gchat.chatId }));
-  check("tool: chat focus persisted to the chosen sub_topic", !g2.draft || afterChat.subTopicId === g2.draft.subTopicId);
+  check("author: chat focus persisted to the chosen sub_topic", !g2.draft || afterChat.subTopicId === g2.draft.subTopicId);
   const wrap = g2.messages.at(-1)!;
-  check("tool: assistant wrap-up persisted (assistant role, non-empty)", wrap.role === "assistant" && wrap.text.trim().length > 0);
-  check("tool: wrap-up carries NO pseudocode leak (sanitised)", !LEAK_RE.test(wrap.text));
-  soft("tool wrap-up (first 140ch)", wrap.text.slice(0, 140));
+  check("author: assistant wrap-up persisted (assistant role, non-empty)", wrap.role === "assistant" && wrap.text.trim().length > 0);
+  check("author: wrap-up carries NO pseudocode leak (sanitised)", !LEAK_RE.test(wrap.text));
+  check("author: wrap-up carries NO raw [[AUTHOR_NOW]] sentinel (stripped)", !/\[\[\s*AUTHOR_NOW/i.test(wrap.text));
+  soft("gemini wrap-up (first 140ch)", wrap.text.slice(0, 140));
 
   // ─────────── Claude path: in-chat authoring via the fenced marker (parity) ───────────
   // Claude has no native tool, but a clear go-ahead now authors IN-CHAT via the

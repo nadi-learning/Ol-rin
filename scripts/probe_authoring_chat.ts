@@ -47,6 +47,8 @@ import {
   sendTurn,
   startChat,
   stripAuthorMarker,
+  hasAuthorSentinel,
+  stripAuthorSentinel,
   SubTopicNotFoundError,
 } from "../src/services/authoring_chat";
 import { approveDrafts } from "../src/services/authoring";
@@ -271,6 +273,20 @@ async function main() {
     check("marker parse: no marker → null (inert)", parseAuthorMarker("let's discuss acceleration first, no rush") === null);
     check("marker parse: fenced but missing keys → null (inert)", parseAuthorMarker('```author_questions\n{"foo":1}\n```') === null);
     check("marker parse: wrong fence tag → null (inert)", parseAuthorMarker('```json\n{"subTopicNumber":1,"count":1}\n```') === null);
+  }
+
+  // ─────────── Gemini [[AUTHOR_NOW]] sentinel detect/strip (Slice AUTH-fix B) ───────────
+  // FIRM (deterministic): the sentinel is Gemini's author trigger, REPLACING the
+  // native function-call that 400'd. The detect/strip logic is model-independent.
+  {
+    const goAhead = "On it — drafting 3 on the discriminant now.\n[[AUTHOR_NOW]]";
+    check("sentinel detect: reply with [[AUTHOR_NOW]] → true", hasAuthorSentinel(goAhead));
+    check("sentinel detect: plain discussion → false (inert)", !hasAuthorSentinel("Let's discuss the discriminant first — no rush."));
+    check("sentinel detect: tolerant of inner spaces [[ AUTHOR_NOW ]]", hasAuthorSentinel("ok\n[[ AUTHOR_NOW ]]"));
+    check("sentinel detect: null/empty → false", !hasAuthorSentinel(null) && !hasAuthorSentinel(""));
+    const strippedSent = stripAuthorSentinel(goAhead);
+    check("sentinel strip: token removed, prose kept", !/AUTHOR_NOW/.test(strippedSent) && /drafting 3/.test(strippedSent));
+    check("sentinel strip: no token → unchanged prose", stripAuthorSentinel("just discussing") === "just discussing");
   }
 
   // FIRM (real Claude, AI-dependent — one retry to absorb model nondeterminism):

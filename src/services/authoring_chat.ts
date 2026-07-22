@@ -40,7 +40,7 @@ import {
 } from "@b2c/kernel/schema";
 import { ChatMessage, type VendorChoice } from "@b2c/kernel/contracts";
 import { complete, extractJsonObject } from "./ai_client";
-import type { ToolSpec, VendorId } from "./ai/types";
+import type { VendorId } from "./ai/types";
 import { geminiJson } from "./ai/gemini";
 import {
   applyDraftRevision,
@@ -148,27 +148,17 @@ HOW AUTHORING HAPPENS (so you author correctly): when you and the tutor have con
 \`\`\`
 You do NOT write the questions yourself — emitting that block spawns a specialist authoring worker that drafts them to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them. Emit the block ONLY after a clear go-ahead — until then, keep discussing and do NOT emit it. You may write one short natural sentence before the block (e.g. "On it — drafting 3 now."). (A "Suggest what to work on" button also exists as an alternative, but you don't need it.)`;
 
-// Gemini path — has the author_questions tool. It authors IN-CHAT on the tutor's
-// go-ahead. The drafts still land in the review form (decision 2b: the tutor
-// edits + saves; nothing goes live to a student without that). The button also
-// remains available.
+// Gemini path — signals an author intent with the [[AUTHOR_NOW]] sentinel (Slice
+// AUTH-fix B; replaces the native author_questions function-call that 400'd on
+// malformed function-call JSON). The drafts still land in the review form
+// (decision 2b: the tutor edits + saves; nothing goes live to a student without
+// that). The "Suggest what to work on" button also remains available.
 const CHAT_SYSTEM_GEMINI = `${CHAT_SYSTEM_BASE}
 
-HOW AUTHORING HAPPENS (so you guide it correctly): you have a tool — \`author_questions\`. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), CALL \`author_questions\` with (a) \`subTopicNumber\` = the number of the chosen sub-topic from the AUTHORING TARGETS list in the message, and (b) \`count\` = how many questions to author. You do NOT write the questions yourself — calling the tool spawns a specialist authoring worker that drafts them to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them. Until the tutor gives a go-ahead, do NOT call the tool — keep discussing. Emit the tool as a STRUCTURED function call — NEVER print it as text, pseudocode, tool_code, or \`print(default_api...)\`. (A "Suggest what to work on" button also exists as an alternative, but you don't need it — the tool is yours.)`;
+HOW AUTHORING HAPPENS (so you guide it correctly): you do NOT write the questions yourself, and you have NO tool or function to call. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), reply with ONE short natural sentence confirming you're drafting (e.g. "On it — drafting 3 on the discriminant now.") and put the exact token [[AUTHOR_NOW]] on its OWN line at the END of that reply. That token hands off to a specialist authoring worker that drafts the questions to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them (nothing goes live to a student without that). Emit [[AUTHOR_NOW]] ONLY after a clear go-ahead — until then, keep discussing and NEVER emit it. Do not explain the token, quote it, wrap it in backticks, or emit any pseudocode / tool_code / print(...) — just place [[AUTHOR_NOW]] on its own line when it's time to author.`;
 
 function chatSystemFor(vendor: VendorChoice): string {
   return vendor === "gemini_api" ? CHAT_SYSTEM_GEMINI : CHAT_SYSTEM_CLAUDE;
-}
-
-// Iter-3.5 layer A (ported from Starkhorn unit_chat) — fake-tool-call detector.
-// Gemini occasionally decides to author but emits the call as PSEUDOCODE TEXT
-// (tool_code / thought / print(default_api.author_questions(...))) instead of a
-// structured function_call. That yields empty toolCalls + junk text + no draft.
-const FAKE_TOOL_CALL_RE =
-  /(^|\n)\s*(tool_code|thought)\b|default_api\.author_questions\s*\(|\bprint\s*\(\s*default_api\./i;
-function looksLikeFakeToolCall(text: string | null | undefined): boolean {
-  if (!text) return false;
-  return FAKE_TOOL_CALL_RE.test(text);
 }
 
 // Iter-3.5 layer C — sanitise persisted assistant text: cut at the first leak
@@ -189,41 +179,30 @@ function sanitiseAssistantText(text: string | null | undefined): string {
   return text.slice(0, cutAt).trim();
 }
 
-// The Gemini author_questions tool. Reuses the exact question shape from
-// authoring.ts (geminiQuestionSchema.properties.questions) + adds subTopicNumber
-// so the model picks the target BY NUMBER from the AUTHORING TARGETS list (never
-// a raw UUID — ai-build-miss M15). Decision 2b: the tool DRAFTS (does not save);
-// the drafts route into the existing review form.
-const AUTHOR_QUESTIONS_TOOL_NAME = "author_questions";
-let cachedAuthorTool: ToolSpec | null = null;
-function authorQuestionsToolSpec(): ToolSpec {
-  if (cachedAuthorTool) return cachedAuthorTool;
-  cachedAuthorTool = {
-    name: AUTHOR_QUESTIONS_TOOL_NAME,
-    description:
-      "Select ONE sub-topic to author subjective practice questions for, and how many. Call ONLY after the tutor gives an explicit go-ahead. This spawns a specialist authoring worker that drafts the questions to the full craft bar; the drafts are shown to the tutor in a review form to edit + save — it does NOT save them directly. `subTopicNumber` MUST be one of the numbers in the AUTHORING TARGETS list.",
-    inputSchemaJson: {
-      type: Type.OBJECT,
-      properties: {
-        subTopicNumber: {
-          type: Type.INTEGER,
-          description:
-            "the 1-based number of the sub-topic to author for, from the AUTHORING TARGETS list in the message",
-        },
-        count: {
-          type: Type.INTEGER,
-          description: "how many questions to author (1–8)",
-        },
-      },
-      required: ["subTopicNumber", "count"],
-    } as Record<string, unknown>,
-  };
-  return cachedAuthorTool;
+// ── Gemini in-chat authoring signal (Slice AUTH-fix B+A) ──────────────────────
+// Replaces Gemini's native `author_questions` FUNCTION-CALL, which 400'd
+// ("Model generated invalid JSON syntax") when a thinking model emitted malformed
+// function-call JSON on a long resumed thread. Instead the conversational model
+// emits the [[AUTHOR_NOW]] sentinel in PROSE on a clear go-ahead — a robust
+// boolean trigger (emitting a fixed token is far more reliable than
+// schema-constrained function-call JSON) — and a SEPARATE responseSchema call
+// (resolveAuthorIntent) extracts {choice,count}. A missing/garbled sentinel just
+// means "no author this turn" (graceful), never a 500. The Claude path keeps its
+// fenced ```author_questions``` marker (text-based, already robust).
+export const AUTHOR_SENTINEL = "[[AUTHOR_NOW]]";
+const AUTHOR_SENTINEL_RE = /\[\[\s*AUTHOR_NOW\s*\]\]/i;
+export function hasAuthorSentinel(text: string | null | undefined): boolean {
+  return !!text && AUTHOR_SENTINEL_RE.test(text);
+}
+/** Remove the [[AUTHOR_NOW]] sentinel from text shown/persisted to the tutor
+ *  (it's a machine directive); collapse the gap it leaves. Exported for the probe. */
+export function stripAuthorSentinel(text: string | null | undefined): string {
+  if (!text) return "";
+  return text.replace(AUTHOR_SENTINEL_RE, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-// Validates the tool call's args. The tool SELECTS a target + count; the worker
-// authors the questions (QA3-e master→worker split). Shared by the Gemini tool
-// AND the Claude marker path below.
+// Validates the author args {subTopicNumber, count}. Used by the Claude in-chat
+// marker path (parseAuthorMarker) — the resolver→worker split authors from them.
 const authorToolArgsSchema = z.object({
   subTopicNumber: z.number().int(),
   count: z.number().int(),
@@ -828,18 +807,25 @@ export async function sendTurn(
   const prevVendor = lastAssistantVendor(history);
   const sameVendor = prevVendor === vendor;
   const needsJsonlPreflight = vendor === "claude_cli";
+  const isGemini = vendor === "gemini_api";
+
+  // A (Slice AUTH-fix): Gemini NEVER resumes. The malformed-function-call 400 +
+  // fake-tool-call leaks were faults on a poisoned RESUMED interaction; the
+  // stitched prompt already carries the full conversation, so re-stitching every
+  // turn loses nothing (Gemini bills full context on resume anyway) and removes
+  // the poisoned-interaction class entirely. Claude still resumes (it needs
+  // --resume + is not the fragile vendor).
   const canResume =
     prevSessionId !== null &&
     sameVendor &&
+    !isGemini &&
     (!needsJsonlPreflight || (await jsonlExists(prevSessionId)));
 
-  const isGemini = vendor === "gemini_api";
-
   // Both vendors author in-chat by picking the target BY NUMBER (Gemini via the
-  // author_questions tool; Claude via the fenced marker) — so give EVERY turn the
-  // chapter's numbered sub-topic list (the same allowlist proposeTarget uses).
-  // Small + always current, so the numbering both paths reference is stable
-  // regardless of resume.
+  // [[AUTHOR_NOW]] sentinel + resolveAuthorIntent; Claude via the fenced marker) —
+  // so give EVERY turn the chapter's numbered sub-topic list (the same allowlist
+  // proposeTarget uses). Small + always current, so the numbering both paths
+  // reference is stable regardless of resume.
   let subs: SubRef[] = [];
   let targetsBlock = "";
   const turnChapterIds = chatChapterIds(row);
@@ -866,7 +852,7 @@ export async function sendTurn(
             `  ${i + 1}. ${multi ? `${s.chapterName} › ` : ""}${s.topicName} › ${s.subTopicName}`,
         )
         .join("\n");
-      targetsBlock = `\n\n===== AUTHORING TARGETS (for author_questions.subTopicNumber) =====\n${list}\n===== END AUTHORING TARGETS =====`;
+      targetsBlock = `\n\n===== AUTHORING TARGETS (pick ONE by its number when authoring) =====\n${list}\n===== END AUTHORING TARGETS =====`;
     }
   }
 
@@ -880,13 +866,7 @@ export async function sendTurn(
   }
   userMessage += targetsBlock;
 
-  const tools = isGemini && subs.length > 0 ? [authorQuestionsToolSpec()] : undefined;
-
-  const call = (
-    resumeId: string | undefined,
-    msg: string,
-    toolChoice?: "auto" | "any" | "none",
-  ) =>
+  const call = (resumeId: string | undefined, msg: string) =>
     complete({
       systemPrompt: chatSystemFor(vendor),
       userMessage: msg,
@@ -898,16 +878,14 @@ export async function sendTurn(
       resumeSessionId: resumeId,
       vendorId: vendor as VendorId,
       slotId: AUTHORING_CHAT_ENDPOINT,
-      tools,
-      toolChoice: tools ? (toolChoice ?? "auto") : undefined,
     });
 
   let ai: Awaited<ReturnType<typeof complete>>;
   try {
     ai = await call(resumeSessionId, userMessage);
   } catch (err) {
-    // Stale Gemini interaction id → drop resume + retry stitched (unit_chat
-    // iter-3.5). Other errors bubble.
+    // Stale interaction id → drop resume + retry stitched (unit_chat iter-3.5).
+    // Gemini never resumes (A), so this only ever fires for Claude. Others bubble.
     if (resumeSessionId !== undefined && isStaleInteractionError(err)) {
       ai = await call(undefined, buildStitched() + targetsBlock);
     } else {
@@ -915,77 +893,54 @@ export async function sendTurn(
     }
   }
 
-  const firedTool = () =>
-    ai.toolCalls?.find((c) => c.name === AUTHOR_QUESTIONS_TOOL_NAME);
-
-  // Iter-3.5 layer A/B — Gemini decided to author but emitted the call as
-  // pseudocode TEXT instead of a structured function_call (observed on resumed
-  // turns). Retry once, stitched + tool_choice=any, to force a real call.
-  if (
-    tools &&
-    resumeSessionId !== undefined &&
-    !firedTool() &&
-    looksLikeFakeToolCall(ai.text)
-  ) {
-    ai = await call(undefined, buildStitched() + targetsBlock, "any");
-  }
-
-  // ── Tool-call path (Gemini only): the model authored. Resolve the target,
-  //    validate the drafts, follow up for a wrap-up line, and RETURN the drafts
-  //    for the review form (decision 2b — NOT saved here; the tutor edits + saves). ──
-  const toolCall = firedTool();
-  if (tools && toolCall) {
-    const parsed = authorToolArgsSchema.safeParse(toolCall.args);
-    if (parsed.success && subs.length > 0) {
+  // ── Gemini in-chat authoring (Slice AUTH-fix B): the conversational model
+  //    signalled a go-ahead with the [[AUTHOR_NOW]] sentinel (no native
+  //    function-call — that path 400'd on malformed JSON). A SEPARATE
+  //    responseSchema call (resolveAuthorIntent) resolves the target {choice,count}
+  //    from the conversation, then the SAME resolve→spawn→persist path the button
+  //    uses drafts into the review form (decision 2b — NOT saved here). Any
+  //    resolve/author failure is CAUGHT and degrades to a normal reply — never a
+  //    500 (the exact failure the old native tool produced). ──
+  if (isGemini && subs.length > 0 && hasAuthorSentinel(ai.text)) {
+    try {
+      const convoForIntent = [
+        ...history.map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`),
+        `TUTOR: ${text}`,
+        `AI: ${stripAuthorSentinel(ai.text)}`,
+      ].join("\n\n");
+      const intent = await resolveAuthorIntent({
+        vendor,
+        grounding,
+        convo: convoForIntent,
+        subs,
+        multiChapter: turnChapterIds.length > 1,
+        label: row.id,
+      });
       const { chosen, nextOrdinal, persisted } = await resolveAndAuthor(tx, {
         row,
         subs,
-        subTopicNumber: parsed.data.subTopicNumber,
-        count: parsed.data.count,
+        subTopicNumber: intent.choice,
+        count: intent.count,
         history,
         text,
         vendor,
       });
 
-      const toolResult = {
-        drafted: persisted.length,
-        subTopic: chosen.subTopicName,
-        status: "shown to the tutor in a review form to edit + save",
-      };
-
-      // Follow-up: hand the tool result back so Gemini writes a short wrap-up.
-      // Re-pass tools + tool_choice=none (Gemini's interactions API 400s on a
-      // follow-up that drops the tool schema).
-      const followUp = await complete({
-        systemPrompt: chatSystemFor(vendor),
-        userMessage: "",
-        endpoint: AUTHORING_CHAT_ENDPOINT,
-        userId: args.tutorUserId,
-        model: "",
-        timeoutSec: CHAT_TIMEOUT_SEC,
-        streamKey: args.streamKey,
-        resumeSessionId: ai.sessionId ?? undefined,
-        vendorId: vendor as VendorId,
-        slotId: AUTHORING_CHAT_ENDPOINT,
-        tools,
-        toolChoice: "none",
-        toolResults: [
-          { callId: toolCall.id, name: AUTHOR_QUESTIONS_TOOL_NAME, result: toolResult },
-        ],
-      });
-
+      // Wrap-up = the model's own confirming prose with the sentinel stripped (no
+      // follow-up call needed — the reply already announced the drafting); fall
+      // back to a canned line if stripping left nothing.
       const wrapText =
-        sanitiseAssistantText(followUp.text) ||
-        `Drafted ${toolResult.drafted} question${toolResult.drafted === 1 ? "" : "s"} for ${chosen.subTopicName} — review, edit, and save them below.`;
+        stripAuthorSentinel(sanitiseAssistantText(ai.text)) ||
+        `Drafted ${persisted.length} question${persisted.length === 1 ? "" : "s"} for ${chosen.subTopicName} — review, edit, and save them below.`;
 
       const assistantMsg: ChatMessage = {
         id: randomUUID(),
         role: "assistant",
         text: wrapText,
         createdAt: new Date().toISOString(),
-        aiSessionId: followUp.sessionId ?? undefined,
+        aiSessionId: ai.sessionId ?? undefined,
         vendorId: vendor,
-        sessionFingerprint: followUp.sessionFingerprint,
+        sessionFingerprint: ai.sessionFingerprint,
       };
       const messages = [...history, userMsg, assistantMsg];
       await tx
@@ -994,9 +949,14 @@ export async function sendTurn(
         .where(eq(authoringChat.id, row.id));
 
       return buildAuthoredView(row, vendor, chosen, nextOrdinal, persisted, messages);
+    } catch (err) {
+      // Resolve/author failed (resolver bad JSON, worker error, …) → degrade to a
+      // normal reply. The tutor sees the confirming text and can re-ask or use the
+      // "Suggest what to work on" button; nothing 500s.
+      console.error(
+        `[authoring-chat] gemini author-intent resolve failed, degrading to reply: ${(err as Error).message.slice(0, 200)}`,
+      );
     }
-    // Args failed schema → fall through to the normal path (treat as a plain
-    // reply; the model usually re-offers next turn).
   }
 
   // ── Claude in-chat authoring (parity with the Gemini tool, via a text marker):
@@ -1044,12 +1004,16 @@ export async function sendTurn(
     }
   }
 
-  // ── Normal path: persist the assistant turn as-is. sanitise only on Gemini
-  //    (a stray "thought"/"tool_code" leak); Claude text is passed through. ──
+  // ── Normal path: persist the assistant turn as-is. On Gemini, sanitise a stray
+  //    "thought"/"tool_code" leak AND strip any [[AUTHOR_NOW]] sentinel (present
+  //    but not authored — e.g. the resolve above degraded, or the model emitted it
+  //    spuriously); Claude text is passed through. ──
   const assistantMsg: ChatMessage = {
     id: randomUUID(),
     role: "assistant",
-    text: isGemini ? sanitiseAssistantText(ai.text) || ai.text : ai.text,
+    text: isGemini
+      ? stripAuthorSentinel(sanitiseAssistantText(ai.text) || ai.text)
+      : ai.text,
     createdAt: new Date().toISOString(),
     aiSessionId: ai.sessionId ?? undefined,
     vendorId: vendor,
@@ -1263,6 +1227,57 @@ const geminiProposeSchema = {
 const CLAUDE_PROPOSE_FORMAT = `${PROPOSE_SYSTEM}
 
 OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"choice":<1-based number>,"count":<1-8>,"rationale":"..."}. No prose, no fences.`;
+
+// ── Author-intent resolver (Slice AUTH-fix B) ────────────────────────────────
+// The structured, responseSchema-constrained replacement for Gemini's native
+// author_questions function-call. sendTurn calls this ONLY after the conversational
+// model emits the [[AUTHOR_NOW]] sentinel; it reads the same grounding +
+// conversation + numbered targets and returns {choice,count} via the robust
+// runVendoredJson plumbing (Gemini → responseSchema; a parse failure throws →
+// sendTurn catches it and degrades to a normal reply). choice/count are clamped
+// into the allowlist + 1–8 downstream by resolveAndAuthor. Reuses proposeTarget's
+// schema (choice==subTopicNumber) — this is a SEPARATE call from the conversation
+// (fork 4 preserved).
+const AUTHOR_INTENT_SYSTEM = `The tutor has just given a clear go-ahead to author practice questions, in a conversation with an authoring partner. From the conversation and a NUMBERED list of the chapter's sub-topics, identify the ONE sub-topic the tutor wants authored RIGHT NOW and how many questions (1–8; use 3 if no number was stated). If several sub-topics were discussed, pick the one the tutor's most recent go-ahead refers to. Choose BY the list's number — never invent a sub-topic. Return ONLY {choice, count, rationale}.`;
+
+async function resolveAuthorIntent(a: {
+  vendor: VendorChoice;
+  grounding: string;
+  convo: string;
+  subs: SubRef[];
+  multiChapter: boolean;
+  label: string;
+}): Promise<{ choice: number; count: number }> {
+  const list = a.subs
+    .map(
+      (s, i) =>
+        `  ${i + 1}. ${a.multiChapter ? `${s.chapterName} › ` : ""}${s.topicName} › ${s.subTopicName}`,
+    )
+    .join("\n");
+  const prompt = `${a.grounding}
+
+===== CONVERSATION SO FAR =====
+${a.convo}
+===== END CONVERSATION =====
+
+AUTHORING TARGETS (choose ONE by its number):
+${list}
+
+The tutor just gave the go-ahead. Return {choice, count, rationale}.`;
+  const parsed = await runVendoredJson<z.infer<typeof proposeResultSchema>>({
+    vendor: a.vendor,
+    geminiSystem: AUTHOR_INTENT_SYSTEM,
+    geminiResponseSchema: geminiProposeSchema,
+    claudeSystem: `${AUTHOR_INTENT_SYSTEM}
+
+OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"choice":<1-based number>,"count":<1-8>,"rationale":"..."}. No prose, no fences.`,
+    prompt,
+    parse: (raw) => proposeResultSchema.parse(raw),
+    label: `author-intent:${a.label}`,
+    endpoint: AUTHORING_CALL_ENDPOINT,
+  });
+  return { choice: parsed.choice, count: parsed.count };
+}
 
 export type ProposeTargetResult = {
   chatId: string;
