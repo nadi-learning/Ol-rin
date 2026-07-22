@@ -83,6 +83,11 @@ async function main() {
     underP[0]!.studentId !== underQ[0]!.studentId,
   );
 
+  // 3. Each student carries its OWN board slug — the FE pins setBoard(student.board)
+  //    on select so a drifted global x-board can't 404 a cross-board student's thread.
+  check("under P → student.board is P's slug (FE pins the header to this)", underP[0]!.board === P.slug);
+  check("under Q → student.board is Q's slug", underQ[0]!.board === Q.slug);
+
   // ── cleanup (FK-safe: student rows FK app_user; then appUser cascades tutor) ──
   await withBoard(P.id, (tx: Tx) => tx.delete(student).where(eq(student.boardId, P.id)));
   await withBoard(Q.id, (tx: Tx) => tx.delete(student).where(eq(student.boardId, Q.id)));

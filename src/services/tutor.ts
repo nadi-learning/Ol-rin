@@ -30,6 +30,7 @@ import {
   appUser,
   attempt,
   attemptImage,
+  board,
   chapter,
   crossConceptFlag,
   eventLog,
@@ -79,6 +80,15 @@ export type StudentSummary = {
   studentId: string;
   name: string | null;
   email: string;
+  /**
+   * The slug of the board this student belongs to. A multi-board tutor's active
+   * board (a single global `x-board` key) can drift out of sync with the student
+   * they open (cross-tab/persona, or a boot that defaults to their FIRST board);
+   * the FE pins `setBoard(student.board)` on select so every student-scoped read
+   * carries the RIGHT board, never a stale global. Always the active board here
+   * (the row is RLS-scoped), but returned explicitly so selection is self-describing.
+   */
+  board: string;
 };
 
 export type MasteryCard = {
@@ -182,9 +192,11 @@ export async function listStudents(
       studentId: student.userId,
       name: appUser.name,
       email: appUser.email,
+      board: board.slug,
     })
     .from(student)
     .innerJoin(appUser, eq(appUser.id, student.userId))
+    .innerJoin(board, eq(board.id, student.boardId))
     .where(eq(student.tutorId, tutorUserId))
     .orderBy(asc(appUser.email));
 }

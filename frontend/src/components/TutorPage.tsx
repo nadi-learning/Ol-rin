@@ -167,7 +167,18 @@ export function TutorPage({
       {error && <p className="tut-error">{error}</p>}
 
       {!selected ? (
-        <StudentList students={students} onPick={(s) => setSelected(s)} />
+        <StudentList
+          students={students}
+          onPick={(s) => {
+            // Pin the active board to THIS student before any student-scoped read
+            // fires. The global x-board key can have drifted (cross-tab/persona, or
+            // a boot that defaulted to the tutor's FIRST board) away from the board
+            // the student is actually on — which RLS-hides their chat/drafts and
+            // 404s the whole thread. Selecting them makes their board authoritative.
+            setBoard(s.board);
+            setSelected(s);
+          }}
+        />
       ) : (
         <StudentDetail student={selected} onBack={() => setSelected(null)} />
       )}
@@ -223,6 +234,15 @@ function StudentDetail({
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TutorTab>("assess");
+
+  // Keep the active board pinned to THIS student for the whole time their detail
+  // (assess / author / etc.) is open — every read here is student-scoped and RLS
+  // reads the per-request `x-board`, so a global board that drifts out from under
+  // an open student (cross-tab/persona) would 404 their thread. Re-pinning on the
+  // student keeps their board authoritative regardless of the shared global key.
+  useEffect(() => {
+    setBoard(student.board);
+  }, [student.board]);
 
   const reload = useCallback(() => {
     setError(null);
