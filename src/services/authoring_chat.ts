@@ -54,6 +54,7 @@ import {
 import {
   claudeSystemFor,
   loadMethodPack,
+  methodPackContextFor,
   spawnAuthoringWorker,
 } from "./authoring_worker";
 import { SubTopicNotFoundError } from "./assessment";
@@ -1810,8 +1811,11 @@ TUTOR'S REVISION INSTRUCTION: ${note}
 
 Return the revised question as a "questions" array containing EXACTLY ONE question, in the same JSON shape.`;
 
-  // Refinement authors to the SAME method pack/bar as the worker (QA3-e).
-  const pack = await loadMethodPack();
+  // Refinement authors to the SAME method pack/bar as the worker (QA3-e) —
+  // incl. the full kinds palette + the dial catalog for the QUESTION's subject.
+  const pack = await loadMethodPack(
+    await methodPackContextFor(tx, existing.subTopicId),
+  );
   const drafts = await runVendoredJson({
     vendor: row.vendor as VendorChoice,
     geminiSystem: pack,

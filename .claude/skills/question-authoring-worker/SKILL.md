@@ -1,6 +1,6 @@
 ---
 name: question-authoring-worker
-description: The scoped worker brief for authoring a short ordered set of subjective questions for ONE sub-topic — the quality bar (question-craft), the conceptual-kinds palette, and the spiral default. Loaded by the b2c authoring worker (Claude reads it as a skill / Gemini as systemInstruction). Source of truth for the method is b2c/.claude/skills/learning-system/ (question-craft.md, conceptual-question-kinds.md, question-authoring.md).
+description: The scoped worker brief for authoring a short ordered set of subjective questions for ONE sub-topic — the quality bar (question-craft), the spiral default, and pointers to the full palette + dial docs. Loaded by the b2c authoring worker (Claude via --system-prompt / Gemini as systemInstruction), COMPOSED at fire-time with the sibling docs in this dir — conceptual-question-kinds.md (the full palette) + the (board,subject)-selected *-difficulty-dials.md catalog (see loadMethodPack in authoring_worker.ts). The sibling docs were migrated 2026-07-23 from b2c/.claude/skills/learning-system/ (now the source of truth HERE).
 ---
 
 # Question-Authoring Worker
@@ -42,19 +42,9 @@ The two axes **develop together, with conceptual leading slightly.** If the stud
 
 ## The conceptual-kinds palette — which kind of conceptual question to reach for, and when
 
-Pick from these by the situation the brief describes (the student's two axis levels 1–5 and the weakness the brief names). Reach for the kind whose "when" matches; you need not use every kind.
+The FULL palette doc (`conceptual-question-kinds.md`) is appended below this brief as **THE CONCEPTUAL-QUESTION-KINDS PALETTE** section — pick kinds from THERE, by the situation the brief describes (the student's two axis levels 1–5 and the weakness the brief names). Reach for the kind whose "when" matches; you need not use every kind. Two hard rules that always hold: **POE (kind 4) is 🔒 LOCKED — do NOT author it** (needs multi-part, unsupported); the **Misconception Confrontation MCQ (kind 8) is the ONE sanctioned MCQ** — use sparingly, never as the closer of a sequence.
 
-1. **Contrasting Cases** — two or three near-identical items differing in exactly ONE critical feature that flips the answer; the student explains the difference before being told. *Reach for it to build the conceptual axis when it's the lesser one* (procedural reliable, conceptual lags). Engineer the contrast so the surface pattern fails and only the principle survives.
-2. **Error Analysis** — hand the student a worked solution carrying a conceptually-informative flaw; they locate it, explain WHY in terms of the principle, and write the correct version. *Reach for it when a reasoning chain is involved along with a specific suspected misconception* — or to sharpen particular facets of an otherwise-in-place concept.
-3. **Justification** — "why is the formula/relationship this way?"; read a symbol or unit in plain English (what m/s² physically counts). *Reach for it when the student can apply a formula but hasn't tied it to the principle* — lifts the conceptual axis on a procedural/formula topic. Near-universal: worth doing for essentially every formula.
-4. **Predict–Observe–Explain (POE)** — 🔒 **LOCKED, do NOT author.** Needs multi-part questions (commit a prediction → observe → explain), which the product does not support yet. Listed for completeness only.
-5. **Multi-Representational Translation** — translate between graph ↔ story ↔ symbol ↔ table. *A canonical pairing (e.g. v–t graph ↔ story) builds when the conceptual axis is thin; an exotic pairing extends when both axes are strong.*
-6. **Counterfactual / Boundary** — "what if X were absent / reversed?"; reverse probes, boundary tests. *Use to extend a student strong on both axes (both levels 3+)* — push them to where the rule/method breaks.
-7. **Isomorphic / Near–Far Transfer** — same deep structure on a new surface; name the underlying phenomenon (near) or remove it (far). *Use when understanding is average or above (not when struggling) and procedural strength in the sub-topic is above average.* Builds application fluency and a feel for the deeper structure.
-8. **Misconception Confrontation MCQ** — the ONE sanctioned MCQ: each distractor is a diagnostic of a specific wrong model and the choice itself carries the signal (both must hold). *Primarily a diagnostic move, usable across all stages;* what you test depends on the student's current levels. Use sparingly and never as the closer of a sequence.
-9. **Particulate / Micro→Macro Reasoning** — forbid the symbolic level; reason at the level of particles/ions/electrons/fields, then show how the micro converges into the observed macro. *Subject-conditional — use when the topic has a micro level* (kinetic theory, electricity, magnetism, chemistry…). *When: the conceptual axis is weak and the procedural aspect has moved at least a little* — an early conceptual builder.
-
-For the **procedural** axis, calibrate difficulty by the grade's difficulty dials (execution steps, multi-step chains, unit/representation load) — hard thinking on in-scope material, working shown.
+For the **procedural** axis, calibrate difficulty by the subject's difficulty-dials catalog appended below as **THE DIFFICULTY-DIALS CATALOG** (when present — read the chapter's signature, choose which dials to turn and how far). When no catalog is appended, calibrate by execution steps, multi-step chains, and unit/representation load. Either way: hard thinking on in-scope material, working shown.
 
 ## Tags to set on each question
 

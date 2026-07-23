@@ -34,6 +34,7 @@ import { env } from "../src/config/env";
 import { computeSessionFingerprint } from "../src/services/ai_client";
 import {
   claudeSystemFor,
+  dialDocKeyFor,
   loadMethodPack,
   spawnAuthoringWorker,
 } from "../src/services/authoring_worker";
@@ -92,6 +93,30 @@ async function main() {
   const fpChanged = computeSessionFingerprint(fpArgs(claudeSystemFor(pack + "\nEDIT")));
   check("fingerprint: deterministic for the same pack", fp1 === fp2);
   check("fingerprint: CHANGES when the pack changes (resume won't cross a pack edit)", fp1 !== fpChanged);
+
+  // ── FIRM 1b: pack COMPOSITION (2026-07-23) — full palette doc + (board,subject)-selected dials ──
+  check("pack: full palette doc appended (PALETTE section)", pack.includes("THE CONCEPTUAL-QUESTION-KINDS PALETTE"));
+  check("pack: NO dial catalog without context", !pack.includes("===== THE DIFFICULTY-DIALS CATALOG"));
+  check("dialDocKeyFor: cbse+maths → math-g10", dialDocKeyFor("cbse", "maths") === "math-g10");
+  check("dialDocKeyFor: cbse+physics → science-g10", dialDocKeyFor("cbse", "physics") === "science-g10");
+  check("dialDocKeyFor: cbse+chemistry → science-g10", dialDocKeyFor("cbse", "chemistry") === "science-g10");
+  check("dialDocKeyFor: cambridge+physics → cambridge-physics", dialDocKeyFor("cambridge", "physics") === "cambridge-physics");
+  check("dialDocKeyFor: custom-assessment → none", dialDocKeyFor("cbse", "custom-assessment") === null);
+  check("dialDocKeyFor: null subject → none", dialDocKeyFor("cbse", null) === null);
+  const mathsPack = await loadMethodPack({ boardSlug: "cbse", subjectSlug: "maths" });
+  check(
+    "pack(cbse,maths): maths dial catalog appended",
+    mathsPack.includes("===== THE DIFFICULTY-DIALS CATALOG") && mathsPack.includes("How Maths Difficulty Works"),
+  );
+  const camPack = await loadMethodPack({ boardSlug: "cambridge", subjectSlug: "physics" });
+  check(
+    "pack(cambridge,physics): Cambridge dial catalog appended",
+    camPack.includes("Cambridge IGCSE Physics — Difficulty Dials Catalog"),
+  );
+  check(
+    "pack(cbse,physics): science (not Cambridge) catalog",
+    (await loadMethodPack({ boardSlug: "cbse", subjectSlug: "physics" })).includes("How Science Difficulty Works"),
+  );
 
   // ── seed ──
   const [P] = await db.insert(board).values({ slug: `awrk-p-${tag}`, name: "Probe P" }).returning();

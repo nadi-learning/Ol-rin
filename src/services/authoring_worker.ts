@@ -30,9 +30,11 @@ import { and, desc, eq } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   authoringWorker,
+  board,
   chapter,
   learningObjective,
   question,
+  subject,
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
@@ -87,13 +89,22 @@ const AUTHORING_THINKING_BUDGET = 16_000;
 // The method pack lives at the repo root under .claude/skills/… (its natural
 // home; Claude can load it as a real skill later). v0 reads its TEXT and injects
 // it as system context. process.cwd() is the BE repo root at runtime.
-const METHOD_PACK_PATH = join(
+const METHOD_PACK_DIR = join(
   process.cwd(),
   ".claude",
   "skills",
   "question-authoring-worker",
-  "SKILL.md",
 );
+const METHOD_PACK_PATH = join(METHOD_PACK_DIR, "SKILL.md");
+// Full source docs (migrated from b2c/.claude/skills/learning-system/, 2026-07-23):
+// the complete conceptual-kinds palette + the per-board/subject difficulty-dial
+// catalogs. SKILL.md keeps only pointers; these ride along as appended sections.
+const KINDS_DOC_PATH = join(METHOD_PACK_DIR, "conceptual-question-kinds.md");
+const DIAL_DOCS: Record<string, string> = {
+  "science-g10": join(METHOD_PACK_DIR, "science-g10-difficulty-dials.md"),
+  "math-g10": join(METHOD_PACK_DIR, "math-g10-difficulty-dials.md"),
+  "cambridge-physics": join(METHOD_PACK_DIR, "cambridge-physics-difficulty-dials.md"),
+};
 
 // Strip a leading YAML frontmatter block (--- … ---) so the model sees only the
 // method body, not the skill's metadata. Keeps the file a valid loadable skill.
@@ -102,12 +113,85 @@ function stripFrontmatter(md: string): string {
   return m ? md.slice(m[0].length).trimStart() : md;
 }
 
+/**
+ * Pick the difficulty-dials catalog for a (board, subject) pair. Grounded on the
+ * live subject slugs (2026-07-23): cbse → chemistry|maths|physics|custom-assessment,
+ * cambridge → physics|custom-assessment. Unknown/custom subjects get NO dial doc —
+ * SKILL.md's compressed dial sentence remains the fallback calibration.
+ */
+export function dialDocKeyFor(
+  boardSlug: string | null | undefined,
+  subjectSlug: string | null | undefined,
+): string | null {
+  if (!subjectSlug) return null;
+  const s = subjectSlug.toLowerCase();
+  if (s.startsWith("math")) return "math-g10"; // 'maths' | 'math'
+  const isPhysics = s.startsWith("phys");
+  const isScience =
+    isPhysics || s.startsWith("chem") || s.startsWith("bio") || s === "science";
+  if (!isScience) return null; // custom-assessment etc.
+  if (boardSlug?.toLowerCase() === "cambridge" && isPhysics)
+    return "cambridge-physics";
+  return "science-g10";
+}
+
+export type MethodPackContext = {
+  boardSlug: string | null;
+  subjectSlug: string | null;
+};
+
+/**
+ * Resolve the (board, subject) slugs that select the dial doc, from a sub_topic.
+ * Used by callers that don't already join the hierarchy (reviseDraft).
+ */
+export async function methodPackContextFor(
+  tx: Tx,
+  subTopicId: string,
+): Promise<MethodPackContext> {
+  const [row] = await tx
+    .select({ boardSlug: board.slug, subjectSlug: subject.slug })
+    .from(subTopic)
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .innerJoin(subject, eq(subject.id, chapter.subjectId))
+    .innerJoin(board, eq(board.id, chapter.boardId))
+    .where(eq(subTopic.id, subTopicId));
+  return { boardSlug: row?.boardSlug ?? null, subjectSlug: row?.subjectSlug ?? null };
+}
+
 // Read fresh each call (fire-time read — pack edits apply without a redeploy).
-// Small file, low-frequency call; no memoization needed. Exported so the sibling
+// Small files, low-frequency call; no memoization needed. Exported so the sibling
 // refinement path (reviseDraft) authors to the SAME pack/bar.
-export async function loadMethodPack(): Promise<string> {
-  const raw = await readFile(METHOD_PACK_PATH, "utf8");
-  return stripFrontmatter(raw);
+//
+// Composition (2026-07-23, user-directed): SKILL.md (the bar + spiral + output
+// rules) + the FULL conceptual-kinds palette doc + the (board, subject)-selected
+// difficulty-dials catalog. SKILL.md + the kinds doc are load-bearing repo files —
+// a missing one THROWS (a deploy bug must surface, not silently degrade the bar).
+// The dial doc is selected — no match (custom-assessment, unknown subject, no
+// context) simply omits the section.
+export async function loadMethodPack(ctx?: MethodPackContext): Promise<string> {
+  const [skillRaw, kindsRaw] = await Promise.all([
+    readFile(METHOD_PACK_PATH, "utf8"),
+    readFile(KINDS_DOC_PATH, "utf8"),
+  ]);
+  const parts = [
+    stripFrontmatter(skillRaw),
+    `===== THE CONCEPTUAL-QUESTION-KINDS PALETTE (the full palette — pick kinds from HERE) =====
+
+${stripFrontmatter(kindsRaw)}
+
+===== END PALETTE =====`,
+  ];
+  const dialKey = dialDocKeyFor(ctx?.boardSlug, ctx?.subjectSlug);
+  if (dialKey) {
+    const dialRaw = await readFile(DIAL_DOCS[dialKey]!, "utf8");
+    parts.push(`===== THE DIFFICULTY-DIALS CATALOG for this subject (calibrate procedural difficulty from HERE) =====
+
+${stripFrontmatter(dialRaw)}
+
+===== END DIALS =====`);
+  }
+  return parts.join("\n\n");
 }
 
 // Claude has no schema-constrained output — append the strict JSON shape to the
@@ -146,7 +230,8 @@ export async function spawnAuthoringWorker(
     brief: string;
   },
 ): Promise<SpawnWorkerResult> {
-  // 1. Resolve the sub_topic + its chapter (for identity + the raw topics.md blob).
+  // 1. Resolve the sub_topic + its chapter (for identity + the raw topics.md blob)
+  //    + the (board, subject) slugs that select the difficulty-dials catalog.
   const [st] = await tx
     .select({
       id: subTopic.id,
@@ -155,10 +240,14 @@ export async function spawnAuthoringWorker(
       chapterId: chapter.id,
       chapterName: chapter.name,
       chapterMetadata: chapter.metadata,
+      subjectSlug: subject.slug,
+      boardSlug: board.slug,
     })
     .from(subTopic)
     .innerJoin(topic, eq(topic.id, subTopic.topicId))
     .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .innerJoin(subject, eq(subject.id, chapter.subjectId))
+    .innerJoin(board, eq(board.id, chapter.boardId))
     .where(eq(subTopic.id, args.subTopicId));
   if (!st) throw new SubTopicNotFoundError(args.subTopicId);
 
@@ -187,8 +276,11 @@ export async function spawnAuthoringWorker(
     .where(eq(question.subTopicId, args.subTopicId))
     .orderBy(question.ordinal);
 
-  // 4. The method pack (fire-time read).
-  const pack = await loadMethodPack();
+  // 4. The method pack (fire-time read; kinds palette + subject-selected dials).
+  const pack = await loadMethodPack({
+    boardSlug: st.boardSlug,
+    subjectSlug: st.subjectSlug,
+  });
 
   // 5. The scoped prompt — the worker's ENTIRE world.
   const rawTopicsMd =
