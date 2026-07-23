@@ -2783,7 +2783,24 @@ const VENDOR_LABEL: Record<VendorChoice, string> = {
 // We persist the active chatId per student in localStorage and rehydrate it via
 // getAuthoringChat when the tutor returns to this student's Author tab — the chat
 // survives a refresh (item #4). Full SPA routing stays out of scope.
-const CHAT_STORE_KEY = (studentId: string) => `b2c.authchat.${studentId}`;
+//
+// 🔴 CHAT-SCOPE (S151) — THE KEY IS NOW SCOPED BY CHAPTER on the drill-in path.
+// It used to be student-only, so a student had exactly ONE remembered chat no
+// matter which chapter the tutor opened. Drilling into Circles for a student whose
+// last chat was Atoms re-opened THE ATOMS CHAT: the rehydrate effect below runs
+// before the start gate and `initialChapterId` only ever seeded the gate's
+// dropdown, so a chapter the tutor had never authored for still resumed some other
+// chapter's conversation instead of starting fresh.
+//
+// Chapter-scoped keys give the expected behaviour in both directions: a first
+// visit to Circles finds no handle → fresh start gate; returning to Atoms still
+// resumes the Atoms chat. The unscoped key is retained for the scopes that have no
+// single chapter — the QA3-d launcher (which may be interleaved across many) and
+// a history-picker resume.
+const CHAT_STORE_KEY = (studentId: string, chapterId?: string) =>
+  chapterId
+    ? `b2c.authchat.${studentId}.${chapterId}`
+    : `b2c.authchat.${studentId}`;
 
 // Slice AUTH-v2.1 — chat-ONLY authoring. The v1/S26 top picker (chapter/sub-topic/
 // how-many selects + "Author questions →" CTA) is GONE. The flow is now: pick a
@@ -2808,6 +2825,26 @@ function AuthorChat({
   // and the internal start gate.
   resumeChatId?: string;
 }) {
+  // CHAT-SCOPE — the remembered-chat key for THIS mount. Chapter-scoped on the
+  // drill-in path (`initialChapterId`), unscoped for the launcher / history resume,
+  // which have no single chapter. Every read, write and clear in this component
+  // goes through it so the two paths can never key differently by accident.
+  const storeKey = CHAT_STORE_KEY(student.studentId, initialChapterId);
+
+  // BOARD-PIN (S151) — re-assert THIS student's board immediately before every
+  // authoring call. `x-board` is read per-request from storage (trpc.ts), and it
+  // can drift out from under an open chat WITHIN a tab: the tutor board switcher
+  // writes it, and so does selecting a different student. A drifted board makes the
+  // chat row RLS-invisible and the call fails AUTHORING_CHAT_NOT_FOUND on a chat
+  // that plainly exists. BOARD-TAB (trpc.ts) killed the cross-TAB half of this
+  // fault; this closes the within-tab half. Same defence the assessment sitting
+  // already carries (openSitting / finalize).
+  //
+  // It also makes the errors trustworthy: with the board pinned first, a NOT_FOUND
+  // now genuinely means gone, which is what the rehydrate handler below relies on
+  // before it drops a stored handle.
+  const pinBoard = () => setBoard(student.board);
+
   // Claude is the default author (hybrid model): Claude uses the button→propose→
   // form flow; Gemini additionally authors in-chat via the author_questions tool.
   const [vendor, setVendor] = useState<VendorChoice>("claude_cli");
@@ -2985,6 +3022,7 @@ function AuthorChat({
     // author runs at a time.
     if (!draftJobRef.current) {
       void (async () => {
+        pinBoard(); // BOARD-PIN
         const { jobId } = await trpc.tutor.getActiveAuthoringJob
           .query({ chatId: c.chatId })
           .catch(() => ({ jobId: null as string | null }));
@@ -3008,6 +3046,7 @@ function AuthorChat({
     if (reviseJobRef.current) return;
     void (async () => {
       for (let i = 0; i < drafts.length; i++) {
+        pinBoard(); // BOARD-PIN
         const { jobId } = await trpc.tutor.getActiveReviseJob
           .query({ questionId: drafts[i]!.id })
           .catch(() => ({ jobId: null as string | null }));
@@ -3039,13 +3078,14 @@ function AuthorChat({
     if (resumeChatId) {
       setRehydrating(true);
       let alive = true;
+      pinBoard(); // BOARD-PIN
       trpc.tutor.getAuthoringChat
         .query({ chatId: resumeChatId })
         .then((c) => {
           if (!alive) return;
           setChat(c);
           restoreDrafts(c);
-          localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+          localStorage.setItem(storeKey, c.chatId);
         })
         .catch((e) => {
           if (alive) setError(String(e?.message ?? e));
@@ -3058,24 +3098,42 @@ function AuthorChat({
       };
     }
     setRehydrating(true);
-    const saved = localStorage.getItem(CHAT_STORE_KEY(student.studentId));
+    const saved = localStorage.getItem(storeKey);
     if (!saved) {
       setRehydrating(false);
       return;
     }
     let live = true;
+    pinBoard(); // BOARD-PIN — before the read, so a NOT_FOUND below is trustworthy
     trpc.tutor.getAuthoringChat
       .query({ chatId: saved })
       .then((c) => {
         if (!live) return;
+        // CHAT-SCOPE guard — belt-and-braces over the chapter-scoped key. A handle
+        // must only resume a chat whose scope IS the chapter the tutor drilled
+        // into; anything else (a legacy unscoped handle written before this fix, a
+        // chat since re-scoped) falls through to the start gate and a fresh chat
+        // rather than silently opening another chapter's conversation.
+        if (initialChapterId) {
+          const scope = c.chapterIds ?? [];
+          const matches = scope.length === 1 && scope[0] === initialChapterId;
+          if (!matches) {
+            // Do NOT clear the handle: that other chat is still someone's active
+            // chat under its own key. Just decline to resume it here.
+            return;
+          }
+        }
         setChat(c);
         // Restore any un-approved drafts so a refresh mid-review doesn't lose them
         // (now carried on the chat payload — same path as the landing resume).
         restoreDrafts(c);
       })
       .catch(() => {
-        // Chat gone (cleared / different board) → drop the stale handle, show gate.
-        localStorage.removeItem(CHAT_STORE_KEY(student.studentId));
+        // Chat genuinely gone (deleted / never existed) → drop the stale handle,
+        // show the gate. Safe to conclude "gone" because pinBoard() above ruled out
+        // the board-drift NOT_FOUND that used to reach here and destroy a live
+        // chat's handle (S148/S151 board fault).
+        localStorage.removeItem(storeKey);
       })
       .finally(() => {
         if (live) setRehydrating(false);
@@ -3084,7 +3142,7 @@ function AuthorChat({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student.studentId, launch, resumeChatId]);
+  }, [student.studentId, launch, resumeChatId, initialChapterId]);
 
   // Keep the newest turn in view: on resume/load, after every turn, and while the
   // AI is thinking or a consent card appears (Eyeball feedback #3a / D-AUTHUI-2).
@@ -3106,11 +3164,12 @@ function AuthorChat({
   }) {
     setError(null);
     setStarting(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.startAuthoringChat
       .mutate({ studentId: student.studentId, ...params })
       .then((c) => {
         setChat(c);
-        localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+        localStorage.setItem(storeKey, c.chatId);
       })
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setStarting(false));
@@ -3125,7 +3184,7 @@ function AuthorChat({
   // D-AUTH2-1). Clears the stored handle. In launch mode it re-starts a fresh chat
   // with the SAME launched scope; otherwise it returns to the internal start gate.
   function newChat() {
-    localStorage.removeItem(CHAT_STORE_KEY(student.studentId));
+    localStorage.removeItem(storeKey);
     resetAll();
     if (launch) {
       doStart({
@@ -3141,6 +3200,7 @@ function AuthorChat({
   // Resume a past chat from the history picker (Eyeball-#2 item #3).
   function resumeChat(chatId: string) {
     setError(null);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.getAuthoringChat
       .query({ chatId })
       .then((c) => {
@@ -3150,7 +3210,7 @@ function AuthorChat({
         // history picker doesn't drop the preview — parity with the landing +
         // localStorage resume paths (the missing call that lost the form).
         restoreDrafts(c);
-        localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+        localStorage.setItem(storeKey, c.chatId);
         setAuthTab("chat");
       })
       .catch((e) => setError(String(e?.message ?? e)));
@@ -3175,6 +3235,7 @@ function AuthorChat({
       createdAt: new Date().toISOString(),
     };
     setChat({ ...chat, messages: [...chat.messages, optimistic] });
+    pinBoard(); // BOARD-PIN — this is the call the founder saw fail as "thread not found"
     trpc.tutor.sendAuthoringChatTurn
       .mutate({ chatId: chat.chatId, text })
       .then((c) => {
@@ -3199,6 +3260,7 @@ function AuthorChat({
     setError(null);
     setSaved(null);
     setProposing(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.proposeAuthoringTarget
       .mutate({ chatId: chat.chatId })
       .then((p) => {
@@ -3223,6 +3285,7 @@ function AuthorChat({
     setSaved(null);
     setProposal(null);
     setAuthoring(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.authorFromChat
       .mutate({
         chatId: chat.chatId,
@@ -3243,6 +3306,7 @@ function AuthorChat({
     setError(null);
     setSaved(null);
     setProposingSet(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.proposeAuthoringSet
       .mutate({ chatId: chat.chatId })
       .then((p) => {
@@ -3271,6 +3335,7 @@ function AuthorChat({
     setProposalSet(null);
     setSetFailures(null);
     setAuthoringSet(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.authorSetFromChat
       .mutate({
         chatId: chat.chatId,
@@ -3315,6 +3380,7 @@ function AuthorChat({
     const c = cardsRef.current?.[i];
     if (!c) return Promise.resolve();
     const image = c.image && c.image.description.trim() ? c.image : null;
+    pinBoard(); // BOARD-PIN
     return trpc.tutor.updateDraft
       .mutate({
         questionId: c.id,
@@ -3335,6 +3401,7 @@ function AuthorChat({
     const c = cardsRef.current?.[i];
     if (!c) return;
     setError(null);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.discardDraft
       .mutate({ questionId: c.id })
       .then(() =>
@@ -3373,6 +3440,7 @@ function AuthorChat({
       setError(DRAFT_SLOW_MSG);
       return;
     }
+    pinBoard(); // BOARD-PIN — re-pinned on EVERY poll tick; a long draft spans drift
     trpc.tutor.getAuthoringJobStatus
       .query({ jobId })
       .then((s) => {
@@ -3452,6 +3520,7 @@ function AuthorChat({
     if (!card) return;
     setError(null);
     setRevisingIdx(i);
+    pinBoard(); // BOARD-PIN
     commit(i)
       .then(() =>
         trpc.tutor.reviseDraftQuestion.mutate({
@@ -3483,6 +3552,7 @@ function AuthorChat({
       // Flush any un-committed edits first, then enable (M11 enablement).
       await Promise.all(cards.map((_, i) => commit(i)));
       const assign = assignOnApprove && !!chat;
+      pinBoard(); // BOARD-PIN
       const res = await trpc.tutor.approveDrafts.mutate({
         questionIds: ids,
         assign,
