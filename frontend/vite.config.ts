@@ -1,9 +1,40 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Slice TWOWAY-FIX — the BUILD STAMP.
+//
+// Why this exists: a tab left open across a deploy keeps running the old bundle
+// indefinitely, and nothing tells it otherwise. On 2026-07-24 that stranded a tutor
+// in an unbounded authoring loop for an hour — the FE was too old to draw the plan
+// gate, so it kept re-triggering work it couldn't display. The failure presented as
+// "the AI is broken", which is the worst property of this class: it is invisible and
+// it misattributes.
+//
+// A TIMESTAMP, deliberately, not a git sha: the box builds from an rsync'd tree with
+// no `.git` (the deploy rsync excludes it), so a sha resolves to nothing there. Every
+// build is a new id, which is exactly the claim being made — "the served app changed".
+const BUILD_ID = Date.now().toString(36);
+
+/** Emit the id as a tiny asset the running app can poll and compare against its own
+ *  baked-in copy. Same origin, no backend involvement, and it ships in the same dist
+ *  as the bundle it describes — so the two can never disagree about what was deployed. */
+function buildStamp() {
+  return {
+    name: "b2c-build-stamp",
+    generateBundle(this: { emitFile: (f: unknown) => void }) {
+      this.emitFile({
+        type: "asset",
+        fileName: "version.json",
+        source: JSON.stringify({ build: BUILD_ID }),
+      });
+    },
+  };
+}
+
 // FE dev server on 5174 (offset from Starkhorn 5173). Proxies API to BE :3010.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), buildStamp()],
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   server: {
     port: 5174,
     // Bind all interfaces so a phone on the same LAN can reach the dev server

@@ -1163,6 +1163,24 @@ export const authoringChat = pgTable("authoring_chat", {
 // structured call, so ai_session_id null), the resume fingerprint, the scoped
 // brief the worker was given, and a compact record of what it returned. Keyed to
 // the master turn by chat_id. Tenant-scoped (board_id) + RLS.
+//
+// 🔑 Slice TWOWAY-1 — THIS ROW IS NOW A CONVERSATION, NOT JUST AN AUDIT LOG.
+// `messages` (WorkerTurn[]) holds the ordered two-way exchange for ONE authoring
+// EPISODE — the worker's plan, the tutor's amendments, the re-plans, and finally
+// the drafted marker — and `status` is that episode's lifecycle
+// (WorkerEpisodeStatus). The history lives in a jsonb column rather than a child
+// table for the same reason authoring_chat.messages does: it is read and written
+// whole, always in the context of its parent, and never queried across rows.
+//
+// One row per (chat, sub_topic) EPISODE, reused across a plan→amend→re-plan→draft
+// cycle — NOT one row per AI call. A brand-new episode for the same
+// (chat, sub_topic) opens a new row, which is why the Claude resume lookup still
+// takes the most-recent row rather than assuming uniqueness.
+//
+// Both columns are DEFAULTED so pre-slice rows read correctly with no backfill:
+// messages '[]' (their exchange was never a conversation) and status 'drafted'
+// (they are completed one-shot spawns). Every new column defaulted, never a bare
+// NOT NULL — snapshot-restore probes and backfills depend on it.
 export const authoringWorker = pgTable("authoring_worker", {
   id: id(),
   boardId: uuid("board_id")
@@ -1179,6 +1197,11 @@ export const authoringWorker = pgTable("authoring_worker", {
   sessionFingerprint: text("session_fingerprint"), // resume guard (sha256 of the pack + slot)
   brief: text("brief").notNull(), // the scoped prompt the worker was given (audit + resume context)
   output: jsonb("output"), // compact record of the spawn's result: { draftIds: string[], count }
+  // Slice TWOWAY-1: the ordered two-way exchange for this episode (WorkerTurn[]).
+  messages: jsonb("messages").notNull().default([]),
+  // Slice TWOWAY-1: the episode lifecycle (WorkerEpisodeStatus). 'planned' is the
+  // ONLY state that blocks on a human — it is what the plan gate reads.
+  status: text("status").notNull().default("drafted"),
   createdAt: createdAt(),
 });
 

@@ -21,9 +21,31 @@ import type { AppRouter } from "../../src/trpc/router";
  */
 const BOARD_KEY = "b2c.board";
 
+/**
+ * 🔴 BOARD-TAB (S151) — THE BOARD LIVES IN `sessionStorage`, WHICH IS PER-TAB.
+ * It used to live in `localStorage`, which is per-ORIGIN: every tab and window of
+ * the app shared ONE value. A tutor with two windows open — one authoring for a
+ * CBSE student, one for a Cambridge student — had the second window's
+ * `setBoard(student.board)` silently overwrite the first's. The first window's
+ * next call then carried the WRONG `x-board`, its board-scoped rows went
+ * RLS-invisible, and the tutor saw `AUTHORING_CHAT_NOT_FOUND` ("authoring thread
+ * not found") on a chat that was sitting right there. Same fault previously ate a
+ * real assessment finalize (ASSESSMENT_SESSION_NOT_FOUND, S148) — that path was
+ * patched with a synchronous re-pin, which narrowed the race but could not close
+ * it, because the two windows keep flipping one shared value.
+ *
+ * `sessionStorage` is scoped to the tab, so the two windows simply stop sharing
+ * board state and the whole cross-tab drift class disappears.
+ *
+ * Cost, accepted deliberately: a NEW tab does not inherit the board. That is
+ * fine — the board is re-resolved from the SERVER on boot, never trusted from
+ * storage: students via `whoami`'s resolved membership (App.tsx), tutors via
+ * `listTutorBoards` (TutorPage), and selecting a student re-pins their board.
+ * Storage is a within-tab cache, not the source of truth.
+ */
 export function getBoard(): string | null {
   try {
-    return localStorage.getItem(BOARD_KEY);
+    return sessionStorage.getItem(BOARD_KEY);
   } catch {
     // Private-mode / blocked storage: treat as "no board picked". The student
     // re-picks each session rather than the app failing to boot.
@@ -33,7 +55,11 @@ export function getBoard(): string | null {
 
 export function setBoard(slug: string): void {
   try {
-    localStorage.setItem(BOARD_KEY, slug);
+    sessionStorage.setItem(BOARD_KEY, slug);
+    // Evict the pre-BOARD-TAB localStorage value. Nothing reads it any more, so
+    // leaving it behind would only mislead the next person debugging a board bug
+    // in devtools. One-shot self-clean; harmless once already gone.
+    localStorage.removeItem(BOARD_KEY);
   } catch {
     /* see getBoard */
   }
@@ -41,7 +67,8 @@ export function setBoard(slug: string): void {
 
 export function clearBoard(): void {
   try {
-    localStorage.removeItem(BOARD_KEY);
+    sessionStorage.removeItem(BOARD_KEY);
+    localStorage.removeItem(BOARD_KEY); // see setBoard
   } catch {
     /* see getBoard */
   }
@@ -58,9 +85,13 @@ export function clearBoard(): void {
  */
 const ADMIN_BOARD_KEY = "b2c.admin.board";
 
+// BOARD-TAB (S151) — per-tab for the same reason as the student board above: two
+// `/admin` tabs on different boards would otherwise flip one shared value under
+// each other. AdminPage already falls back to the first board when unset, so a
+// fresh tab lands sanely.
 export function getAdminBoard(): string | null {
   try {
-    return localStorage.getItem(ADMIN_BOARD_KEY);
+    return sessionStorage.getItem(ADMIN_BOARD_KEY);
   } catch {
     return null;
   }
@@ -68,7 +99,8 @@ export function getAdminBoard(): string | null {
 
 export function setAdminBoard(slug: string): void {
   try {
-    localStorage.setItem(ADMIN_BOARD_KEY, slug);
+    sessionStorage.setItem(ADMIN_BOARD_KEY, slug);
+    localStorage.removeItem(ADMIN_BOARD_KEY); // evict the pre-BOARD-TAB value
   } catch {
     /* see getBoard */
   }

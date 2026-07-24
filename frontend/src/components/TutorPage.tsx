@@ -2710,8 +2710,17 @@ type ChatTurn = ChatView["messages"][number];
 // Slice AUTHOR-ASYNC: authorFromChat now returns { jobId } (the draft is authored
 // off the request path); the review-form payload is the completed job's `result`.
 type AuthorJobStatus = Awaited<ReturnType<typeof trpc.tutor.getAuthoringJobStatus.query>>;
-type AuthorDraft = Extract<AuthorJobStatus, { state: "completed" }>["result"];
+// Slice TWOWAY-1: the completed job's `result` is a UNION over the phase — a plan to
+// gate, or drafts to review. Narrowing on `phase` (rather than widening the type) is
+// what makes handing a plan to the review form a compile error.
+type AuthorJobResult = Extract<AuthorJobStatus, { state: "completed" }>["result"];
+type AuthorDraft = Extract<AuthorJobResult, { phase: "draft" }>;
+type AuthorPlan = Extract<AuthorJobResult, { phase: "plan" }>;
 type AuthorDraftItem = AuthorDraft["drafts"][number];
+// The plan awaiting a gate, as carried on getChat (the resume-proof source) — the
+// same shape the plan card renders from however it arrived.
+type PendingPlan = NonNullable<ChatView["pendingPlan"]>;
+type PlanItem = PendingPlan["plan"]["items"][number];
 type ProposeResult = Awaited<
   ReturnType<typeof trpc.tutor.proposeAuthoringTarget.mutate>
 >;
@@ -2783,7 +2792,24 @@ const VENDOR_LABEL: Record<VendorChoice, string> = {
 // We persist the active chatId per student in localStorage and rehydrate it via
 // getAuthoringChat when the tutor returns to this student's Author tab — the chat
 // survives a refresh (item #4). Full SPA routing stays out of scope.
-const CHAT_STORE_KEY = (studentId: string) => `b2c.authchat.${studentId}`;
+//
+// 🔴 CHAT-SCOPE (S151) — THE KEY IS NOW SCOPED BY CHAPTER on the drill-in path.
+// It used to be student-only, so a student had exactly ONE remembered chat no
+// matter which chapter the tutor opened. Drilling into Circles for a student whose
+// last chat was Atoms re-opened THE ATOMS CHAT: the rehydrate effect below runs
+// before the start gate and `initialChapterId` only ever seeded the gate's
+// dropdown, so a chapter the tutor had never authored for still resumed some other
+// chapter's conversation instead of starting fresh.
+//
+// Chapter-scoped keys give the expected behaviour in both directions: a first
+// visit to Circles finds no handle → fresh start gate; returning to Atoms still
+// resumes the Atoms chat. The unscoped key is retained for the scopes that have no
+// single chapter — the QA3-d launcher (which may be interleaved across many) and
+// a history-picker resume.
+const CHAT_STORE_KEY = (studentId: string, chapterId?: string) =>
+  chapterId
+    ? `b2c.authchat.${studentId}.${chapterId}`
+    : `b2c.authchat.${studentId}`;
 
 // Slice AUTH-v2.1 — chat-ONLY authoring. The v1/S26 top picker (chapter/sub-topic/
 // how-many selects + "Author questions →" CTA) is GONE. The flow is now: pick a
@@ -2808,6 +2834,26 @@ function AuthorChat({
   // and the internal start gate.
   resumeChatId?: string;
 }) {
+  // CHAT-SCOPE — the remembered-chat key for THIS mount. Chapter-scoped on the
+  // drill-in path (`initialChapterId`), unscoped for the launcher / history resume,
+  // which have no single chapter. Every read, write and clear in this component
+  // goes through it so the two paths can never key differently by accident.
+  const storeKey = CHAT_STORE_KEY(student.studentId, initialChapterId);
+
+  // BOARD-PIN (S151) — re-assert THIS student's board immediately before every
+  // authoring call. `x-board` is read per-request from storage (trpc.ts), and it
+  // can drift out from under an open chat WITHIN a tab: the tutor board switcher
+  // writes it, and so does selecting a different student. A drifted board makes the
+  // chat row RLS-invisible and the call fails AUTHORING_CHAT_NOT_FOUND on a chat
+  // that plainly exists. BOARD-TAB (trpc.ts) killed the cross-TAB half of this
+  // fault; this closes the within-tab half. Same defence the assessment sitting
+  // already carries (openSitting / finalize).
+  //
+  // It also makes the errors trustworthy: with the board pinned first, a NOT_FOUND
+  // now genuinely means gone, which is what the rehydrate handler below relies on
+  // before it drops a stored handle.
+  const pinBoard = () => setBoard(student.board);
+
   // Claude is the default author (hybrid model): Claude uses the button→propose→
   // form flow; Gemini additionally authors in-chat via the author_questions tool.
   const [vendor, setVendor] = useState<VendorChoice>("claude_cli");
@@ -2889,6 +2935,35 @@ function AuthorChat({
     "We couldn't draft these questions. Please try again — if it keeps failing, ask for fewer at a time.";
   const DRAFT_SLOW_MSG =
     "Drafting is taking longer than usual. Leave this open — the questions will appear here when they're ready.";
+
+  // TWOWAY-1: the PLAN phase. A go-ahead now asks the worker what it intends to
+  // write; that plan lands here as a gate the tutor approves or amends, and nothing
+  // is drafted until they do.
+  //
+  // `planFirst` is the tutor's per-chat preference and defaults ON — the gate is the
+  // behaviour unless they deliberately skip it. Component state, so a refresh
+  // returns to the safe default rather than silently remembering a skip.
+  const [planFirst, setPlanFirst] = useState(true);
+  // The plan awaiting the gate. Sourced from getChat's `pendingPlan` on every resume
+  // path AND from a completed plan poll — one piece of state, so the card can't
+  // differ between "just planned" and "came back to it".
+  const [plan, setPlan] = useState<PendingPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [gating, setGating] = useState(false); // an approve/amend/dismiss in flight
+  const [amending, setAmending] = useState(false); // the amendment box is open
+  const [amendNote, setAmendNote] = useState("");
+  const planJobRef = useRef<string | null>(null);
+  const planPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (planPollRef.current) clearTimeout(planPollRef.current);
+    },
+    [],
+  );
+  const PLAN_FAILED_MSG =
+    "We couldn't work out a plan for this. Please try again, or skip the plan and draft directly.";
+  const PLAN_SLOW_MSG =
+    "This is taking longer than usual. Leave this open — the plan will appear here when it's ready.";
   // The authored-question preview is a left pane shown side-by-side with the chat
   // once drafts exist; the tutor can collapse it back to full-width chat without
   // discarding the drafts (re-open via the topbar chip) — D-AUTHUI-1.
@@ -2957,6 +3032,16 @@ function AuthorChat({
     if (draftPollRef.current) clearTimeout(draftPollRef.current);
     draftPollRef.current = null;
     draftJobRef.current = null;
+    // TWOWAY-1: and the plan phase. `planFirst` is deliberately NOT reset — it is
+    // the tutor's preference for this sitting, not per-chat state.
+    setPlan(null);
+    setPlanning(false);
+    setGating(false);
+    setAmending(false);
+    setAmendNote("");
+    if (planPollRef.current) clearTimeout(planPollRef.current);
+    planPollRef.current = null;
+    planJobRef.current = null;
     setSaved(null);
     setError(null);
     setInput("");
@@ -2979,16 +3064,32 @@ function AuthorChat({
   // landing history picker AND a plain remount — restores identically; no path
   // can silently drop a mid-review form. No-op when there's nothing pending.
   function restoreDrafts(c: ChatView) {
-    // AUTHOR-ASYNC: resume the "Drafting…" loader if an author is still drafting for
-    // this chat (durable across a refresh / close-reopen). The drafts don't exist
-    // yet, so this scan runs BEFORE the pendingDrafts short-circuit below. One
-    // author runs at a time.
-    if (!draftJobRef.current) {
+    // TWOWAY-1: restore an open GATE first. It is carried on the chat payload (not
+    // derived from the transcript's relay turn), so every resume path — refresh,
+    // history picker, remount — restores the same card, and a gate that was already
+    // answered cannot re-open.
+    setPlan(c.pendingPlan ?? null);
+
+    // AUTHOR-ASYNC: resume the loader if authoring work is still running for this
+    // chat (durable across a refresh / close-reopen). The output doesn't exist yet,
+    // so this scan runs BEFORE the pendingDrafts short-circuit below. One authoring
+    // job runs at a time per chat.
+    //
+    // TWOWAY-1: the handle carries the PHASE, so a plan in flight resumes as
+    // "Planning…" and its poll expects a plan. Guessing here would restore the wrong
+    // loader and then feed the review form a payload it can't open.
+    if (!draftJobRef.current && !planJobRef.current) {
       void (async () => {
-        const { jobId } = await trpc.tutor.getActiveAuthoringJob
+        pinBoard(); // BOARD-PIN
+        const live = await trpc.tutor.getActiveAuthoringJob
           .query({ chatId: c.chatId })
-          .catch(() => ({ jobId: null as string | null }));
-        if (jobId && !draftJobRef.current) startDraftingPoll(jobId);
+          .catch(() => null);
+        if (!live) return;
+        if (live.phase === "plan") {
+          if (!planJobRef.current) startPlanningPoll(live.jobId);
+        } else if (!draftJobRef.current) {
+          startDraftingPoll(live.jobId);
+        }
       })();
     }
 
@@ -3008,6 +3109,7 @@ function AuthorChat({
     if (reviseJobRef.current) return;
     void (async () => {
       for (let i = 0; i < drafts.length; i++) {
+        pinBoard(); // BOARD-PIN
         const { jobId } = await trpc.tutor.getActiveReviseJob
           .query({ questionId: drafts[i]!.id })
           .catch(() => ({ jobId: null as string | null }));
@@ -3039,13 +3141,14 @@ function AuthorChat({
     if (resumeChatId) {
       setRehydrating(true);
       let alive = true;
+      pinBoard(); // BOARD-PIN
       trpc.tutor.getAuthoringChat
         .query({ chatId: resumeChatId })
         .then((c) => {
           if (!alive) return;
           setChat(c);
           restoreDrafts(c);
-          localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+          localStorage.setItem(storeKey, c.chatId);
         })
         .catch((e) => {
           if (alive) setError(String(e?.message ?? e));
@@ -3058,24 +3161,42 @@ function AuthorChat({
       };
     }
     setRehydrating(true);
-    const saved = localStorage.getItem(CHAT_STORE_KEY(student.studentId));
+    const saved = localStorage.getItem(storeKey);
     if (!saved) {
       setRehydrating(false);
       return;
     }
     let live = true;
+    pinBoard(); // BOARD-PIN — before the read, so a NOT_FOUND below is trustworthy
     trpc.tutor.getAuthoringChat
       .query({ chatId: saved })
       .then((c) => {
         if (!live) return;
+        // CHAT-SCOPE guard — belt-and-braces over the chapter-scoped key. A handle
+        // must only resume a chat whose scope IS the chapter the tutor drilled
+        // into; anything else (a legacy unscoped handle written before this fix, a
+        // chat since re-scoped) falls through to the start gate and a fresh chat
+        // rather than silently opening another chapter's conversation.
+        if (initialChapterId) {
+          const scope = c.chapterIds ?? [];
+          const matches = scope.length === 1 && scope[0] === initialChapterId;
+          if (!matches) {
+            // Do NOT clear the handle: that other chat is still someone's active
+            // chat under its own key. Just decline to resume it here.
+            return;
+          }
+        }
         setChat(c);
         // Restore any un-approved drafts so a refresh mid-review doesn't lose them
         // (now carried on the chat payload — same path as the landing resume).
         restoreDrafts(c);
       })
       .catch(() => {
-        // Chat gone (cleared / different board) → drop the stale handle, show gate.
-        localStorage.removeItem(CHAT_STORE_KEY(student.studentId));
+        // Chat genuinely gone (deleted / never existed) → drop the stale handle,
+        // show the gate. Safe to conclude "gone" because pinBoard() above ruled out
+        // the board-drift NOT_FOUND that used to reach here and destroy a live
+        // chat's handle (S148/S151 board fault).
+        localStorage.removeItem(storeKey);
       })
       .finally(() => {
         if (live) setRehydrating(false);
@@ -3084,7 +3205,7 @@ function AuthorChat({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student.studentId, launch, resumeChatId]);
+  }, [student.studentId, launch, resumeChatId, initialChapterId]);
 
   // Keep the newest turn in view: on resume/load, after every turn, and while the
   // AI is thinking or a consent card appears (Eyeball feedback #3a / D-AUTHUI-2).
@@ -3094,7 +3215,19 @@ function AuthorChat({
   useEffect(() => {
     const el = canvasRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [chat?.chatId, chat?.messages.length, sending, proposal, proposalSet, authTab]);
+    // TWOWAY-1: the plan gate card + its loader are new things that appear at the
+    // bottom of the canvas, so they belong in the deps — a card that arrives below
+    // the fold is a card the tutor doesn't know to answer.
+  }, [
+    chat?.chatId,
+    chat?.messages.length,
+    sending,
+    proposal,
+    proposalSet,
+    authTab,
+    plan,
+    planning,
+  ]);
 
   // The one start path — used by the internal gate (blocked, one chapter) and the
   // QA3-d launch auto-start (blocked or interleaved, one or many chapters).
@@ -3106,11 +3239,12 @@ function AuthorChat({
   }) {
     setError(null);
     setStarting(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.startAuthoringChat
       .mutate({ studentId: student.studentId, ...params })
       .then((c) => {
         setChat(c);
-        localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+        localStorage.setItem(storeKey, c.chatId);
       })
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setStarting(false));
@@ -3125,7 +3259,7 @@ function AuthorChat({
   // D-AUTH2-1). Clears the stored handle. In launch mode it re-starts a fresh chat
   // with the SAME launched scope; otherwise it returns to the internal start gate.
   function newChat() {
-    localStorage.removeItem(CHAT_STORE_KEY(student.studentId));
+    localStorage.removeItem(storeKey);
     resetAll();
     if (launch) {
       doStart({
@@ -3141,6 +3275,7 @@ function AuthorChat({
   // Resume a past chat from the history picker (Eyeball-#2 item #3).
   function resumeChat(chatId: string) {
     setError(null);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.getAuthoringChat
       .query({ chatId })
       .then((c) => {
@@ -3150,7 +3285,7 @@ function AuthorChat({
         // history picker doesn't drop the preview — parity with the landing +
         // localStorage resume paths (the missing call that lost the form).
         restoreDrafts(c);
-        localStorage.setItem(CHAT_STORE_KEY(student.studentId), c.chatId);
+        localStorage.setItem(storeKey, c.chatId);
         setAuthTab("chat");
       })
       .catch((e) => setError(String(e?.message ?? e)));
@@ -3158,9 +3293,11 @@ function AuthorChat({
 
   function send() {
     const text = input.trim();
-    // Block a new turn while an author is drafting — one author at a time (the
-    // durable loader tracks a single job).
-    if (!chat || !text || sending || drafting) return;
+    // Block a new turn while authoring work is in flight — one job at a time (the
+    // durable loaders each track a single job). TWOWAY-1 adds the plan phase, and
+    // also blocks while a gate is OPEN: a go-ahead typed under an unanswered plan
+    // card would start a second episode for the same target.
+    if (!chat || !text || sending || drafting || planning || plan) return;
     setError(null);
     setSending(true);
     setInput("");
@@ -3175,14 +3312,28 @@ function AuthorChat({
       createdAt: new Date().toISOString(),
     };
     setChat({ ...chat, messages: [...chat.messages, optimistic] });
+    pinBoard(); // BOARD-PIN — this is the call the founder saw fail as "thread not found"
     trpc.tutor.sendAuthoringChatTurn
-      .mutate({ chatId: chat.chatId, text })
+      .mutate({ chatId: chat.chatId, text, planFirst })
       .then((c) => {
         setChat(c); // authoritative list replaces the optimistic turn
+        // TWOWAY-FIX: the server refused to start new work because a gate is already
+        // open, and handed the plan back. Reachable on a CURRENT bundle only when this
+        // tab's `plan` state is stale — a second tab, or a gate opened elsewhere — since
+        // the guard above blocks the composer whenever this tab knows about the card.
+        // Adopting it here means the tab self-corrects on the very next thing the tutor
+        // types, instead of waiting for a reload.
+        if (c.pendingPlan) {
+          setPlan(c.pendingPlan);
+          return; // nothing was enqueued, so there is no job to poll
+        }
         // AUTHOR-ASYNC: an in-chat author fired (Gemini sentinel / Claude marker) →
-        // the drafts are being authored off the request path. Start the durable
-        // "Drafting…" loader + poll; the review form opens when the job completes.
-        if (c.draftJobId) startDraftingPoll(c.draftJobId);
+        // the work runs off the request path. TWOWAY-1: which loader depends on the
+        // phase the server chose — plan-first (the default) returns planJobId and
+        // ends at a gate card; the skip returns draftJobId and goes straight to the
+        // review form. Exactly one is ever set.
+        if (c.planJobId) startPlanningPoll(c.planJobId);
+        else if (c.draftJobId) startDraftingPoll(c.draftJobId);
       })
       .catch((e) => {
         setError(String(e?.message ?? e));
@@ -3199,6 +3350,7 @@ function AuthorChat({
     setError(null);
     setSaved(null);
     setProposing(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.proposeAuthoringTarget
       .mutate({ chatId: chat.chatId })
       .then((p) => {
@@ -3223,15 +3375,21 @@ function AuthorChat({
     setSaved(null);
     setProposal(null);
     setAuthoring(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.authorFromChat
       .mutate({
         chatId: chat.chatId,
         subTopicId: p.subTopicId,
         count: proposeCount,
+        planFirst,
       })
-      // AUTHOR-ASYNC: returns a jobId now (drafting runs off the request path) →
-      // hand off to the durable "Drafting…" loader; the review form opens on poll.
-      .then(({ jobId }) => startDraftingPoll(jobId))
+      // AUTHOR-ASYNC: returns a jobId (the work runs off the request path). TWOWAY-1:
+      // the reply says which PHASE was enqueued — plan-first ends at a gate card, the
+      // skip goes straight to the review form. Branch on the server's answer rather
+      // than on the local toggle, so the two can never disagree.
+      .then(({ jobId, phase }) =>
+        phase === "plan" ? startPlanningPoll(jobId) : startDraftingPoll(jobId),
+      )
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setAuthoring(false));
   }
@@ -3243,6 +3401,7 @@ function AuthorChat({
     setError(null);
     setSaved(null);
     setProposingSet(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.proposeAuthoringSet
       .mutate({ chatId: chat.chatId })
       .then((p) => {
@@ -3271,6 +3430,7 @@ function AuthorChat({
     setProposalSet(null);
     setSetFailures(null);
     setAuthoringSet(true);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.authorSetFromChat
       .mutate({
         chatId: chat.chatId,
@@ -3315,6 +3475,7 @@ function AuthorChat({
     const c = cardsRef.current?.[i];
     if (!c) return Promise.resolve();
     const image = c.image && c.image.description.trim() ? c.image : null;
+    pinBoard(); // BOARD-PIN
     return trpc.tutor.updateDraft
       .mutate({
         questionId: c.id,
@@ -3335,6 +3496,7 @@ function AuthorChat({
     const c = cardsRef.current?.[i];
     if (!c) return;
     setError(null);
+    pinBoard(); // BOARD-PIN
     trpc.tutor.discardDraft
       .mutate({ questionId: c.id })
       .then(() =>
@@ -3373,12 +3535,21 @@ function AuthorChat({
       setError(DRAFT_SLOW_MSG);
       return;
     }
+    pinBoard(); // BOARD-PIN — re-pinned on EVERY poll tick; a long draft spans drift
     trpc.tutor.getAuthoringJobStatus
       .query({ jobId })
       .then((s) => {
         if (s.state === "completed") {
           draftJobRef.current = null;
           setDrafting(false);
+          // TWOWAY-1: a draft poll must only ever open the review form on a DRAFT
+          // result. A plan arriving here means the loaders crossed (e.g. a resume
+          // mislabelled the phase) — hand it to the gate instead of opening an empty
+          // review form, and never silently drop it.
+          if (s.result.phase === "plan") {
+            setPlan(planFromJob(s.result));
+            return;
+          }
           openReviewForm(s.result);
           return;
         }
@@ -3403,6 +3574,161 @@ function AuthorChat({
     draftJobRef.current = jobId;
     setDrafting(true);
     pollAuthoring(jobId, 0);
+  }
+
+  // ── TWOWAY-1: the PLAN phase ────────────────────────────────────────────────
+
+  /** A completed plan JOB result, in the same shape getChat's `pendingPlan` uses, so
+   *  the card has exactly ONE source shape to render regardless of how the plan
+   *  arrived (fresh poll vs. resumed chat). */
+  function planFromJob(r: AuthorPlan): PendingPlan {
+    return {
+      workerId: r.workerId,
+      subTopicId: r.subTopicId,
+      subTopicName: r.subTopicName,
+      topicName: r.topicName,
+      chapterName: r.chapterName,
+      plan: r.plan,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  // Poll a plan job until the plan lands. Mirrors pollAuthoring, including treating
+  // 'unknown' as still-working (a transient Redis blip inside the poll window, never
+  // the 1h age-out) so a hiccup doesn't drop the loader. A plan is one call on a
+  // small output, so the cap is shorter than the draft's.
+  function pollPlanning(jobId: string, tries: number) {
+    if (tries > 120) {
+      planJobRef.current = null;
+      setPlanning(false);
+      setError(PLAN_SLOW_MSG);
+      return;
+    }
+    pinBoard(); // BOARD-PIN — re-pinned on EVERY tick; a long plan spans board drift
+    trpc.tutor.getAuthoringJobStatus
+      .query({ jobId })
+      .then((s) => {
+        if (s.state === "completed") {
+          planJobRef.current = null;
+          setPlanning(false);
+          // Symmetric to the draft poll's guard: if a DRAFT result lands on the plan
+          // poll, open the review form rather than dropping the drafts on the floor.
+          if (s.result.phase === "draft") {
+            openReviewForm(s.result);
+            return;
+          }
+          setPlan(planFromJob(s.result));
+          setAmending(false);
+          setAmendNote("");
+          return;
+        }
+        if (s.state === "failed") {
+          planJobRef.current = null;
+          setPlanning(false);
+          setError(PLAN_FAILED_MSG);
+          return;
+        }
+        planPollRef.current = setTimeout(() => pollPlanning(jobId, tries + 1), 3000);
+      })
+      .catch(() => {
+        planJobRef.current = null;
+        setPlanning(false);
+        setError(PLAN_FAILED_MSG);
+      });
+  }
+
+  /** Start (or resume) the durable "Planning…" loader + poll. */
+  function startPlanningPoll(jobId: string) {
+    planJobRef.current = jobId;
+    setPlanning(true);
+    pollPlanning(jobId, 0);
+  }
+
+  // The tutor APPROVED the plan → the worker drafts exactly what was approved. The
+  // count is the server's (the plan's item count), never re-sent from here.
+  function approvePlan() {
+    if (!chat || !plan || gating || drafting) return;
+    setError(null);
+    setGating(true);
+    pinBoard(); // BOARD-PIN
+    trpc.tutor.approveAuthoringPlan
+      .mutate({ chatId: chat.chatId, workerId: plan.workerId })
+      .then(({ jobId }) => {
+        // The gate is answered — clear it BEFORE the drafting loader opens so the
+        // card can't linger and be double-approved.
+        setPlan(null);
+        startDraftingPoll(jobId);
+      })
+      .catch((e) => setError(planGateError(e)))
+      .finally(() => setGating(false));
+  }
+
+  // The tutor AMENDED → their words go into the worker's own history and it re-plans
+  // on the same episode (so the next plan is a revision, not a fresh guess).
+  function submitAmendment() {
+    const note = amendNote.trim();
+    if (!chat || !plan || !note || gating) return;
+    setError(null);
+    setGating(true);
+    pinBoard(); // BOARD-PIN
+    trpc.tutor.amendAuthoringPlan
+      .mutate({ chatId: chat.chatId, workerId: plan.workerId, note })
+      .then(({ jobId }) => {
+        setPlan(null); // the old plan is superseded; the re-plan replaces it
+        setAmending(false);
+        setAmendNote("");
+        // Mirror the amendment into the visible transcript immediately. The server
+        // already appended it, but the tutor should see their words land now rather
+        // than after the next full chat read.
+        setChat((c) =>
+          c
+            ? {
+                ...c,
+                messages: [
+                  ...c.messages,
+                  {
+                    id: `amend-${Date.now()}`,
+                    role: "user" as const,
+                    text: note,
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+              }
+            : c,
+        );
+        startPlanningPoll(jobId);
+      })
+      .catch((e) => setError(planGateError(e)))
+      .finally(() => setGating(false));
+  }
+
+  // The tutor dismissed the plan without drafting. The episode is closed server-side
+  // so it can't come back as a live gate.
+  function dismissPlan() {
+    if (!chat || !plan || gating) return;
+    const workerId = plan.workerId;
+    setError(null);
+    setGating(true);
+    setPlan(null); // optimistic — the card is gone either way
+    pinBoard(); // BOARD-PIN
+    trpc.tutor.dismissAuthoringPlan
+      .mutate({ chatId: chat.chatId, workerId })
+      .catch((e) => setError(planGateError(e)))
+      .finally(() => setGating(false));
+  }
+
+  /** Translate a gate failure into something a tutor can act on. All three guard
+   *  failures collapse to one server code, and the honest reading of it is "this
+   *  plan is no longer the live one" — which a reload fixes. */
+  function planGateError(e: unknown): string {
+    const msg = String((e as { message?: string })?.message ?? e);
+    if (/AUTHORING_PLAN_NOT_FOUND/.test(msg)) {
+      return "This plan is no longer the current one — it was already answered or replaced. Reopen the chat to see where it got to.";
+    }
+    if (/PLAN_HAS_NO_ITEMS/.test(msg)) {
+      return "There's nothing to draft yet — answer the question above with “Amend” and it'll plan again.";
+    }
+    return msg;
   }
 
   // Poll a revise job until the revised draft lands (REVISE-ASYNC). On completion
@@ -3452,6 +3778,7 @@ function AuthorChat({
     if (!card) return;
     setError(null);
     setRevisingIdx(i);
+    pinBoard(); // BOARD-PIN
     commit(i)
       .then(() =>
         trpc.tutor.reviseDraftQuestion.mutate({
@@ -3483,6 +3810,7 @@ function AuthorChat({
       // Flush any un-committed edits first, then enable (M11 enablement).
       await Promise.all(cards.map((_, i) => commit(i)));
       const assign = assignOnApprove && !!chat;
+      pinBoard(); // BOARD-PIN
       const res = await trpc.tutor.approveDrafts.mutate({
         questionIds: ids,
         assign,
@@ -3791,7 +4119,7 @@ function AuthorChat({
 
         <div className="tut-chat-main">
       <div className="tut-chat-canvas" ref={canvasRef}>
-        {chat.messages.length === 0 && !sending && !cards && !proposal && (
+        {chat.messages.length === 0 && !sending && !cards && !proposal && !plan && (
           <p className="tut-chat-hint">
             Say hi, or tell the AI what you'd like to focus on. It already has{" "}
             {student.name ?? "the student"}'s mastery + Stage-1 reads. When you're
@@ -3920,8 +4248,144 @@ function AuthorChat({
           </div>
         )}
 
+        {/* TWOWAY-1 — THE PLAN GATE. The worker says what it intends to write; the
+            tutor approves it or tells it what to change. Rendered from `plan`, which
+            getChat re-supplies on every resume path, so this card survives a refresh
+            and can't re-open once answered. */}
+        {plan && (
+          // TWOWAY-FIX: the gate reads as a MESSAGE in the conversation (AI side,
+          // tinted), not as a wide bordered card. Founder call — the plan is the
+          // worker talking, so it should look like the worker talking.
+          <div className="tut-chat-row tut-chat-row--ai">
+            <div className="tut-chat-plan">
+              <div className="tut-chat-plan-head">
+                Plan — {plan.topicName} › {plan.subTopicName}
+              </div>
+              <p className="tut-chat-plan-read">{plan.plan.read}</p>
+              {plan.plan.items.length > 0 && (
+                <ol className="tut-chat-plan-items">
+                  {plan.plan.items.map((it: PlanItem, i: number) => (
+                    // STACKED, not columnar. Every field here is free prose by
+                    // contract — `difficulty` especially ("the dial catalogs are
+                    // prose, not a scale"). The old 4-column grid gave the dial
+                    // `white-space: nowrap`, so one long dial string demanded a
+                    // column wider than the card, squeezed `kind` and `intent` to
+                    // one word per line, and ran off the right edge.
+                    <li key={`${it.n}-${i}`} className="tut-chat-plan-item">
+                      <div className="tut-chat-plan-item-head">
+                        <span className="tut-chat-plan-n">{it.n}</span>
+                        <span
+                          className={`tut-chat-plan-axis tut-chat-plan-axis--${it.axis}`}
+                        >
+                          {it.axis === "both" ? "C+P" : it.axis === "conceptual" ? "C" : "P"}
+                        </span>
+                        <span className="tut-chat-plan-kind">{it.kind}</span>
+                      </div>
+                      {it.intent && <p className="tut-chat-plan-intent">{it.intent}</p>}
+                      {it.difficulty && (
+                        <p className="tut-chat-plan-dial">{it.difficulty}</p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            {plan.plan.questions.length > 0 && (
+              <div className="tut-chat-plan-asks">
+                <div className="tut-chat-plan-asks-head">It needs to know:</div>
+                <ul>
+                  {plan.plan.questions.map((q: string, i: number) => (
+                    <li key={i}>{q}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {amending ? (
+              <div className="tut-chat-plan-amend">
+                <textarea
+                  className="tut-chat-plan-amendbox"
+                  rows={3}
+                  autoFocus
+                  placeholder="What should it change? (e.g. “drop the graph one, make Q2 about a real context, go one dial harder”)"
+                  value={amendNote}
+                  onChange={(e) => setAmendNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      submitAmendment();
+                    }
+                  }}
+                  disabled={gating}
+                />
+                <div className="tut-chat-consent-actions">
+                  <button
+                    className="btn-solid"
+                    onClick={submitAmendment}
+                    disabled={gating || !amendNote.trim()}
+                  >
+                    {gating ? "Sending…" : "Send to the worker →"}
+                  </button>
+                  <button
+                    className="tut-chat-consent-dismiss"
+                    onClick={() => {
+                      setAmending(false);
+                      setAmendNote("");
+                    }}
+                    disabled={gating}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="tut-chat-consent-actions">
+                <button
+                  className="btn-solid"
+                  onClick={approvePlan}
+                  disabled={gating || plan.plan.items.length === 0}
+                  title={
+                    plan.plan.items.length === 0
+                      ? "Nothing planned yet — answer its question with Amend"
+                      : "Draft exactly these questions"
+                  }
+                >
+                  {gating
+                    ? "Starting…"
+                    : `Draft ${plan.plan.items.length} question${plan.plan.items.length === 1 ? "" : "s"} →`}
+                </button>
+                <button
+                  className="tut-chat-suggest"
+                  onClick={() => setAmending(true)}
+                  disabled={gating}
+                  title="Tell the worker what to change, and it will re-plan"
+                >
+                  Amend
+                </button>
+                <button
+                  className="tut-chat-consent-dismiss"
+                  onClick={dismissPlan}
+                  disabled={gating}
+                >
+                  Not yet
+                </button>
+              </div>
+            )}
+            </div>
+          </div>
+        )}
+
+        {/* TWOWAY-1: the durable "Planning…" loader (survives a refresh; resumed via
+            getActiveAuthoringJob, which carries the phase). */}
+        {planning && (
+          <p className="tut-muted tut-chat-authmeta tut-chat-drafting">
+            Working out a plan… it'll show you what it intends to write before writing
+            anything. You can leave this open.
+          </p>
+        )}
+
         {authoring && !proposal && (
-          <p className="tut-muted tut-chat-authmeta">Authoring the questions… (~10–30s)</p>
+          <p className="tut-muted tut-chat-authmeta">
+            {planFirst ? "Working out a plan…" : "Authoring the questions… (~10–30s)"}
+          </p>
         )}
         {authoringSet && !proposalSet && (
           <p className="tut-muted tut-chat-authmeta">
@@ -3956,10 +4420,27 @@ function AuthorChat({
             }
           }}
         />
+        {/* TWOWAY-1 — the SKIP. Plan-first is the default: a go-ahead makes the
+            worker state its intent and wait. Unchecking it restores the pre-slice
+            behaviour (straight to drafting) for a tutor who just wants questions.
+            Deliberately sits next to the trigger it modifies, and resets to ON on a
+            refresh — a skip should be a decision each time, not a sticky mode. */}
+        <label
+          className="tut-chat-planfirst"
+          title="Plan first: the worker shows you what it intends to write, and waits for your go-ahead. Uncheck to draft straight away."
+        >
+          <input
+            type="checkbox"
+            checked={planFirst}
+            onChange={(e) => setPlanFirst(e.target.checked)}
+            disabled={planning || drafting || !!plan}
+          />
+          <span>Plan first</span>
+        </label>
         <button
           className="tut-chat-suggest"
           onClick={propose}
-          disabled={proposing || authoring || drafting || !!proposal}
+          disabled={proposing || authoring || drafting || planning || !!proposal || !!plan}
           title="Ask the AI to propose a sub-topic + count to author for"
         >
           {proposing ? "Thinking…" : "Suggest what to work on"}
@@ -3979,8 +4460,13 @@ function AuthorChat({
         <button
           className="tut-chat-send"
           onClick={send}
-          disabled={sending || !input.trim()}
+          disabled={sending || !input.trim() || planning || drafting || !!plan}
           aria-label="Send"
+          title={
+            plan
+              ? "Answer the plan above first — approve it, amend it, or dismiss it"
+              : "Send"
+          }
         >
           ➤
         </button>
