@@ -290,25 +290,38 @@ async function main() {
   }
 
   // FIRM (real Claude, AI-dependent — one retry to absorb model nondeterminism):
-  // a plain discussion turn does NOT author; an explicit go-ahead authors IN-CHAT
-  // (the marker fires → same review-form drafts as the Gemini tool). Fresh chat so
-  // it can't disturb the flow above.
+  // a plain discussion turn does NOT author; an explicit go-ahead DOES fire the
+  // in-chat marker. Fresh chat so it can't disturb the flow above.
+  //
+  // 🔴 THIS BLOCK WAS RED FOR SIX SESSIONS AND NOBODY SAW IT. It asserted
+  // `go.draft` — the SYNCHRONOUS in-chat draft payload. Slice AUTHOR-ASYNC (S146,
+  // `6e409f2`) moved drafting onto a background job and stopped populating `.draft`
+  // ENTIRELY (`ChatView.draft` says so in as many words), but it never updated this
+  // file — so `authored` became permanently false and this leg has failed on every
+  // run since. The sibling probe that DID get updated (probe_authoring_tool) went on
+  // passing, which is exactly how the red one stayed invisible: nobody reads a suite
+  // that is already known to be non-zero. Fixed here to the CURRENT contract
+  // (TWOWAY-1: a go-ahead enqueues a PLAN job), with the retry keyed off the same
+  // field it asserts, so the leg can never again pass or fail for a stale reason.
   {
     const icChat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "claude_cli", chapterId: fx.chapterId }));
     const disc = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: icChat.chatId, text: "Before we author — in one line, what's the single biggest gap for this student?" }));
-    check("claude in-chat: discussion turn (no go-ahead) does NOT author (draft absent)", disc.draft === undefined);
+    check(
+      "claude in-chat: discussion turn (no go-ahead) does NOT author (no plan job, no draft job)",
+      disc.planJobId === undefined && disc.draftJobId === undefined,
+    );
 
     let go = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: icChat.chatId, text: "Yes — go ahead and author 2 questions on sub-topic 1 now." }));
-    if (!go.draft) {
+    if (!go.planJobId) {
       // one more explicit nudge (model nondeterminism, not a logic failure)
       go = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: icChat.chatId, text: "Author 2 questions on sub-topic 1 now — emit the author_questions block." }));
     }
-    const authored = !!go.draft && go.draft.drafts.length >= 1 && go.draft.drafts.every(validDraft);
-    check("claude in-chat: go-ahead authored drafts in-chat (marker fired, ≤2 tries)", authored);
-    if (go.draft) {
-      check("claude in-chat: target ∈ chapter allowlist (anchor bounded)", fx.allowedSubTopicIds.includes(go.draft.subTopicId));
+    check("claude in-chat: go-ahead ENQUEUED a plan job (marker fired, ≤2 tries)", !!go.planJobId);
+    check("claude in-chat: nothing drafted synchronously (AUTHOR-ASYNC + the TWOWAY-1 gate)", go.draft === undefined && go.draftJobId === undefined);
+    if (go.planJobId) {
+      check("claude in-chat: target pinned ∈ chapter allowlist (anchor bounded)", !!go.subTopicId && fx.allowedSubTopicIds.includes(go.subTopicId));
       check("claude in-chat: shown wrap-up has no raw author_questions marker leak", !/```\s*author_questions/.test(go.messages[go.messages.length - 1]!.text));
-      soft("claude in-chat drafted", { count: go.draft.drafts.length, sub: go.draft.subTopicName });
+      soft("claude in-chat planned", { jobId: go.planJobId.slice(0, 12), sub: go.subTopicId });
     } else {
       soft("claude in-chat: marker did NOT fire after 2 tries (inspect / re-run)", go.messages[go.messages.length - 1]!.text.slice(0, 200));
     }

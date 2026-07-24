@@ -3,7 +3,7 @@ import { redisConnection } from "../redis/connection";
 import { withBoard } from "../db/with-board";
 import { __aiConfigured } from "../services/ai/gemini";
 import { extractTopicsMd } from "../services/admin_ingest";
-import { authorFromChat, reviseDraft } from "../services/authoring_chat";
+import { authorFromChat, planFromChat, reviseDraft } from "../services/authoring_chat";
 import { scoreAttempt } from "../services/assessment";
 import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
@@ -11,6 +11,7 @@ import {
   ASSESSMENT_QUEUE,
   AUTHORING_QUEUE,
   type AuthoringJobData,
+  type AuthoringJobResult,
   CONTENT_QUEUE,
   type ExtractTopicsJobData,
   GENERATE_IMAGE_QUEUE,
@@ -163,30 +164,56 @@ reviseWorker.on("failed", (job, err) =>
 // job's board claim (RLS). The AuthorFromChatResult (chosen sub-topic + persisted
 // drafts) is both persisted AND returned as the job value so the FE opens the
 // review form from the poll. concurrency 1 — a heavy multi-question AI sequence.
+//
+// Slice TWOWAY-1 — TWO PHASES on this one queue. 'plan' runs the worker's
+// plan turn (appending it to the worker conversation + relaying it into the master
+// chat) and stops, leaving the episode awaiting the tutor's gate; 'draft' runs the
+// approved plan. Separate jobs, never one job that waits on a human — at
+// concurrency 1 a parked job would pin the only authoring slot behind one unread
+// plan card. An ABSENT phase reads as 'draft' so a job enqueued by pre-slice code
+// and still sitting in Redis at deploy time does what it was queued to do.
 const authoringWorker = new Worker<AuthoringJobData>(
   AUTHORING_QUEUE,
-  async (job) =>
-    withBoard(job.data.boardId, (tx) =>
-      authorFromChat(tx, {
+  async (job): Promise<AuthoringJobResult> =>
+    withBoard(job.data.boardId, (tx): Promise<AuthoringJobResult> => {
+      if ((job.data.phase ?? "draft") === "plan") {
+        return planFromChat(tx, {
+          tutorUserId: job.data.tutorUserId,
+          chatId: job.data.chatId,
+          subTopicId: job.data.subTopicId,
+          count: job.data.count,
+          ...(job.data.workerId ? { workerId: job.data.workerId } : {}),
+        });
+      }
+      return authorFromChat(tx, {
         tutorUserId: job.data.tutorUserId,
         chatId: job.data.chatId,
         subTopicId: job.data.subTopicId,
         count: job.data.count,
-      }),
-    ),
+        ...(job.data.workerId ? { workerId: job.data.workerId } : {}),
+      }).then((r) => ({ ...r, phase: "draft" as const }));
+    }),
   { connection: redisConnection, concurrency: 1 },
 );
 
-authoringWorker.on("completed", (job, res) =>
+authoringWorker.on("completed", (job, res) => {
+  if (res?.phase === "plan") {
+    console.log(
+      `[b2c-worker] PLANNED ${res.plan?.items?.length ?? 0} item(s) for ` +
+        `${res.subTopicName ?? job.data.subTopicId} (chat ${job.data.chatId}, ` +
+        `episode ${res.workerId}) — awaiting the tutor's gate`,
+    );
+    return;
+  }
   console.log(
     `[b2c-worker] authored ${res?.drafts?.length ?? 0} draft(s) for ` +
       `${res?.subTopicName ?? job.data.subTopicId} (chat ${job.data.chatId})`,
-  ),
-);
+  );
+});
 authoringWorker.on("failed", (job, err) =>
   console.error(
-    `[b2c-worker] authoring FAILED sub-topic ${job?.data.subTopicId} ` +
-      `(chat ${job?.data.chatId}): ${err.message}`,
+    `[b2c-worker] authoring ${job?.data.phase ?? "draft"} FAILED sub-topic ` +
+      `${job?.data.subTopicId} (chat ${job?.data.chatId}): ${err.message}`,
   ),
 );
 

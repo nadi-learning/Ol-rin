@@ -1621,6 +1621,147 @@
   color: var(--ink);
 }
 
+/* ── Slice TWOWAY-1: the PLAN GATE card ──────────────────────────────────────
+   The worker states what it intends to write and waits. Built on .tut-chat-consent
+   (same in-canvas card shape as the target/set proposals) so the gate reads as one
+   more thing to answer in the conversation rather than a new kind of surface. The
+   only visual departure is the left rule: a plan is the one card that BLOCKS — the
+   chat input is disabled until it's answered — so it needs to look load-bearing. */
+.tut-chat-plan {
+  border-left-width: 4px;
+}
+.tut-chat-plan-read {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.tut-chat-plan-items {
+  margin: 2px 0 4px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Counter rather than <ol> numbers: the worker's own `n` is what the tutor and the
+     drafter both refer to, so the visible number is the axis chip, not a marker. */
+}
+.tut-chat-plan-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-sunk);
+  font-size: 13px;
+}
+/* Narrow: the intent needs the full width, so the meta wraps above it. */
+@media (max-width: 640px) {
+  .tut-chat-plan-item {
+    grid-template-columns: auto auto;
+    row-gap: 4px;
+  }
+  .tut-chat-plan-intent,
+  .tut-chat-plan-dial {
+    grid-column: 1 / -1;
+  }
+}
+.tut-chat-plan-axis {
+  flex: none;
+  min-width: 26px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+}
+.tut-chat-plan-axis--conceptual {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.tut-chat-plan-axis--procedural {
+  border-color: var(--accent, var(--ink-soft));
+  color: var(--accent, var(--ink-soft));
+}
+.tut-chat-plan-kind {
+  font-weight: 700;
+  color: var(--ink);
+}
+.tut-chat-plan-intent {
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+.tut-chat-plan-dial {
+  font-size: 11px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+/* The worker's questions back to the tutor. Usually absent — when present, this is
+   the reason Approve is disabled, so it must not read as decoration. */
+.tut-chat-plan-asks {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.tut-chat-plan-asks-head {
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.tut-chat-plan-asks ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.tut-chat-plan-amend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tut-chat-plan-amendbox {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.tut-chat-plan-amendbox:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+/* The plan-first toggle, in the input bar beside the trigger it modifies. */
+.tut-chat-planfirst {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tut-chat-planfirst input {
+  margin: 0;
+  cursor: pointer;
+}
+.tut-chat-planfirst:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* QA3-e-2: the interleaved SET consent card (a mix of sub-topics + per-sub-topic
    counts) + the fan-out review group headers + the partial-failure note. */
 .tut-chat-set-picks {

@@ -80,6 +80,7 @@
     "probe:progress": "bun scripts/probe_progress_tree.ts",
     "probe:launcher": "bun scripts/probe_author_launcher.ts",
     "probe:worker": "bun scripts/probe_authoring_worker.ts",
+    "probe:plan": "bun scripts/probe_authoring_plan.ts",
     "probe:set": "bun scripts/probe_authoring_set.ts",
     "probe:upload": "bun scripts/probe_upload_capture.ts",
     "probe:answerphoto": "bun scripts/probe_answerphoto.ts",

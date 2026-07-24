@@ -186,6 +186,91 @@ export const ChatMessage = z.object({
 });
 export type ChatMessage = z.infer<typeof ChatMessage>;
 
+// ───────────── Slice TWOWAY-1: the worker CONVERSATION (two-way handoff) ─────────────
+//
+// Until this slice the master→worker handoff was ONE-WAY and one-shot: the master
+// enqueued five scalars ({board, tutor, chat, subTopic, count}) and the worker
+// silently produced N drafts. The tutor could not see what the worker intended,
+// steer it before it spent the AI, or address it afterwards — every correction was
+// N per-draft revises.
+//
+// Now the worker PLANS first, the plan is gated by the tutor, and the exchange is
+// an ordered CONVERSATION persisted on authoring_worker.messages (the
+// history-in-a-row pattern authoring_chat already uses — one row per authoring
+// EPISODE = (chat, sub_topic), not one row per spawn).
+//
+// The master chat carries a CONDENSED RELAY of each plan as an ordinary assistant
+// turn. That is a one-way DERIVED write, not a synced second conversation: the
+// worker conversation is the source of truth for the worker's reasoning and is
+// never read back out of the master transcript. The relay exists because the
+// master model must be able to converse ABOUT the plan on the next turn.
+
+// One question the worker intends to write, BEFORE it writes it. Deliberately
+// small + prose-y: this is what a tutor reads in three seconds to decide "yes, or
+// not that". `kind` is the conceptual-question-kind picked from the palette;
+// `difficulty` is the dial setting in words (the dial catalogs are prose, not a
+// scale, so a free string is honest — a number here would invent precision).
+export const WorkerPlanItem = z.object({
+  n: z.number().int(), // 1-based position in the intended set
+  axis: z.enum(["conceptual", "procedural", "both"]),
+  kind: z.string(),
+  intent: z.string(), // what this question probes / which misconception it targets
+  difficulty: z.string(),
+});
+export type WorkerPlanItem = z.infer<typeof WorkerPlanItem>;
+
+// The worker's plan for ONE authoring episode. `read` is its read of THIS student
+// on THIS sub-topic (the thing that accumulates across amendments and is the whole
+// point of keeping the exchange a conversation). `questions` is what the worker
+// wants to ask the tutor before drafting — empty is normal and must not be
+// rendered as a prompt for input.
+export const WorkerPlan = z.object({
+  read: z.string(),
+  items: z.array(WorkerPlanItem),
+  questions: z.array(z.string()).default([]),
+});
+export type WorkerPlan = z.infer<typeof WorkerPlan>;
+
+// One turn of the worker conversation. `role` is who spoke — the worker, or the
+// TUTOR (an amendment; the tutor addresses the worker directly through the plan
+// card, so their words enter the worker's own history rather than being
+// re-derived from the master transcript). `kind` says what the turn IS, so the FE
+// and the next prompt can both branch without parsing prose.
+//
+// Append-only. Nothing rewrites a prior turn — an amendment is a new turn, a
+// re-plan is a new turn. That is what makes the two views (relay + drill-in pane)
+// safe to render from one store.
+export const WorkerTurn = z.object({
+  id: z.string(),
+  role: z.enum(["worker", "tutor"]),
+  kind: z.enum(["plan", "amendment", "drafted"]),
+  text: z.string(), // human-legible: the plan prose / the amendment / a draft summary
+  plan: WorkerPlan.nullish(), // the structured payload when kind === 'plan'
+  createdAt: z.string().datetime(),
+  vendorId: z.string().optional(),
+  aiSessionId: z.string().optional(),
+});
+export type WorkerTurn = z.infer<typeof WorkerTurn>;
+
+// The lifecycle of one authoring episode (authoring_worker.status).
+//   planning  — a plan job is in flight (first plan, or a re-plan after an amendment)
+//   planned   — a plan is awaiting the tutor's gate  ← the only state that blocks
+//   drafting  — the tutor approved; a draft job is in flight
+//   drafted   — drafts were produced (the terminal state; ALSO what every pre-slice
+//               row reads as, since those rows are completed spawns)
+//   abandoned — the tutor dismissed the plan without drafting
+//
+// Legacy rows carry the column default 'drafted', which is the truthful reading of
+// a one-shot spawn that already persisted its drafts — so no backfill is needed.
+export const WorkerEpisodeStatus = z.enum([
+  "planning",
+  "planned",
+  "drafting",
+  "drafted",
+  "abandoned",
+]);
+export type WorkerEpisodeStatus = z.infer<typeof WorkerEpisodeStatus>;
+
 // ── Slice ONB-1 — the conversational welcome ──────────────────────────────
 //
 // The ORDER of the beats lives here, not in the FE copy file, so there is one

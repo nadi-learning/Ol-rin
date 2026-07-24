@@ -47,7 +47,7 @@ import {
   startChat,
   type ChatView,
 } from "../src/services/authoring_chat";
-import { authoringQueue, getActiveAuthoringJobId } from "../src/worker/queue";
+import { authoringQueue, getActiveAuthoringJob } from "../src/worker/queue";
 import { redisConnection } from "../src/redis/connection";
 
 type Tx = PgTransaction<any, any, any>;
@@ -144,8 +144,10 @@ async function main() {
   const gchat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "gemini_api", chapterId: fx.chapterId }));
 
   // Turn 1 — discussion (no go-ahead): must NOT author yet (no sentinel → no job).
+  // TWOWAY-1: neither phase may fire on a discussion turn.
   const g1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Where is this student weakest, and what kind of question would target it?" }));
   check("gemini discuss turn: no draft job (author held until go-ahead)", g1.draftJobId === undefined);
+  check("gemini discuss turn: no PLAN job either (TWOWAY-1)", g1.planJobId === undefined);
   check("gemini discuss turn: assistant text non-empty, vendorId=gemini_api", g1.messages.at(-1)!.text.trim().length > 0 && g1.messages.at(-1)!.vendorId === "gemini_api");
   check("gemini discuss turn: no raw [[AUTHOR_NOW]] sentinel leak in shown text", !/\[\[\s*AUTHOR_NOW/i.test(g1.messages.at(-1)!.text));
   soft("gemini discuss reply (first 140ch)", g1.messages.at(-1)!.text.slice(0, 140));
@@ -153,20 +155,44 @@ async function main() {
   const before = await authoredCount();
 
   // Turn 2 — explicit go-ahead → the model emits [[AUTHOR_NOW]] → the resolver
-  // picks the target → sendTurn ENQUEUES a draft JOB (Slice AUTHOR-ASYNC — the
-  // worker runs off the request path) and returns its id as `draftJobId`. One
-  // retry with a more explicit instruction (AI variance; the FIRM claim is "an
-  // explicit go-ahead enqueues a draft", not "on the very first phrasing").
+  // picks the target → sendTurn ENQUEUES a job off the request path (Slice
+  // AUTHOR-ASYNC). One retry with a more explicit instruction (AI variance; the FIRM
+  // claim is "an explicit go-ahead enqueues", not "on the very first phrasing").
+  //
+  // 🔑 TWOWAY-1 CHANGED WHAT A GO-AHEAD PRODUCES. It used to enqueue a DRAFT
+  // (`draftJobId`); plan-first is now the default, so a bare go-ahead enqueues a
+  // PLAN (`planJobId`) and nothing is written until the tutor gates it. Asserting
+  // `draftJobId` here would be asserting behaviour the slice deliberately removed —
+  // so this leg now pins the new default, and the leg below pins the SKIP, which is
+  // where the old behaviour still lives.
   let g2: ChatView = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Yes — go ahead and author 3 questions on Acceleration (target 1) right now." }));
-  if (!g2.draftJobId) {
+  if (!g2.planJobId) {
     g2 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: gchat.chatId, text: "Go ahead now — author 3 questions on Acceleration (target 1). This is the go-ahead." }));
   }
 
-  check("gemini go-ahead: sentinel fired + resolver → sendTurn ENQUEUED a draft job (async)", !!g2.draftJobId);
+  check("gemini go-ahead: sentinel fired + resolver → sendTurn ENQUEUED a PLAN job (TWOWAY-1 default)", !!g2.planJobId);
+  check("gemini go-ahead: NO draft job — nothing is written before the gate", g2.draftJobId === undefined);
   // The resume handle finds the just-enqueued job for this chat (the FE's durable
-  // "Drafting…" loader restore path). Keyed by (board, chat).
-  const activeJob = await getActiveAuthoringJobId(P.id, gchat.chatId);
-  check("author: getActiveAuthoringJobId finds the enqueued job for this chat", !!g2.draftJobId && activeJob === g2.draftJobId);
+  // loader restore path) AND reports its phase. Keyed by (board, chat).
+  const activeJob = await getActiveAuthoringJob(P.id, gchat.chatId);
+  check("author: getActiveAuthoringJob finds the enqueued job for this chat", !!g2.planJobId && activeJob?.jobId === g2.planJobId);
+  check("author: resume handle reports phase='plan' (loader says Planning, not Drafting)", activeJob?.phase === "plan");
+
+  // TWOWAY-1 — the SKIP. `planFirst: false` must reproduce the pre-slice behaviour
+  // exactly: a go-ahead enqueues a DRAFT and no plan. Proven on its own chat so the
+  // gate chat above stays untouched.
+  try {
+    const skipChat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "gemini_api", chapterId: fx.chapterId }));
+    let s1: ChatView = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: skipChat.chatId, text: "Go ahead and author 2 questions on Acceleration (target 1) right now.", planFirst: false }));
+    if (!s1.draftJobId) {
+      s1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: skipChat.chatId, text: "Author 2 on target 1 now. This is the go-ahead.", planFirst: false }));
+    }
+    check("TWOWAY-1 skip (planFirst:false): go-ahead enqueues a DRAFT job", !!s1.draftJobId);
+    check("TWOWAY-1 skip: no plan job (the gate is genuinely bypassed)", s1.planJobId === undefined);
+  } catch (e) {
+    check("TWOWAY-1 skip path smoke", false);
+    console.error("    skip-path error:", (e as Error).message);
+  }
 
   // Focus pinned on the request path (resolveTargetAndEnqueue) → the chat now
   // points at the resolved target, resolved BY NUMBER inside the chapter allowlist.
@@ -208,11 +234,12 @@ async function main() {
   // path is covered by probe:authoringchat's direct authorFromChat call.)
   try {
     const cchat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "claude_cli", chapterId: fx.chapterId }));
+    // TWOWAY-1: same change as the Gemini path — a bare go-ahead enqueues a PLAN.
     let c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Go ahead and author 3 questions on sub-topic 1 now." }));
-    if (!c1.draftJobId) {
+    if (!c1.planJobId) {
       c1 = await rows(P.id, (tx) => sendTurn(tx, { tutorUserId: tut.id, chatId: cchat.chatId, text: "Author 3 on sub-topic 1 now — emit the author_questions block." }));
     }
-    check("claude go-ahead: marker parsed → ENQUEUED a draft job (≤2 tries)", !!c1.draftJobId);
+    check("claude go-ahead: marker parsed → ENQUEUED a PLAN job (≤2 tries, TWOWAY-1 default)", !!c1.planJobId);
     check("claude: assistant text non-empty, vendorId=claude_cli, no raw marker leak", c1.messages.at(-1)!.text.trim().length > 0 && c1.messages.at(-1)!.vendorId === "claude_cli" && !/```\s*author_questions/.test(c1.messages.at(-1)!.text));
   } catch (e) {
     check("claude path smoke", false);

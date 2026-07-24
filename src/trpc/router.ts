@@ -204,13 +204,19 @@ import {
   ProposeTargetError,
   sendTurn,
   startChat,
+  // Slice TWOWAY-1 — the plan gate.
+  amendAuthoringPlan,
+  approveAuthoringPlan,
+  AuthoringPlanNotFoundError,
+  dismissAuthoringPlan,
+  PlanHasNoItemsError,
 } from "../services/authoring_chat";
 import {
   enqueueAuthoring,
   enqueueExtractTopics,
   enqueueImageGeneration,
   enqueueRevise,
-  getActiveAuthoringJobId,
+  getActiveAuthoringJob,
   getActiveImageJobId,
   getActiveReviseJobId,
   getAuthoringJobStatus,
@@ -1751,6 +1757,10 @@ export const appRouter = router({
         z.object({
           chatId: z.string().uuid(),
           text: z.string().min(1).max(8000),
+          // Slice TWOWAY-1: when this turn's go-ahead fires an author, plan first
+          // (default) or draft straight through. Defaults TRUE on the SERVICE side
+          // too, so an old client that never sends it still gets the gate.
+          planFirst: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -1759,6 +1769,7 @@ export const appRouter = router({
             tutorUserId: ctx.membership.userId,
             chatId: input.chatId,
             text: input.text,
+            ...(input.planFirst === undefined ? {} : { planFirst: input.planFirst }),
           });
         } catch (e) {
           if (e instanceof AuthoringChatNotFoundError) {
@@ -1908,12 +1919,18 @@ export const appRouter = router({
     // polls getAuthoringJobStatus for the review-form payload. The target is
     // GUARDED here before enqueue (assertAuthorTarget — a bogus/cross-scope
     // sub_topic or non-owned chat 404s the click, not a silently-failing job).
+    // Slice TWOWAY-1: this now enqueues the PLAN phase by default — the tutor sees
+    // what the worker intends before any question is written. `planFirst: false` is
+    // the explicit skip and keeps the pre-slice behaviour byte-for-byte. The reply
+    // carries the phase so the FE knows whether a gate card or a review form is
+    // coming back.
     authorFromChat: tutorProcedure
       .input(
         z.object({
           chatId: z.string().uuid(),
           subTopicId: z.string().uuid(),
           count: z.number().int().min(1).max(8),
+          planFirst: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -1932,14 +1949,127 @@ export const appRouter = router({
           }
           throw e;
         }
+        const phase = input.planFirst === false ? "draft" : "plan";
         const jobId = await enqueueAuthoring({
           boardId: ctx.board.id,
           tutorUserId: ctx.membership.userId,
           chatId: input.chatId,
           subTopicId: input.subTopicId,
           count: input.count,
+          phase,
         });
-        return { jobId };
+        return { jobId, phase };
+      }),
+
+    // ── Slice TWOWAY-1: the plan GATE (approve / amend / dismiss) ──
+    // All three take the episode id and are guarded by gatedEpisode: owned chat +
+    // episode on that chat + status 'planned'. The status check is what makes them
+    // safe to double-click — a replayed Approve finds nothing awaiting a gate and
+    // 404s instead of drafting the same plan twice.
+
+    // The tutor approved → enqueue the DRAFT phase against the approved episode.
+    // The count comes from the PLAN's item count, not the client: the tutor approved
+    // N specific items, so drafting a client-supplied N could draft what was never
+    // approved. A different number is an amendment.
+    approveAuthoringPlan: tutorProcedure
+      .input(
+        z.object({ chatId: z.string().uuid(), workerId: z.string().uuid() }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        let approved: Awaited<ReturnType<typeof approveAuthoringPlan>>;
+        try {
+          approved = await approveAuthoringPlan(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            chatId: input.chatId,
+            workerId: input.workerId,
+          });
+        } catch (e) {
+          if (
+            e instanceof AuthoringChatNotFoundError ||
+            e instanceof AuthoringPlanNotFoundError
+          ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: (e as { code: string }).code });
+          }
+          if (e instanceof PlanHasNoItemsError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+        const jobId = await enqueueAuthoring({
+          boardId: ctx.board.id,
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+          subTopicId: approved.subTopicId,
+          count: approved.count,
+          phase: "draft",
+          workerId: input.workerId,
+        });
+        return { jobId, phase: "draft" as const, count: approved.count };
+      }),
+
+    // The tutor amended → the note lands in the worker's OWN history (and mirrors
+    // into the master transcript), then the worker RE-plans on the same episode.
+    amendAuthoringPlan: tutorProcedure
+      .input(
+        z.object({
+          chatId: z.string().uuid(),
+          workerId: z.string().uuid(),
+          note: z.string().min(1).max(2000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        let amended: Awaited<ReturnType<typeof amendAuthoringPlan>>;
+        try {
+          amended = await amendAuthoringPlan(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            chatId: input.chatId,
+            workerId: input.workerId,
+            note: input.note,
+          });
+        } catch (e) {
+          if (
+            e instanceof AuthoringChatNotFoundError ||
+            e instanceof AuthoringPlanNotFoundError
+          ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: (e as { code: string }).code });
+          }
+          throw e;
+        }
+        const jobId = await enqueueAuthoring({
+          boardId: ctx.board.id,
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+          subTopicId: amended.subTopicId,
+          count: amended.count,
+          phase: "plan",
+          workerId: input.workerId,
+        });
+        return { jobId, phase: "plan" as const };
+      }),
+
+    // The tutor dismissed the plan without drafting — the episode is closed so it
+    // can't return as a live gate. No job is enqueued.
+    dismissAuthoringPlan: tutorProcedure
+      .input(
+        z.object({ chatId: z.string().uuid(), workerId: z.string().uuid() }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await dismissAuthoringPlan(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            chatId: input.chatId,
+            workerId: input.workerId,
+          });
+          return { ok: true as const };
+        } catch (e) {
+          if (
+            e instanceof AuthoringChatNotFoundError ||
+            e instanceof AuthoringPlanNotFoundError
+          ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: (e as { code: string }).code });
+          }
+          throw e;
+        }
       }),
 
     // Poll state for one authoring job (waiting/active/completed/failed/unknown).
@@ -1951,14 +2081,14 @@ export const appRouter = router({
       .input(z.object({ jobId: z.string().max(200) }))
       .query(({ ctx, input }) => getAuthoringJobStatus(input.jobId, ctx.board.id)),
 
-    // Resume handle: is an author still drafting for this chat? Lets the FE restore
-    // the "Drafting…" loader after a page refresh / close-reopen. Keyed by chat
-    // (the drafts don't exist yet). { jobId } | null.
+    // Resume handle: is authoring work still running for this chat? Lets the FE
+    // restore its loader after a page refresh / close-reopen. Keyed by chat (the
+    // output doesn't exist yet). Slice TWOWAY-1: carries the PHASE, so the resumed
+    // loader says "Planning…" vs "Drafting…" and the poll knows which result shape
+    // to expect. { jobId, phase } | null.
     getActiveAuthoringJob: tutorProcedure
       .input(z.object({ chatId: z.string().uuid() }))
-      .query(async ({ ctx, input }) => ({
-        jobId: await getActiveAuthoringJobId(ctx.board.id, input.chatId),
-      })),
+      .query(({ ctx, input }) => getActiveAuthoringJob(ctx.board.id, input.chatId)),
 
     // ── Slice FIG-AUTH: the DRAFT lifecycle (D-FIG-1/2/5) ──
     // Chat authoring PERSISTS drafts (authorFromChat / the tool) as status='draft'

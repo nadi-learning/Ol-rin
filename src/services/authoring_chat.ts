@@ -31,6 +31,7 @@ import { z } from "zod";
 import { Type } from "@google/genai";
 import {
   authoringChat,
+  authoringWorker,
   chapter,
   learningObjective,
   observation,
@@ -38,7 +39,12 @@ import {
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
-import { ChatMessage, type VendorChoice } from "@b2c/kernel/contracts";
+import {
+  ChatMessage,
+  WorkerTurn,
+  type VendorChoice,
+  type WorkerPlan,
+} from "@b2c/kernel/contracts";
 import { complete, extractJsonObject } from "./ai_client";
 import type { VendorId } from "./ai/types";
 import { geminiJson } from "./ai/gemini";
@@ -55,13 +61,15 @@ import {
   claudeSystemFor,
   loadMethodPack,
   methodPackContextFor,
+  planAuthoringWork,
+  renderPlanText,
   spawnAuthoringWorker,
 } from "./authoring_worker";
 import { SubTopicNotFoundError } from "./assessment";
 import { assertTutorsStudent, getStudentMastery } from "./tutor";
 import { jsonlExists } from "./cli_session";
 import { withBoard } from "../db/with-board";
-import { enqueueAuthoring } from "../worker/queue";
+import { enqueueAuthoring, type AuthoringPhase } from "../worker/queue";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -79,6 +87,30 @@ export class AuthoringChatNotFoundError extends Error {
   constructor(chatId: string) {
     super(`authoring chat ${chatId} not found for this tutor`);
     this.name = "AuthoringChatNotFoundError";
+  }
+}
+
+// Slice TWOWAY-1 — the gate's guard failure. Covers all of: no such episode, an
+// episode on someone else's chat, and an episode that is not awaiting a gate
+// (already drafted / dismissed / a re-plan in flight). Collapsed to ONE code on
+// purpose: the FE's only sane response to any of them is "this plan is no longer
+// live, reload the chat", and distinguishing them would leak episode existence.
+export class AuthoringPlanNotFoundError extends Error {
+  readonly code = "AUTHORING_PLAN_NOT_FOUND";
+  constructor(workerId: string) {
+    super(`authoring plan ${workerId} is not awaiting a gate for this tutor`);
+    this.name = "AuthoringPlanNotFoundError";
+  }
+}
+
+// Approving a plan that has NO items would draft questions nobody planned — the
+// gate would be theatre. It happens when the worker replied with questions for the
+// tutor instead of a plan, in which case the only real move is to amend.
+export class PlanHasNoItemsError extends Error {
+  readonly code = "PLAN_HAS_NO_ITEMS";
+  constructor() {
+    super("this plan has no items to draft — answer the worker's question instead");
+    this.name = "PlanHasNoItemsError";
   }
 }
 
@@ -142,13 +174,21 @@ Your job in this chat is to help the tutor decide WHAT questions to author for t
 // authors IN-CHAT by emitting a fenced `author_questions` JSON marker on a clear
 // go-ahead; sendTurn parses it and runs the SAME spawn→persist path as the Gemini
 // tool. Parity with Gemini, via text instead of a structured function call.
+//
+// ⚠️ Slice TWOWAY-1 edited both vendors' HOW-AUTHORING-HAPPENS tails (a go-ahead now
+// hands off to a worker that PLANS first, so the model must stop promising finished
+// questions). Editing a system prompt CHANGES the resume fingerprint, so the first
+// turn of every pre-existing Claude thread falls back to stitched history instead of
+// resuming. That is the correct behaviour, not a regression — resuming a session
+// built under a different system prompt is the context-corruption hazard — and it
+// self-heals from the next turn.
 const CHAT_SYSTEM_CLAUDE = `${CHAT_SYSTEM_BASE}
 
 HOW AUTHORING HAPPENS (so you author correctly): when you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), author by emitting EXACTLY ONE fenced code block whose info string is \`author_questions\` and whose body is a JSON object with two integer fields — \`subTopicNumber\` (the 1-based number of the chosen sub-topic from the AUTHORING TARGETS list in the message) and \`count\` (how many questions, 1–8). Exactly like this, the JSON alone inside the fence:
 \`\`\`author_questions
 {"subTopicNumber": 2, "count": 3}
 \`\`\`
-You do NOT write the questions yourself — emitting that block spawns a specialist authoring worker that drafts them to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them. Emit the block ONLY after a clear go-ahead — until then, keep discussing and do NOT emit it. You may write one short natural sentence before the block (e.g. "On it — drafting 3 now."). (A "Suggest what to work on" button also exists as an alternative, but you don't need it.)`;
+You do NOT write the questions yourself — emitting that block hands off to a specialist authoring worker that works to the full craft bar. By default that worker first comes back with a PLAN (its read of the student + one line per question it intends to write) which the tutor approves or amends before anything is written; if the tutor has turned that off, it drafts immediately. Either way the finished drafts appear in a review form where the tutor edits and saves them. Emit the block ONLY after a clear go-ahead — until then, keep discussing and do NOT emit it. You may write one short natural sentence before the block, and keep it NEUTRAL about what happens next (e.g. "On it — handing this to the author now." / "On it — let me work out how I'd approach these."). Do NOT promise finished questions ("drafting 3 now") — a plan may be what comes back. (A "Suggest what to work on" button also exists as an alternative, but you don't need it.)`;
 
 // Gemini path — signals an author intent with the [[AUTHOR_NOW]] sentinel (Slice
 // AUTH-fix B; replaces the native author_questions function-call that 400'd on
@@ -157,7 +197,7 @@ You do NOT write the questions yourself — emitting that block spawns a special
 // that). The "Suggest what to work on" button also remains available.
 const CHAT_SYSTEM_GEMINI = `${CHAT_SYSTEM_BASE}
 
-HOW AUTHORING HAPPENS (so you guide it correctly): you do NOT write the questions yourself, and you have NO tool or function to call. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), reply with ONE short natural sentence confirming you're drafting (e.g. "On it — drafting 3 on the discriminant now.") and put the exact token [[AUTHOR_NOW]] on its OWN line at the END of that reply. That token hands off to a specialist authoring worker that drafts the questions to the full craft bar; the drafts then appear in a review form where the tutor edits and saves them (nothing goes live to a student without that). Emit [[AUTHOR_NOW]] ONLY after a clear go-ahead — until then, keep discussing and NEVER emit it. Do not explain the token, quote it, wrap it in backticks, or emit any pseudocode / tool_code / print(...) — just place [[AUTHOR_NOW]] on its own line when it's time to author.`;
+HOW AUTHORING HAPPENS (so you guide it correctly): you do NOT write the questions yourself, and you have NO tool or function to call. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), reply with ONE short natural sentence handing off (e.g. "On it — handing this to the author now." / "On it — let me work out how I'd approach these.") and put the exact token [[AUTHOR_NOW]] on its OWN line at the END of that reply. That token hands off to a specialist authoring worker that works to the full craft bar. By default that worker first comes back with a PLAN (its read of the student + one line per question it intends to write) which the tutor approves or amends before anything is written; if the tutor has turned that off, it drafts immediately. Either way the finished drafts appear in a review form where the tutor edits and saves them (nothing goes live to a student without that). Keep your handoff sentence NEUTRAL about what comes next — do NOT promise finished questions ("drafting 3 now"), because a plan may be what comes back. Emit [[AUTHOR_NOW]] ONLY after a clear go-ahead — until then, keep discussing and NEVER emit it. Do not explain the token, quote it, wrap it in backticks, or emit any pseudocode / tool_code / print(...) — just place [[AUTHOR_NOW]] on its own line when it's time to author.`;
 
 function chatSystemFor(vendor: VendorChoice): string {
   return vendor === "gemini_api" ? CHAT_SYSTEM_GEMINI : CHAT_SYSTEM_CLAUDE;
@@ -499,6 +539,15 @@ export type ChatView = {
   // remount) re-hydrates the review form — no resume path can silently skip the
   // restore. Absent on start/turn responses (no review in progress there).
   pendingDrafts?: Awaited<ReturnType<typeof listDrafts>>;
+  // Slice TWOWAY-1: the worker's plan awaiting this tutor's gate, if any. Same
+  // discipline as pendingDrafts — carried on getChat so EVERY resume path restores
+  // the gate card identically, and the card renders from THIS rather than from the
+  // relay turn in the transcript (an already-answered gate must not re-open).
+  pendingPlan?: PendingPlanView | null;
+  // Slice TWOWAY-1: set on a sendTurn whose go-ahead started a PLAN (plan-first is
+  // the default). Mutually exclusive with draftJobId — the FE shows "Planning…"
+  // rather than "Drafting…" and opens the gate card when the job completes.
+  planJobId?: string;
 };
 
 /** Load a chat the caller owns, or throw NOT_FOUND (no existence leak). RLS
@@ -610,6 +659,9 @@ export async function getChat(
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
   });
+  // Slice TWOWAY-1: the gate, if one is open. Read on the same call as the drafts so
+  // a single getChat restores the whole in-progress state of the chat.
+  const pendingPlan = await pendingPlanFor(tx, row.id);
   return {
     chatId: row.id,
     studentId: row.studentId,
@@ -620,6 +672,7 @@ export async function getChat(
     vendor: row.vendor as VendorChoice,
     messages: parseMessages(row.messages),
     pendingDrafts,
+    pendingPlan,
   };
 }
 
@@ -697,8 +750,10 @@ async function resolveTargetAndEnqueue(
     subs: SubRef[];
     subTopicNumber: number;
     count: number;
+    /** Slice TWOWAY-1: plan first (the default) or draft straight through (the skip). */
+    planFirst: boolean;
   },
-): Promise<{ chosen: SubRef; count: number; jobId: string }> {
+): Promise<{ chosen: SubRef; count: number; jobId: string; phase: AuthoringPhase }> {
   const idx = Math.min(Math.max(a.subTopicNumber, 1), a.subs.length) - 1;
   const chosen = a.subs[idx]!;
   const count = Math.min(Math.max(a.count, 1), 8);
@@ -711,29 +766,52 @@ async function resolveTargetAndEnqueue(
     .set({ subTopicId: chosen.subTopicId, updatedAt: new Date() })
     .where(eq(authoringChat.id, a.row.id));
 
-  // Enqueue the (slow, high-variance) worker draft OFF the request path. The delay
-  // in enqueueAuthoring lets THIS tx (which persists the go-ahead turn back in
-  // sendTurn) COMMIT before the worker's authorFromChat reads the chat history for
-  // its brief. The worker resolves the brief from the chat itself — nothing else
-  // to thread through the job.
+  // Enqueue OFF the request path. The delay in enqueueAuthoring lets THIS tx (which
+  // persists the go-ahead turn back in sendTurn) COMMIT before the worker reads the
+  // chat history for its brief. The worker resolves the brief from the chat itself —
+  // nothing else to thread through the job.
+  //
+  // Slice TWOWAY-1: a go-ahead now starts the PLAN phase by default. `planFirst:
+  // false` is the tutor's explicit skip and keeps the pre-slice behaviour exactly —
+  // straight to drafting, no episode, no gate.
+  const phase: AuthoringPhase = a.planFirst ? "plan" : "draft";
   const jobId = await enqueueAuthoring({
     boardId: a.row.boardId,
     tutorUserId: a.tutorUserId,
     chatId: a.row.id,
     subTopicId: chosen.subTopicId,
     count,
+    phase,
   });
-  return { chosen, count, jobId };
+  return { chosen, count, jobId, phase };
 }
 
-/** Build the ChatView returned when an in-chat author fired: the drafts are being
- *  authored ASYNC (jobId), so no `draft` payload yet — the FE polls for it. */
+/** The canned wrap-up used only when stripping the machine directive left the
+ *  model's own prose empty. Phase-accurate on purpose: telling a tutor "drafting 3
+ *  questions" when a PLAN is what is coming back would make the gate card look like
+ *  a failure to draft. */
+function fallbackWrapText(
+  phase: AuthoringPhase,
+  count: number,
+  subTopicName: string,
+): string {
+  const n = `${count} question${count === 1 ? "" : "s"}`;
+  return phase === "plan"
+    ? `On it — working out how I'd approach ${n} for ${subTopicName}. I'll show you the plan here before I write anything.`
+    : `On it — drafting ${n} for ${subTopicName} now. They'll appear in the review form below when they're ready.`;
+}
+
+/** Build the ChatView returned when an in-chat author fired: the work runs ASYNC
+ *  (jobId), so no `draft` payload yet — the FE polls for it. Slice TWOWAY-1: the
+ *  job id lands on `planJobId` or `draftJobId` per phase, so the FE shows the right
+ *  loader and knows whether to expect a gate card or a review form. */
 function buildDraftingView(
   row: Awaited<ReturnType<typeof ownedChat>>,
   vendor: VendorChoice,
   chosen: SubRef,
   messages: ChatMessage[],
   jobId: string,
+  phase: AuthoringPhase,
 ): ChatView {
   return {
     chatId: row.id,
@@ -744,7 +822,7 @@ function buildDraftingView(
     subTopicId: chosen.subTopicId,
     vendor,
     messages,
-    draftJobId: jobId,
+    ...(phase === "plan" ? { planJobId: jobId } : { draftJobId: jobId }),
   };
 }
 
@@ -761,6 +839,11 @@ export async function sendTurn(
     chatId: string;
     text: string;
     streamKey?: string;
+    /** Slice TWOWAY-1: when a go-ahead fires, plan first (default) or draft straight
+     *  through. Defaults to TRUE so the gate is the behaviour you get unless the
+     *  tutor explicitly skipped it — a missing flag must never silently mean "skip
+     *  the review the founder asked for". */
+    planFirst?: boolean;
   },
 ): Promise<ChatView> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
@@ -769,6 +852,8 @@ export async function sendTurn(
 
   const vendor = row.vendor as VendorChoice;
   const history = parseMessages(row.messages);
+  // TWOWAY-1: default TRUE — the gate is what you get unless the tutor skipped it.
+  const planFirst = args.planFirst !== false;
 
   const userMsg: ChatMessage = {
     id: randomUUID(),
@@ -916,21 +1001,23 @@ export async function sendTurn(
       });
       // Slice AUTHOR-ASYNC: resolve the target + ENQUEUE the draft off the request
       // path (the worker was the 524s inline hang). The FE polls the job.
-      const { chosen, count, jobId } = await resolveTargetAndEnqueue(tx, {
+      const { chosen, count, jobId, phase } = await resolveTargetAndEnqueue(tx, {
         row,
         tutorUserId: args.tutorUserId,
         subs,
         subTopicNumber: intent.choice,
         count: intent.count,
+        planFirst,
       });
 
       // Wrap-up = the model's own confirming prose with the sentinel stripped (no
       // follow-up call needed — the reply already announced the drafting); fall
-      // back to a canned line if stripping left nothing. The drafts are authored
-      // ASYNC now, so the fallback speaks to that ("drafting… appears below").
+      // back to a canned line if stripping left nothing. The work runs ASYNC, so the
+      // fallback speaks to that — and to the PHASE, so the tutor isn't told "drafting"
+      // when what is coming back is a plan to approve.
       const wrapText =
         stripAuthorSentinel(sanitiseAssistantText(ai.text)) ||
-        `On it — drafting ${count} question${count === 1 ? "" : "s"} for ${chosen.subTopicName} now. They'll appear in the review form below when they're ready.`;
+        fallbackWrapText(phase, count, chosen.subTopicName);
 
       const assistantMsg: ChatMessage = {
         id: randomUUID(),
@@ -947,7 +1034,7 @@ export async function sendTurn(
         .set({ messages, updatedAt: new Date() })
         .where(eq(authoringChat.id, row.id));
 
-      return buildDraftingView(row, vendor, chosen, messages, jobId);
+      return buildDraftingView(row, vendor, chosen, messages, jobId, phase);
     } catch (err) {
       // Resolve/author failed (resolver bad JSON, worker error, …) → degrade to a
       // normal reply. The tutor sees the confirming text and can re-ask or use the
@@ -969,20 +1056,20 @@ export async function sendTurn(
     if (marker) {
       // Slice AUTHOR-ASYNC: same as the Gemini path — resolve + ENQUEUE off the
       // request path (the worker draft was the inline hang), the FE polls the job.
-      const { chosen, count, jobId } = await resolveTargetAndEnqueue(tx, {
+      const { chosen, count, jobId, phase } = await resolveTargetAndEnqueue(tx, {
         row,
         tutorUserId: args.tutorUserId,
         subs,
         subTopicNumber: marker.subTopicNumber,
         count: marker.count,
+        planFirst,
       });
 
       // Wrap-up = Claude's own prose with the directive block removed (no follow-up
       // call — Claude has no tool schema to hand a result back to); fall back to a
-      // canned line if stripping left nothing. Drafts are authored ASYNC now.
+      // phase-accurate canned line if stripping left nothing.
       const wrapText =
-        stripAuthorMarker(ai.text) ||
-        `On it — drafting ${count} question${count === 1 ? "" : "s"} for ${chosen.subTopicName} now. They'll appear in the review form below when they're ready.`;
+        stripAuthorMarker(ai.text) || fallbackWrapText(phase, count, chosen.subTopicName);
 
       const assistantMsg: ChatMessage = {
         id: randomUUID(),
@@ -999,7 +1086,7 @@ export async function sendTurn(
         .set({ messages, updatedAt: new Date() })
         .where(eq(authoringChat.id, row.id));
 
-      return buildDraftingView(row, vendor, chosen, messages, jobId);
+      return buildDraftingView(row, vendor, chosen, messages, jobId, phase);
     }
   }
 
@@ -1092,6 +1179,9 @@ export async function authorFromChat(
     chatId: string;
     subTopicId: string;
     count: number;
+    /** Slice TWOWAY-1: the planned episode the tutor approved. Absent on the
+     *  plan-skip path and the interleaved fan-out, which stay one-shot. */
+    workerId?: string;
   },
 ): Promise<AuthorFromChatResult> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
@@ -1141,6 +1231,9 @@ export async function authorFromChat(
     vendor: row.vendor as VendorChoice,
     count: args.count,
     brief,
+    // TWOWAY-1: when the tutor approved a plan, the draft appends to that episode
+    // and is told to write the approved items (rather than re-deciding them).
+    ...(args.workerId ? { workerRowId: args.workerId } : {}),
   });
 
   // FIG-AUTH (D-FIG-5): persist as draft rows (ids for render/preview); not live.
@@ -1161,6 +1254,318 @@ export async function authorFromChat(
     nextOrdinal,
     drafts: persisted,
   };
+}
+
+// ───────────────────── Slice TWOWAY-1: the plan phase + the gate ─────────────────────
+
+export type AuthoringPlanResult = {
+  phase: "plan";
+  chatId: string;
+  studentId: string;
+  workerId: string;
+  subTopicId: string;
+  subTopicName: string;
+  topicName: string;
+  chapterName: string;
+  plan: WorkerPlan;
+};
+
+/** Resolve + scope-guard a sub_topic against a chat, and pin it as the chat's
+ *  focus. Shared by the plan phase and authorFromChat so the two can never
+ *  disagree about what is in scope. */
+async function resolveScopedSubTopic(
+  tx: Tx,
+  row: Awaited<ReturnType<typeof ownedChat>>,
+  subTopicId: string,
+) {
+  const [st] = await tx
+    .select({
+      id: subTopic.id,
+      name: subTopic.name,
+      topicName: topic.name,
+      chapterId: chapter.id,
+      chapterName: chapter.name,
+    })
+    .from(subTopic)
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .where(eq(subTopic.id, subTopicId));
+  if (!st) throw new SubTopicNotFoundError(subTopicId);
+  const scopeChapterIds = chatChapterIds(row);
+  if (scopeChapterIds.length > 0 && !scopeChapterIds.includes(st.chapterId)) {
+    throw new SubTopicNotFoundError(subTopicId);
+  }
+  await tx
+    .update(authoringChat)
+    .set({ subTopicId, updatedAt: new Date() })
+    .where(eq(authoringChat.id, row.id));
+  return st;
+}
+
+/**
+ * The PLAN job's body (Slice TWOWAY-1). Runs IN THE WORKER, off the request path —
+ * a plan is a real AI call and belongs behind the same queue the draft does.
+ *
+ * Two writes, both in this tx, both append-only:
+ *  1. the worker EPISODE gets the plan turn (planAuthoringWork), status 'planned';
+ *  2. the MASTER transcript gets a condensed RELAY of the plan as an assistant turn.
+ *
+ * (2) is a one-way DERIVED write, not a synced copy — nothing ever reads the worker
+ * conversation back out of the master transcript. It exists because the master model
+ * has to be able to talk about the plan on the next turn ("make them harder" is
+ * meaningless if the master can't see what "them" is).
+ *
+ * The relay turn deliberately carries NO aiSessionId. lastResumableSessionId stops
+ * at the newest assistant turn, so a relay with a borrowed session id would resume a
+ * vendor session whose own context never contained the plan — the exact
+ * resume-across-a-context-change corruption we avoid elsewhere. With no handle the
+ * next master turn falls back to STITCHED, which carries the plan text in the
+ * transcript. Cost: one stitched turn. It self-heals — the next real assistant turn
+ * captures a fresh handle.
+ */
+export async function planFromChat(
+  tx: Tx,
+  args: {
+    tutorUserId: string;
+    chatId: string;
+    subTopicId: string;
+    count: number;
+    /** An existing episode to re-plan (an amendment); absent = a first plan. */
+    workerId?: string;
+  },
+): Promise<AuthoringPlanResult> {
+  const row = await ownedChat(tx, args.tutorUserId, args.chatId);
+  const st = await resolveScopedSubTopic(tx, row, args.subTopicId);
+  const history = parseMessages(row.messages);
+
+  // Same brief the draft phase uses — the master conversation flattened.
+  const brief = history
+    .map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`)
+    .join("\n\n");
+
+  const { workerId, plan } = await planAuthoringWork(tx, {
+    boardId: row.boardId,
+    chatId: row.id,
+    subTopicId: args.subTopicId,
+    vendor: row.vendor as VendorChoice,
+    count: args.count,
+    brief,
+    ...(args.workerId ? { workerRowId: args.workerId } : {}),
+  });
+
+  // The relay. Re-read the chat inside this tx: the plan call took minutes, and the
+  // tutor may have sent further turns in the meantime — appending to the stale
+  // `history` snapshot would silently delete them.
+  const [fresh] = await tx
+    .select({ messages: authoringChat.messages })
+    .from(authoringChat)
+    .where(eq(authoringChat.id, row.id));
+  const relay: ChatMessage = {
+    id: randomUUID(),
+    role: "assistant",
+    text: `Here's my plan for **${st.name}** before I write anything:\n\n${renderPlanText(plan)}`,
+    createdAt: new Date().toISOString(),
+    vendorId: row.vendor,
+  };
+  await tx
+    .update(authoringChat)
+    .set({
+      messages: [...parseMessages(fresh?.messages ?? row.messages), relay],
+      updatedAt: new Date(),
+    })
+    .where(eq(authoringChat.id, row.id));
+
+  return {
+    phase: "plan",
+    chatId: row.id,
+    studentId: row.studentId,
+    workerId,
+    subTopicId: st.id,
+    subTopicName: st.name,
+    topicName: st.topicName,
+    chapterName: st.chapterName,
+    plan,
+  };
+}
+
+/** The plan awaiting a gate on this chat, or null. Mirrors `pendingDrafts`: the
+ *  gate card is rendered from THIS, never from the relay turn in the transcript, so
+ *  every resume path (refresh, history picker, remount) restores it identically and
+ *  a relay whose gate was already answered can't re-open as a live card. */
+export type PendingPlanView = {
+  workerId: string;
+  subTopicId: string;
+  subTopicName: string;
+  topicName: string;
+  chapterName: string;
+  plan: WorkerPlan;
+  createdAt: string;
+};
+
+async function pendingPlanFor(
+  tx: Tx,
+  chatId: string,
+): Promise<PendingPlanView | null> {
+  const [row] = await tx
+    .select({
+      id: authoringWorker.id,
+      subTopicId: authoringWorker.subTopicId,
+      messages: authoringWorker.messages,
+      subTopicName: subTopic.name,
+      topicName: topic.name,
+      chapterName: chapter.name,
+    })
+    .from(authoringWorker)
+    .innerJoin(subTopic, eq(subTopic.id, authoringWorker.subTopicId))
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .where(
+      and(
+        eq(authoringWorker.chatId, chatId),
+        eq(authoringWorker.status, "planned"),
+      ),
+    )
+    .orderBy(desc(authoringWorker.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const turns = parseWorkerTurns(row.messages);
+  const latest = [...turns].reverse().find((t) => t.kind === "plan");
+  if (!latest?.plan) return null;
+  return {
+    workerId: row.id,
+    subTopicId: row.subTopicId,
+    subTopicName: row.subTopicName,
+    topicName: row.topicName,
+    chapterName: row.chapterName,
+    plan: latest.plan,
+    createdAt: latest.createdAt,
+  };
+}
+
+/** Same drop-don't-throw tolerance as the worker-side parse: a malformed turn must
+ *  not make an episode permanently unopenable. */
+function parseWorkerTurns(raw: unknown): WorkerTurn[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out: WorkerTurn[] = [];
+  for (const t of arr) {
+    const parsed = WorkerTurn.safeParse(t);
+    if (parsed.success) out.push(parsed.data);
+  }
+  return out;
+}
+
+/** Load an episode that is genuinely awaiting this tutor's gate, or throw. The
+ *  status check is the load-bearing half: without it an Approve could be replayed
+ *  (double-draft) or fire against an episode a re-plan is already rewriting. */
+async function gatedEpisode(
+  tx: Tx,
+  args: { tutorUserId: string; chatId: string; workerId: string },
+) {
+  const row = await ownedChat(tx, args.tutorUserId, args.chatId);
+  const [ep] = await tx
+    .select()
+    .from(authoringWorker)
+    .where(
+      and(
+        eq(authoringWorker.id, args.workerId),
+        eq(authoringWorker.chatId, args.chatId),
+        eq(authoringWorker.status, "planned"),
+      ),
+    )
+    .limit(1);
+  if (!ep) throw new AuthoringPlanNotFoundError(args.workerId);
+  const turns = parseWorkerTurns(ep.messages);
+  const plan = [...turns].reverse().find((t) => t.kind === "plan")?.plan ?? null;
+  return { chat: row, ep, turns, plan };
+}
+
+/**
+ * The tutor APPROVED the plan → move the episode to 'drafting' and hand back what
+ * the draft job needs. The count is the PLAN's item count, not a tutor-editable
+ * number: the tutor approved N specific items, so drafting a different N would mean
+ * drafting something that was never approved. Wanting a different number is an
+ * amendment ("make it 5"), which re-plans.
+ */
+export async function approveAuthoringPlan(
+  tx: Tx,
+  args: { tutorUserId: string; chatId: string; workerId: string },
+): Promise<{ subTopicId: string; count: number; boardId: string }> {
+  const { ep, plan } = await gatedEpisode(tx, args);
+  if (!plan || plan.items.length === 0) throw new PlanHasNoItemsError();
+  await tx
+    .update(authoringWorker)
+    .set({ status: "drafting" })
+    .where(eq(authoringWorker.id, ep.id));
+  return {
+    subTopicId: ep.subTopicId,
+    count: Math.min(Math.max(plan.items.length, 1), 8),
+    boardId: ep.boardId,
+  };
+}
+
+/**
+ * The tutor AMENDED the plan → append their words to the worker's own history and
+ * re-plan. Two appends, one action, both append-only: the worker gets a `tutor`
+ * turn (so its next plan is a revision of its own prior thinking, not a fresh
+ * guess) and the master transcript gets the same words as a user turn (so the
+ * master model stays coherent about what was asked).
+ */
+export async function amendAuthoringPlan(
+  tx: Tx,
+  args: {
+    tutorUserId: string;
+    chatId: string;
+    workerId: string;
+    note: string;
+  },
+): Promise<{ subTopicId: string; count: number; boardId: string }> {
+  const note = args.note.trim();
+  if (!note) throw new Error("amendment is empty");
+  const { chat, ep, turns, plan } = await gatedEpisode(tx, args);
+
+  const amendment: WorkerTurn = {
+    id: randomUUID(),
+    role: "tutor",
+    kind: "amendment",
+    text: note,
+    createdAt: new Date().toISOString(),
+  };
+  await tx
+    .update(authoringWorker)
+    .set({ messages: [...turns, amendment], status: "planning" })
+    .where(eq(authoringWorker.id, ep.id));
+
+  const userTurn: ChatMessage = {
+    id: randomUUID(),
+    role: "user",
+    text: note,
+    createdAt: new Date().toISOString(),
+  };
+  await tx
+    .update(authoringChat)
+    .set({
+      messages: [...parseMessages(chat.messages), userTurn],
+      updatedAt: new Date(),
+    })
+    .where(eq(authoringChat.id, chat.id));
+
+  // Re-plan at the size the worker last proposed (an amendment that changes the
+  // count says so in its own words, and the re-plan is free to plan a different N).
+  const count = Math.min(Math.max(plan?.items.length ?? 3, 1), 8);
+  return { subTopicId: ep.subTopicId, count, boardId: ep.boardId };
+}
+
+/** The tutor dismissed the plan without drafting. Terminal — the episode is closed
+ *  so it can't come back as a live gate, and a fresh author opens a new episode. */
+export async function dismissAuthoringPlan(
+  tx: Tx,
+  args: { tutorUserId: string; chatId: string; workerId: string },
+): Promise<void> {
+  const { ep } = await gatedEpisode(tx, args);
+  await tx
+    .update(authoringWorker)
+    .set({ status: "abandoned" })
+    .where(eq(authoringWorker.id, ep.id));
 }
 
 /**

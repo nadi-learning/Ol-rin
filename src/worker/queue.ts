@@ -3,11 +3,21 @@ import { redisConnection } from "../redis/connection";
 // Type-only (erased at compile → no runtime import cycle): the job's result shape
 // IS the value the poll hands back.
 import type { extractTopicsMd } from "../services/admin_ingest";
-import type { authorFromChat, reviseDraft } from "../services/authoring_chat";
+import type {
+  authorFromChat,
+  planFromChat,
+  reviseDraft,
+} from "../services/authoring_chat";
 
 type ExtractResult = Awaited<ReturnType<typeof extractTopicsMd>>;
 type ReviseResult = Awaited<ReturnType<typeof reviseDraft>>;
-type AuthoringResult = Awaited<ReturnType<typeof authorFromChat>>;
+// Slice TWOWAY-1: the authoring queue now returns one of TWO shapes. `phase` is the
+// discriminant; the draft shape gains it here rather than in the service, so
+// AuthorFromChatResult stays the single shape the review form has always consumed.
+type AuthoringPlanJobResult = Awaited<ReturnType<typeof planFromChat>>;
+type AuthoringDraftJobResult = Awaited<ReturnType<typeof authorFromChat>> & {
+  phase: "draft";
+};
 
 /**
  * Shared helper: find the id of an in-flight job (active/queued) whose data
@@ -377,7 +387,16 @@ export function getActiveReviseJobId(boardId: string, questionId: string): Promi
 // (the job's return value) and its "Drafting…" loader survives a refresh via
 // getActiveAuthoringJobId(chatId).
 
+// Slice TWOWAY-1 — the two-way handoff splits this into TWO job phases:
+//   'plan'  — the worker states what it intends to write; the episode lands
+//             'planned' and the tutor gates it.
+//   'draft' — the tutor approved; the worker writes the approved items.
+// They MUST be separate jobs, not one job that waits: this queue is concurrency 1,
+// so a job parked on a human decision would pin the only authoring slot and block
+// every other tutor's authoring behind one unread plan card.
 export const AUTHORING_QUEUE = "b2c.authoring";
+
+export type AuthoringPhase = "plan" | "draft";
 
 export interface AuthoringJobData {
   boardId: string;
@@ -385,6 +404,14 @@ export interface AuthoringJobData {
   chatId: string;
   subTopicId: string;
   count: number;
+  // Optional so a job enqueued by PRE-slice code (one already sitting in Redis at
+  // deploy time) still runs — absent reads as 'draft', which is exactly what those
+  // jobs meant. Every new enqueue sets it explicitly.
+  phase?: AuthoringPhase;
+  // The planned episode this job belongs to: set on a 'draft' after approval, and on
+  // a 'plan' that is a RE-plan following an amendment. Absent = a one-shot spawn
+  // (the plan-skip path) or a first plan.
+  workerId?: string;
 }
 
 export const authoringQueue = new Queue<AuthoringJobData>(AUTHORING_QUEUE, {
@@ -410,7 +437,8 @@ export const authoringQueue = new Queue<AuthoringJobData>(AUTHORING_QUEUE, {
  * authorFromChat reads the chat history for its brief. BullMQ assigns the id.
  */
 export async function enqueueAuthoring(data: AuthoringJobData): Promise<string> {
-  const job = await authoringQueue.add("author-draft", data, { delay: 2_000 });
+  const phase: AuthoringPhase = data.phase ?? "draft";
+  const job = await authoringQueue.add(`author-${phase}`, data, { delay: 2_000 });
   if (!job.id) throw new Error("BullMQ did not assign a job id");
   return job.id;
 }
@@ -423,9 +451,15 @@ export async function enqueueAuthoring(data: AuthoringJobData): Promise<string> 
  * board's job by id. 'unknown' when the job has aged out of Redis or Redis is
  * unreachable.
  */
+// Slice TWOWAY-1: `result` is now a DISCRIMINATED union over the phase — a plan job
+// hands back a plan to gate, a draft job hands back drafts to review. The FE
+// narrows on `result.phase`; the union (rather than a widened single shape) is what
+// makes it a compile error to feed a plan into the review form.
+export type AuthoringJobResult = AuthoringPlanJobResult | AuthoringDraftJobResult;
+
 export type AuthoringJobStatus =
   | { state: "waiting" | "active" | "unknown" }
-  | { state: "completed"; result: AuthoringResult }
+  | { state: "completed"; result: AuthoringJobResult }
   | { state: "failed"; error: string };
 
 export async function getAuthoringJobStatus(
@@ -438,7 +472,7 @@ export async function getAuthoringJobStatus(
     if (job.data?.boardId && job.data.boardId !== boardId) return { state: "unknown" };
     const state = await job.getState();
     if (state === "completed") {
-      return { state: "completed", result: job.returnvalue as AuthoringResult };
+      return { state: "completed", result: job.returnvalue as AuthoringJobResult };
     }
     if (state === "failed") {
       return { state: "failed", error: job.failedReason ?? "authoring failed" };
@@ -451,10 +485,27 @@ export async function getAuthoringJobStatus(
 }
 
 /**
- * Id of an in-flight authoring job for this chat, or null — the resume handle for
- * the tutor's "Drafting…" loader after a page refresh / close-reopen. Keyed by
- * chat (not question — the drafts don't exist yet). See activeJobIdForChat.
+ * The in-flight authoring job for this chat, or null — the resume handle for the
+ * tutor's loader after a page refresh / close-reopen. Keyed by chat (not question —
+ * the output doesn't exist yet). See activeJobIdForChat.
+ *
+ * Slice TWOWAY-1: carries the PHASE too. Both phases are keyed to the same chat, so
+ * without it a resumed loader would have to guess, and a plan in flight would
+ * restore as "Drafting…" and then hand the poll a plan the review form can't open.
  */
-export function getActiveAuthoringJobId(boardId: string, chatId: string): Promise<string | null> {
-  return activeJobIdForChat(authoringQueue, boardId, chatId);
+export async function getActiveAuthoringJob(
+  boardId: string,
+  chatId: string,
+): Promise<{ jobId: string; phase: AuthoringPhase } | null> {
+  const jobId = await activeJobIdForChat(authoringQueue, boardId, chatId);
+  if (!jobId) return null;
+  try {
+    const job = await authoringQueue.getJob(jobId);
+    return { jobId, phase: job?.data?.phase ?? "draft" };
+  } catch {
+    // The id came from a successful scan a moment ago; a read failure now is a blip.
+    // Default to 'draft' — the pre-slice reading, and the one that can only under-
+    // promise (a plan poll result is still narrowed by phase at the FE).
+    return { jobId, phase: "draft" };
+  }
 }
