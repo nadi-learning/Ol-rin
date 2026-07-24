@@ -3094,7 +3094,17 @@ function AuthorChat({
     }
 
     const drafts = c.pendingDrafts ?? [];
-    if (drafts.length === 0) return;
+    // No pending drafts for THIS chat → CLEAR the review form rather than
+    // early-returning. Early-return left a prior render's cards/target on screen,
+    // so a chat with nothing to review could still show another chat's form (the
+    // review-form render guards on `cards && target`). Idempotent — the plan +
+    // job-loader restores above already ran; this only clears the review triple.
+    if (drafts.length === 0) {
+      setCards(null);
+      setTarget(null);
+      setPreviewMinimized(false);
+      return;
+    }
     setCards(drafts.map((d) => toCard(d, d.subTopicId, d.subTopicName)));
     setPreviewMinimized(false);
     const first = drafts[0]!;

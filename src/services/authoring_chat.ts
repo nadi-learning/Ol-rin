@@ -673,12 +673,19 @@ export async function getChat(
   args: { tutorUserId: string; chatId: string },
 ): Promise<ChatView> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
-  // Re-hydrate the review form on resume: the student's still-unapproved drafts.
-  // Scoped by student (a draft is student-private, not chat-scoped) + tutor-owned
-  // (listDrafts asserts the tutor↔student link).
+  // Re-hydrate the review form on resume: this chat's still-unapproved drafts.
+  // Scoped by student (tutor-owned; listDrafts asserts the tutor↔student link)
+  // AND by the chat's chapter(s) — a draft is student-private, not chat-scoped,
+  // so without the chapter filter a Maths chat's form hydrated with the student's
+  // leftover Physics drafts.
   const pendingDrafts = await listDrafts(tx, {
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
+    // Slice DRAFT-SCOPE: only THIS chat's chapter(s), so a Quadratics chat's
+    // review form no longer hydrates with the student's leftover Electricity
+    // drafts (a draft is student-private, not chat-scoped). Legacy chats with no
+    // chapter scope read unscoped (chatChapterIds → []).
+    chapterIds: chatChapterIds(row),
   });
   // Slice TWOWAY-1: the gate, if one is open. Read on the same call as the drafts so
   // a single getChat restores the whole in-progress state of the chat.

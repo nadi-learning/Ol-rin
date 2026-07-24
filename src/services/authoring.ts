@@ -962,14 +962,23 @@ export async function discardDraft(
 
 /** The student's current DRAFT set (status='draft'), for the review form +
  *  rehydrate-on-load. Ownership-guarded; ordered by sub_topic then ordinal.
- *  Each carries its editable fields + current figure render (thumbnail/badge). */
+ *  Each carries its editable fields + current figure render (thumbnail/badge).
+ *
+ *  `chapterIds` scopes the draft set to a chat's chapter(s) (Slice DRAFT-SCOPE):
+ *  a draft is student-private, not chat-scoped, so an unscoped read hydrated a
+ *  Quadratics chat's review form with a student's leftover Electricity drafts
+ *  (a Physics form under a Maths conversation). getChat passes the chat's
+ *  chapterIds so the review form only ever shows drafts for THIS chat's scope.
+ *  Empty/absent = unscoped (legacy chats with no chapter scope, and the
+ *  student-wide standalone route). */
 export async function listDrafts(
   tx: Tx,
-  args: { tutorUserId: string; studentId: string },
+  args: { tutorUserId: string; studentId: string; chapterIds?: string[] },
 ): Promise<
   (PersistedDraft & { subTopicId: string; topicName: string; subTopicName: string })[]
 > {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  const scopeChapterIds = (args.chapterIds ?? []).filter(Boolean);
   const rows = await tx
     .select({
       id: question.id,
@@ -992,6 +1001,10 @@ export async function listDrafts(
         eq(question.targetStudentId, args.studentId),
         eq(question.source, AUTHORING_SOURCE),
         eq(question.status, "draft"),
+        // Scope to the chat's chapter(s) when given; unscoped otherwise (legacy).
+        scopeChapterIds.length > 0
+          ? inArray(topic.chapterId, scopeChapterIds)
+          : undefined,
       ),
     )
     .orderBy(asc(topic.ordinal), asc(subTopic.ordinal), asc(question.ordinal));

@@ -129,6 +129,7 @@ async function main() {
     await tx.insert(observation).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, axis: "procedural", observationLevel: 2, reasoning: "Set up Δv/Δt correctly but dropped the unit conversion s→ms.", source: "stage1_scorer", calibrationFlag: "over" });
     return {
       chapterId: chap!.id,
+      chapter2Id: chap2!.id,
       subTopicId: st!.id,
       allowedSubTopicIds: [st!.id, st2!.id],
       outOfChapterSubTopicId: st3!.id,
@@ -354,6 +355,43 @@ async function main() {
     check(`HTTP startAuthoringChat (no session) → 401 (got ${res.status})`, res.status === 401);
   } catch {
     console.log("  ~ HTTP startAuthoringChat skipped (server not running)");
+  }
+
+  // ─────────── DRAFT-SCOPE: getChat's review form is scoped to THIS chat's chapter(s) ───────────
+  // A draft is student-private, not chat-scoped, so an unscoped listDrafts hydrated
+  // a chat's review form with the SAME student's drafts from OTHER chapters (a
+  // Physics form under a Maths conversation — the founder's "resistance questions in
+  // the Quadratics preview"). getChat now passes the chat's chapterIds. Deterministic
+  // (no AI): plant one draft in chapter 1 (Motion) and one in chapter 2 (Forces) for
+  // stuA, then assert each chat sees only its own scope, and an unscoped (no-chapter)
+  // chat sees both.
+  {
+    const AUTH_SRC = "b2c_authoring"; // AUTHORING_SOURCE (module-private in authoring.ts)
+    const [motionDraft] = await rows(P.id, (tx) =>
+      tx.insert(question).values({ boardId: P.id, subTopicId: fx.subTopicId, axis: "conceptual", kind: "subjective", stem: "SCOPE motion draft", referenceAnswer: "ref", ordinal: 90, source: AUTH_SRC, status: "draft", targetStudentId: stuA.id }).returning(),
+    );
+    const [forcesDraft] = await rows(P.id, (tx) =>
+      tx.insert(question).values({ boardId: P.id, subTopicId: fx.outOfChapterSubTopicId, axis: "conceptual", kind: "subjective", stem: "SCOPE forces draft", referenceAnswer: "ref", ordinal: 90, source: AUTH_SRC, status: "draft", targetStudentId: stuA.id }).returning(),
+    );
+
+    // `chat` is Motion-scoped (chapter 1). Its review form must include the Motion
+    // draft and EXCLUDE the Forces draft — the exact bug.
+    const motionView = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: chat.chatId }));
+    const motionIds = new Set((motionView.pendingDrafts ?? []).map((d) => d.id));
+    check("DRAFT-SCOPE: Motion-scoped chat SEES its own chapter's draft", motionIds.has(motionDraft!.id));
+    check("DRAFT-SCOPE: Motion-scoped chat HIDES another chapter's draft (the bug)", !motionIds.has(forcesDraft!.id));
+
+    // A chat scoped to chapter 2 (Forces) is the mirror: sees Forces, not Motion.
+    const forcesChat = await rows(P.id, (tx) => startChat(tx, { boardId: P.id, tutorUserId: tut.id, studentId: stuA.id, vendor: "claude_cli", chapterId: fx.chapter2Id }));
+    const forcesView = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: forcesChat.chatId }));
+    const forcesIds = new Set((forcesView.pendingDrafts ?? []).map((d) => d.id));
+    check("DRAFT-SCOPE: Forces-scoped chat SEES the Forces draft, HIDES the Motion draft", forcesIds.has(forcesDraft!.id) && !forcesIds.has(motionDraft!.id));
+
+    // Legacy fallback: a chat with NO chapter scope reads UNSCOPED (student-wide) —
+    // preserves pre-scope behaviour, never hides a draft from a chapterless chat.
+    const unscopedView = await rows(P.id, (tx) => getChat(tx, { tutorUserId: tut.id, chatId: noChapChat.chatId }));
+    const unscopedIds = new Set((unscopedView.pendingDrafts ?? []).map((d) => d.id));
+    check("DRAFT-SCOPE: no-chapter chat reads UNSCOPED (sees both drafts)", unscopedIds.has(motionDraft!.id) && unscopedIds.has(forcesDraft!.id));
   }
 
   // ── cleanup (FK-safe) ──
