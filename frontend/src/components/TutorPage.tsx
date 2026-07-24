@@ -3317,6 +3317,16 @@ function AuthorChat({
       .mutate({ chatId: chat.chatId, text, planFirst })
       .then((c) => {
         setChat(c); // authoritative list replaces the optimistic turn
+        // TWOWAY-FIX: the server refused to start new work because a gate is already
+        // open, and handed the plan back. Reachable on a CURRENT bundle only when this
+        // tab's `plan` state is stale — a second tab, or a gate opened elsewhere — since
+        // the guard above blocks the composer whenever this tab knows about the card.
+        // Adopting it here means the tab self-corrects on the very next thing the tutor
+        // types, instead of waiting for a reload.
+        if (c.pendingPlan) {
+          setPlan(c.pendingPlan);
+          return; // nothing was enqueued, so there is no job to poll
+        }
         // AUTHOR-ASYNC: an in-chat author fired (Gemini sentinel / Claude marker) →
         // the work runs off the request path. TWOWAY-1: which loader depends on the
         // phase the server chose — plan-first (the default) returns planJobId and
@@ -4243,25 +4253,42 @@ function AuthorChat({
             getChat re-supplies on every resume path, so this card survives a refresh
             and can't re-open once answered. */}
         {plan && (
-          <div className="tut-chat-consent tut-chat-plan">
-            <div className="tut-chat-consent-head">
-              Plan — {plan.topicName} › {plan.subTopicName}
-            </div>
-            <p className="tut-chat-plan-read">{plan.plan.read}</p>
-            {plan.plan.items.length > 0 && (
-              <ol className="tut-chat-plan-items">
-                {plan.plan.items.map((it: PlanItem, i: number) => (
-                  <li key={`${it.n}-${i}`} className="tut-chat-plan-item">
-                    <span className={`tut-chat-plan-axis tut-chat-plan-axis--${it.axis}`}>
-                      {it.axis === "both" ? "C+P" : it.axis === "conceptual" ? "C" : "P"}
-                    </span>
-                    <span className="tut-chat-plan-kind">{it.kind}</span>
-                    <span className="tut-chat-plan-intent">{it.intent}</span>
-                    <span className="tut-chat-plan-dial">{it.difficulty}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
+          // TWOWAY-FIX: the gate reads as a MESSAGE in the conversation (AI side,
+          // tinted), not as a wide bordered card. Founder call — the plan is the
+          // worker talking, so it should look like the worker talking.
+          <div className="tut-chat-row tut-chat-row--ai">
+            <div className="tut-chat-plan">
+              <div className="tut-chat-plan-head">
+                Plan — {plan.topicName} › {plan.subTopicName}
+              </div>
+              <p className="tut-chat-plan-read">{plan.plan.read}</p>
+              {plan.plan.items.length > 0 && (
+                <ol className="tut-chat-plan-items">
+                  {plan.plan.items.map((it: PlanItem, i: number) => (
+                    // STACKED, not columnar. Every field here is free prose by
+                    // contract — `difficulty` especially ("the dial catalogs are
+                    // prose, not a scale"). The old 4-column grid gave the dial
+                    // `white-space: nowrap`, so one long dial string demanded a
+                    // column wider than the card, squeezed `kind` and `intent` to
+                    // one word per line, and ran off the right edge.
+                    <li key={`${it.n}-${i}`} className="tut-chat-plan-item">
+                      <div className="tut-chat-plan-item-head">
+                        <span className="tut-chat-plan-n">{it.n}</span>
+                        <span
+                          className={`tut-chat-plan-axis tut-chat-plan-axis--${it.axis}`}
+                        >
+                          {it.axis === "both" ? "C+P" : it.axis === "conceptual" ? "C" : "P"}
+                        </span>
+                        <span className="tut-chat-plan-kind">{it.kind}</span>
+                      </div>
+                      {it.intent && <p className="tut-chat-plan-intent">{it.intent}</p>}
+                      {it.difficulty && (
+                        <p className="tut-chat-plan-dial">{it.difficulty}</p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
             {plan.plan.questions.length > 0 && (
               <div className="tut-chat-plan-asks">
                 <div className="tut-chat-plan-asks-head">It needs to know:</div>
@@ -4342,6 +4369,7 @@ function AuthorChat({
                 </button>
               </div>
             )}
+            </div>
           </div>
         )}
 

@@ -1621,52 +1621,100 @@
   color: var(--ink);
 }
 
-/* ── Slice TWOWAY-1: the PLAN GATE card ──────────────────────────────────────
-   The worker states what it intends to write and waits. Built on .tut-chat-consent
-   (same in-canvas card shape as the target/set proposals) so the gate reads as one
-   more thing to answer in the conversation rather than a new kind of surface. The
-   only visual departure is the left rule: a plan is the one card that BLOCKS — the
-   chat input is disabled until it's answered — so it needs to look load-bearing. */
+/* ── Slice TWOWAY-1 + TWOWAY-FIX: the PLAN GATE, as a MESSAGE ────────────────
+   The worker states what it intends to write and waits.
+
+   It was built on .tut-chat-consent — a full-width bordered card. Founder call
+   after seeing it on real content: the plan is the WORKER TALKING, so it should
+   look like the worker talking. It now sits in the AI row with the same bubble
+   metrics as every other message, tinted so it still reads as a distinct object
+   with something to answer (the tutor's own bubbles are lilac; this is its
+   counterpart on the other side).
+
+   🔴 The bug this replaced: every field of a plan item is FREE PROSE by contract —
+   `difficulty` explicitly so ("the dial catalogs are prose, not a scale, so a free
+   string is honest"). The old row was a 4-column grid whose dial column had
+   `white-space: nowrap`. One long dial string therefore demanded a column wider
+   than the card: `kind` and `intent` collapsed to one word per line and the text
+   ran off the right edge. Nothing here may assume a short string again. */
 .tut-chat-plan {
-  border-left-width: 4px;
+  align-self: stretch;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+
+  /* Bubble metrics, matching .tut-chat-bubble so it reads as one of the messages. */
+  padding: 13px 16px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.5;
+
+  /* Tinted, and a touch of blue structure — this is the one message that BLOCKS
+     (the composer is disabled until it's answered), so it may not read as chatter. */
+  background: var(--primary-soft, #e2e9ff);
+  color: var(--ink);
+  border: 1px solid rgba(47, 99, 255, 0.18);
+}
+.tut-chat-plan-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--primary);
+  overflow-wrap: anywhere;
 }
 .tut-chat-plan-read {
   margin: 0;
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.55;
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 .tut-chat-plan-items {
-  margin: 2px 0 4px;
+  margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  /* Counter rather than <ol> numbers: the worker's own `n` is what the tutor and the
-     drafter both refer to, so the visible number is the axis chip, not a marker. */
+  gap: 7px;
 }
+/* STACKED, never columnar — see the note above. Each item is a small block that
+   wraps like prose, because that is what its contents are. */
 .tut-chat-plan-item {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  align-items: baseline;
-  gap: 10px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
   border-radius: var(--r-md);
-  background: var(--surface-sunk);
-  font-size: 13px;
+  background: var(--surface);
+  font-size: 13.5px;
+  line-height: 1.5;
 }
-/* Narrow: the intent needs the full width, so the meta wraps above it. */
-@media (max-width: 640px) {
-  .tut-chat-plan-item {
-    grid-template-columns: auto auto;
-    row-gap: 4px;
-  }
-  .tut-chat-plan-intent,
-  .tut-chat-plan-dial {
-    grid-column: 1 / -1;
-  }
+.tut-chat-plan-item-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap; /* a long `kind` wraps under the chips instead of stretching */
+  gap: 7px;
+  min-width: 0;
+}
+/* The worker's own 1-based `n` — the handle the tutor uses in an amendment
+   ("make Q2 about a real context") and the key the drafter pins each call to. */
+.tut-chat-plan-n {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 800;
 }
 .tut-chat-plan-axis {
   flex: none;
@@ -1692,24 +1740,36 @@
 .tut-chat-plan-kind {
   font-weight: 700;
   color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .tut-chat-plan-intent {
+  margin: 0;
   color: var(--ink-soft);
-  line-height: 1.45;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
+/* The dial setting, in the worker's words. NO `white-space: nowrap` — that single
+   declaration is what broke the old layout, and this string has no length bound. */
 .tut-chat-plan-dial {
-  font-size: 11px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
   color: var(--ink-muted);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 /* The worker's questions back to the tutor. Usually absent — when present, this is
    the reason Approve is disabled, so it must not read as decoration. */
 .tut-chat-plan-asks {
-  border: 1px dashed var(--border);
+  /* Sits on the tint now, so it needs its own ground to stay legible. */
+  background: var(--surface);
+  border: 1px dashed rgba(47, 99, 255, 0.35);
   border-radius: var(--r-md);
   padding: 8px 12px;
   font-size: 13px;
+  line-height: 1.5;
   color: var(--ink-soft);
+  overflow-wrap: anywhere;
 }
 .tut-chat-plan-asks-head {
   font-weight: 700;

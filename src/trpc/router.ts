@@ -210,6 +210,9 @@ import {
   AuthoringPlanNotFoundError,
   dismissAuthoringPlan,
   PlanHasNoItemsError,
+  // Slice TWOWAY-FIX — the server-side gate guard.
+  assertNoOpenGate,
+  AuthoringGateOpenError,
 } from "../services/authoring_chat";
 import {
   enqueueAuthoring,
@@ -1940,12 +1943,20 @@ export const appRouter = router({
             chatId: input.chatId,
             subTopicId: input.subTopicId,
           });
+          // Slice TWOWAY-FIX: refuse a second authoring run while a plan is still
+          // awaiting its gate. The FE already disables this button, so reaching here
+          // means a stale bundle, a double-click, or a second tab — each of which
+          // would otherwise strand another 'planned' episode.
+          await assertNoOpenGate(ctx.tx, input.chatId);
         } catch (e) {
           if (
             e instanceof AuthoringChatNotFoundError ||
             e instanceof SubTopicNotFoundError
           ) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof AuthoringGateOpenError) {
+            throw new TRPCError({ code: "CONFLICT", message: e.code });
           }
           throw e;
         }

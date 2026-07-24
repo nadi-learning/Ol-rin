@@ -103,6 +103,27 @@ export class AuthoringPlanNotFoundError extends Error {
   }
 }
 
+// Slice TWOWAY-FIX — a new authoring trigger arrived while this chat already has a
+// plan awaiting its gate. Distinct from AUTHORING_PLAN_NOT_FOUND (which means the
+// opposite: the gate you targeted is gone). Raised only on the authorFromChat
+// BUTTON route; the conversational path answers in-band instead (see sendTurn).
+export class AuthoringGateOpenError extends Error {
+  readonly code = "AUTHORING_GATE_OPEN";
+  constructor(chatId: string) {
+    super(`authoring chat ${chatId} already has a plan awaiting the tutor's gate`);
+    this.name = "AuthoringGateOpenError";
+  }
+}
+
+// The in-band reply when a turn arrives under an open gate. Carries the REFRESH
+// instruction on purpose: the single most likely reason a tutor is typing under an
+// open gate is that their bundle is too old to draw the card, and this sentence is
+// the only channel that reaches them (a stale FE renders messages fine — it just
+// doesn't know what a plan card is).
+const GATE_OPEN_REPLY =
+  "There's already a plan waiting for your go-ahead on this chat — approve or amend it and I'll write those questions. " +
+  "If you can't see the plan card, this page is running an older version: refresh it (Cmd+Shift+R, or Ctrl+Shift+R on Windows) and the card will be there.";
+
 // Approving a plan that has NO items would draft questions nobody planned — the
 // gate would be theatre. It happens when the worker replied with questions for the
 // tutor instead of a plan, in which case the only real move is to amend.
@@ -862,6 +883,51 @@ export async function sendTurn(
     createdAt: new Date().toISOString(),
   };
 
+  // ── Slice TWOWAY-FIX: the SERVER-SIDE gate guard. ──
+  // The FE disables the composer while a plan awaits its gate (TutorPage), but that
+  // is client-side only — and a tab running a PRE-TWOWAY-1 bundle has no gate card,
+  // no plan poll, and omits `planFirst` (which defaults TRUE here). Its go-ahead
+  // therefore enqueued ANOTHER plan, whose text relayed into the transcript, which
+  // the tutor answered with another go-ahead: an unbounded plan loop that can never
+  // reach drafting. Observed on prod 2026-07-24 — two chats, two planned episodes
+  // each, ZERO drafts.
+  //
+  // So: refuse to start new authoring work while this chat has an episode awaiting a
+  // gate, and say so IN-BAND. The reply is the self-heal — a stale tab cannot render
+  // the card, but it CAN render this sentence, which tells the tutor to refresh.
+  // No AI call and no enqueue: a stuck tab costs nothing and creates nothing.
+  //
+  // Safe against the gate procedures by construction: approve → 'drafting', amend →
+  // 'planning', dismiss → 'abandoned'. All three leave 'planned', so none can be
+  // blocked by this. It also (deliberately) blocks the planFirst=false skip — a
+  // parallel draft raised while a plan is pending is the same confusion; dismiss the
+  // plan first.
+  const openGate = await pendingPlanFor(tx, row.id);
+  if (openGate) {
+    const gateMsg: ChatMessage = {
+      id: randomUUID(),
+      role: "assistant",
+      text: GATE_OPEN_REPLY,
+      createdAt: new Date().toISOString(),
+    };
+    const messages = [...history, userMsg, gateMsg];
+    await tx
+      .update(authoringChat)
+      .set({ messages, updatedAt: new Date() })
+      .where(eq(authoringChat.id, row.id));
+    return {
+      chatId: row.id,
+      studentId: row.studentId,
+      chapterId: row.chapterId ?? null,
+      chapterIds: chatChapterIds(row),
+      mode: (row.mode as AuthoringMode) ?? "blocked",
+      subTopicId: row.subTopicId ?? null,
+      vendor,
+      messages,
+      pendingPlan: openGate,
+    };
+  }
+
   // Grounding is assembled once and woven into the FIRST (stitched) user turn;
   // on resumed turns it already lives in the vendor session.
   const grounding = await assembleGrounding(tx, {
@@ -1145,6 +1211,17 @@ export type AuthorFromChatResult = {
  * worker's authorFromChat re-runs the same guard (cheap). Mirrors reviseDraftQuestion
  * asserting ownership before enqueue.
  */
+/**
+ * Slice TWOWAY-FIX: the BUTTON route's half of the gate guard. sendTurn answers an
+ * under-gate turn in-band (it has a transcript to answer into); an explicit author
+ * click has no such channel, so it fails loudly instead. Deliberately NOT folded
+ * into assertAuthorTarget: the worker re-runs that guard for its own draft, and a
+ * draft raised BY an approval must never be blocked by the episode it came from.
+ */
+export async function assertNoOpenGate(tx: Tx, chatId: string): Promise<void> {
+  if (await pendingPlanFor(tx, chatId)) throw new AuthoringGateOpenError(chatId);
+}
+
 export async function assertAuthorTarget(
   tx: Tx,
   args: { tutorUserId: string; chatId: string; subTopicId: string },

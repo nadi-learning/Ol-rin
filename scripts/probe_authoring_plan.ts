@@ -68,6 +68,10 @@ import {
   planFromChat,
   PlanHasNoItemsError,
   startChat,
+  // Slice TWOWAY-FIX — the server-side gate guard.
+  assertNoOpenGate,
+  AuthoringGateOpenError,
+  sendTurn,
 } from "../src/services/authoring_chat";
 import { authorFromChat } from "../src/services/authoring_chat";
 
@@ -290,6 +294,89 @@ async function main() {
     view1.pendingPlan?.plan.items.length === 3 &&
       view1.pendingPlan?.plan.read.includes("ZZREADZZ") &&
       view1.pendingPlan?.plan.items[0]?.intent === "ZZINTENT1ZZ",
+  );
+
+  // ── FIRM 2b (Slice TWOWAY-FIX): the SERVER-SIDE gate guard ──
+  // The prod incident this closes: a tab on a pre-TWOWAY-1 bundle has no gate card
+  // and omits `planFirst` (which defaults TRUE), so each go-ahead enqueued ANOTHER
+  // plan — two chats, two 'planned' episodes each, zero drafts. The FE's composer
+  // block was client-side only.
+  //
+  // 🔑 These legs run with NO AI by construction: if the guard's early return did not
+  // fire, sendTurn would reach the vendor call. So a sendTurn that returns a canned
+  // reply IS the proof that nothing was dispatched.
+  const gG = await seedGate(fakePlan(3));
+  const epCountBefore = await rows(boardP.id, (tx) =>
+    tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(authoringWorker)
+      .where(eq(authoringWorker.chatId, gG.chatId)),
+  );
+  const gatedTurn = await rows(boardP.id, (tx) =>
+    sendTurn(tx, {
+      tutorUserId: tutorId,
+      chatId: gG.chatId,
+      text: "Go ahead and author",
+    }),
+  );
+  check(
+    "guard: a go-ahead under an open gate returns WITHOUT reaching the vendor",
+    gatedTurn.messages.at(-1)?.role === "assistant",
+  );
+  check(
+    "guard: the canned reply names the pending plan AND tells a stale tab to refresh",
+    /already a plan waiting/i.test(gatedTurn.messages.at(-1)?.text ?? "") &&
+      /refresh/i.test(gatedTurn.messages.at(-1)?.text ?? ""),
+  );
+  check(
+    "guard: the tutor's own words are still persisted (an honest transcript)",
+    gatedTurn.messages.at(-2)?.role === "user" &&
+      gatedTurn.messages.at(-2)?.text === "Go ahead and author",
+  );
+  check(
+    "guard: the reply carries pendingPlan, so a CURRENT bundle draws the card at once",
+    gatedTurn.pendingPlan?.workerId === gG.workerId,
+  );
+  check(
+    "guard: the canned reply carries NO aiSessionId (nothing was dispatched to resume)",
+    gatedTurn.messages.at(-1)?.aiSessionId === undefined,
+  );
+  const epCountAfter = await rows(boardP.id, (tx) =>
+    tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(authoringWorker)
+      .where(eq(authoringWorker.chatId, gG.chatId)),
+  );
+  check(
+    "guard: NO second episode was stranded — the loop that caused the incident is closed",
+    epCountBefore[0]!.n === 1 && epCountAfter[0]!.n === 1,
+  );
+  check(
+    "guard: the BUTTON route's assert throws AuthoringGateOpenError while gated",
+    await throwsWith(
+      () => rows(boardP.id, (tx) => assertNoOpenGate(tx, gG.chatId)),
+      AuthoringGateOpenError,
+    ),
+  );
+  // The load-bearing negative: the guard must never block the gate procedures
+  // themselves. All three move the episode OFF 'planned' (drafting / planning /
+  // abandoned), so the guard is blind to them by construction — asserted, not assumed.
+  await rows(boardP.id, (tx) =>
+    dismissAuthoringPlan(tx, {
+      tutorUserId: tutorId,
+      chatId: gG.chatId,
+      workerId: gG.workerId,
+    }),
+  );
+  let reopenOk = true;
+  try {
+    await rows(boardP.id, (tx) => assertNoOpenGate(tx, gG.chatId));
+  } catch {
+    reopenOk = false;
+  }
+  check(
+    "guard: once the gate is answered, authoring is UNBLOCKED again (not a one-way latch)",
+    reopenOk,
   );
 
   // ── FIRM 3: approve ──
