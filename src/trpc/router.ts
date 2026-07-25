@@ -52,6 +52,25 @@ import {
   unlinkStudent,
   UserNotFoundError,
 } from "../services/admin_users";
+import {
+  listMyParentLinkRequests,
+  listPendingParentLinkRequests,
+  resolveParentLinkRequest,
+  submitParentLinkRequest,
+  EmptyIdentifierError,
+  MissingStudentError,
+  RequestNotFoundError,
+  RequestNotPendingError,
+} from "../services/parent_link";
+import {
+  getReferralCard,
+  listReferrals,
+  setReferralStatus,
+  setRewardStatus,
+  ReferralNotFoundError,
+  RewardNotFoundError,
+  RewardNotQualifiedError,
+} from "../services/referral";
 import { eq } from "drizzle-orm";
 import { appUser } from "@b2c/kernel/schema";
 import {
@@ -163,6 +182,7 @@ import {
 } from "../services/assignment";
 import {
   ChildNotFoundError,
+  getChildDashboard,
   getChildReport,
   listChildren,
 } from "../services/parent";
@@ -353,6 +373,44 @@ export const appRouter = router({
           throw e;
         }
       }),
+  }),
+
+  // Slice S164 — the parent self-serve LINK REQUEST. Board-LESS on purpose: a
+  // newly-signed-up parent has no linked child, so no board and no `parent`
+  // membership. It rides `sessionProcedure` (auth-only) just like the new-student
+  // grade picker, for the same chicken-and-egg reason. The admin half of the flow
+  // lives under `admin.*` (board-scoped). See services/parent_link.ts.
+  parentLink: router({
+    // File a request against the child's email/phone → lands `pending` for admin.
+    request: sessionProcedure
+      .input(
+        z.object({
+          identifier: z.string().min(1).max(200),
+          // S166 — optional referral code, captured in the same form. Returned
+          // outcome lives on `.referral`; a bad code never fails this call.
+          referralCode: z.string().max(40).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await submitParentLinkRequest({
+            email: ctx.realUser.email,
+            name: ctx.realUser.name,
+            identifier: input.identifier,
+            referralCode: input.referralCode,
+          });
+        } catch (e) {
+          if (e instanceof EmptyIdentifierError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // The caller's own requests + their status (so the parent sees pending/linked).
+    myRequests: sessionProcedure.query(({ ctx }) =>
+      listMyParentLinkRequests(ctx.realUser.email),
+    ),
   }),
 
   // Slice ONB-1 — the conversational welcome. Its own namespace, deliberately
@@ -1254,13 +1312,22 @@ export const appRouter = router({
       }),
 
     setCrossConceptFlagAddressed: tutorProcedure
-      .input(z.object({ flagId: z.string().uuid(), addressed: z.boolean() }))
+      // CLOCK-3: the optional `plan` rides the existing addressed-toggle (parent
+      // dashboard element 6). Omit → plan untouched; ""/null → clear; text → set.
+      .input(
+        z.object({
+          flagId: z.string().uuid(),
+          addressed: z.boolean(),
+          plan: z.string().max(2000).nullish(),
+        }),
+      )
       .mutation(async ({ ctx, input }) => {
         try {
           return await setCrossConceptFlagAddressed(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             flagId: input.flagId,
             addressed: input.addressed,
+            plan: input.plan,
           });
         } catch (e) {
           if (e instanceof StudentNotFoundError || e instanceof FlagNotFoundError) {
@@ -2346,6 +2413,28 @@ export const appRouter = router({
         }
       }),
 
+    // Slice DASH-1 — the parent DASHBOARD read path (the read side of the locked
+    // portfolio). One board-scoped assembly of everything the 8 sections need:
+    // 3-colour chapter map, count-aggregated axis meters, the CLOCK-2 snapshot
+    // delta, CLOCK-1 dispatch story, calibration, CLOCK-3 weakness+plan, and
+    // horizontals — all under the same M11 projection boundary (never `log`,
+    // never `tutor_level`, never a raw level). Ownership-guarded like getChildReport.
+    getChildDashboard: parentProcedure
+      .input(z.object({ childId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getChildDashboard(ctx.tx, {
+            parentUserId: ctx.membership.userId,
+            childId: input.childId,
+          });
+        } catch (e) {
+          if (e instanceof ChildNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
     // Slice Report-Signoff (D-P-1 deferred half): the parent READ side. Only
     // PUBLISHED reports are visible (drafts never leak); ownership via
     // parent_child. The frozen snapshot is exactly what the tutor signed off.
@@ -2560,6 +2649,117 @@ export const appRouter = router({
         }),
       )
       .mutation(({ ctx, input }) => unlinkStudent(ctx.tx, { boardId: ctx.board.id, ...input })),
+
+    /**
+     * S164 — the pending parent→child link requests, each with the students on
+     * THIS board matching the parent's typed email/phone (candidate resolution is
+     * RLS-scoped, so cross-board matches never surface here).
+     */
+    listParentLinkRequests: adminProcedure.query(({ ctx }) =>
+      listPendingParentLinkRequests(ctx.tx),
+    ),
+
+    /** Close a pending request: link the parent to the chosen student, or reject. */
+    resolveParentLinkRequest: adminProcedure
+      .input(
+        z.object({
+          requestId: z.string().uuid(),
+          action: z.enum(["link", "reject"]),
+          studentUserId: z.string().uuid().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await resolveParentLinkRequest(ctx.tx, {
+            requestId: input.requestId,
+            action: input.action,
+            studentUserId: input.studentUserId,
+            board: ctx.board,
+            actorUserId: ctx.membership.userId,
+          });
+        } catch (e) {
+          if (e instanceof RequestNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (
+            e instanceof RequestNotPendingError ||
+            e instanceof MissingStudentError ||
+            e instanceof InvalidLinkError
+          ) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    /**
+     * S166 — the REFERRAL LEDGER. Deliberately GLOBAL, unlike every other admin
+     * read on this router: a referral has no board (it is captured before the
+     * parent has one, and its two ends may sit on different boards), so a
+     * board-scoped ledger would be silently partial. Safe because adminProcedure
+     * takes two locks — the DB role AND the hardcoded ADMIN_EMAILS list.
+     */
+    listReferrals: adminProcedure.query(() => listReferrals()),
+
+    /** Confirm the referred party booked month 1 ('qualified'), or withdraw it. */
+    setReferralStatus: adminProcedure
+      .input(
+        z.object({
+          referralId: z.string().uuid(),
+          status: z.enum(["qualified", "void"]),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setReferralStatus({
+            referralId: input.referralId,
+            status: input.status,
+            actorUserId: ctx.membership.userId,
+          });
+        } catch (e) {
+          if (e instanceof ReferralNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    /** Mark one side's discount actually given, or withdraw that half. */
+    setRewardStatus: adminProcedure
+      .input(
+        z.object({
+          rewardId: z.string().uuid(),
+          status: z.enum(["redeemed", "void"]),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setRewardStatus({
+            rewardId: input.rewardId,
+            status: input.status,
+            actorUserId: ctx.membership.userId,
+          });
+        } catch (e) {
+          if (e instanceof RewardNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof RewardNotQualifiedError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+  }),
+
+  /**
+   * S166 — the parent's own refer-&-earn card. On `parentProcedure` because it
+   * renders inside the dashboard (which is already parent-gated), and because
+   * ctx.membership.userId hands us the PARENT profile id directly — the card is
+   * per-profile, and this identity's email may also hold a student profile with
+   * a different code. Reads only GLOBAL tables, so no board is involved.
+   */
+  referral: router({
+    myCard: parentProcedure.query(({ ctx }) => getReferralCard(ctx.membership.userId)),
   }),
 });
 

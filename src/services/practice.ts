@@ -28,6 +28,7 @@ import { z } from "zod";
 import { attempt, attemptImage, practiceSession, question } from "@b2c/kernel/schema";
 import { enqueueStage1Scoring } from "../worker/queue";
 import { assertAssignedSubTopic } from "./assignment";
+import { resolveDispatchReason } from "./scheduler";
 import { currentImageFor } from "./image_read";
 import { consumeUploadToken, type ConsumedPhotos } from "./upload";
 
@@ -286,6 +287,16 @@ export async function startSession(
     .orderBy(asc(question.ordinal), asc(question.createdAt));
   if (qs.length === 0) throw new NoQuestionsError(args.subTopicId);
 
+  // Slice CLOCK-1: stamp the governing spiral clock NOW — the reason is destroyed
+  // the moment the student practises (the clocks move). Same tx, so it's the
+  // scheduling/mastery state as it stood at dispatch. Only genuinely-new sessions
+  // reach here (the resume branch above returns early), so the stamp reflects the
+  // true dispatch, never a resume.
+  const dispatchReason = await resolveDispatchReason(tx, {
+    studentId: args.appUserId,
+    subTopicId: args.subTopicId,
+  });
+
   const [created] = await tx
     .insert(practiceSession)
     .values({
@@ -296,6 +307,7 @@ export async function startSession(
       currentIndex: 0,
       status: "active",
       origin: assignmentId ? "tutor_assigned" : "self_serve",
+      dispatchReason,
       assignmentId,
     })
     .returning();

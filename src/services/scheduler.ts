@@ -100,6 +100,99 @@ export function computeRetentionDue(
   return toDateStr(new Date(anchor.getTime() + gap * MS_PER_DAY));
 }
 
+/**
+ * Slice CLOCK-1 — which spiral clock governs a dispatched practice session.
+ * Stored on practice_session.dispatch_reason at start; null = no scheduler reason
+ * (taught but neither clock applies) OR a legacy pre-0039 row. Orthogonal to
+ * `origin` (WHO dispatched — self vs tutor): a tutor assigning a retention-due
+ * sub-topic is origin='tutor_assigned' AND dispatch_reason='retention'.
+ */
+export type DispatchReason = "first_teach" | "climb" | "retention" | null;
+
+/**
+ * Resolve WHY a sub-topic is being dispatched to this student right now, at the
+ * single practice_session insert point (practice.ts). The reason is destroyed by
+ * the act of practising (the clocks move), so it is stamped here or never.
+ *
+ * Mirrors computeDueQueue's reconciliation by REUSING computeRetentionDue — so
+ * the stamp can never drift from the queue that surfaced the item:
+ *  - never taught (no scheduling row, or taughtAt null) → 'first_teach'. The most
+ *    common early case, and the queue structurally CANNOT supply it (it filters
+ *    taughtAt IS NOT NULL), so it must be derived here.
+ *  - taught → the GOVERNING clock = the earlier of climb vs retention (min(),
+ *    intent §6). TIE (climbDue === retentionDue) → 'retention' (S156 ruling: the
+ *    more specific claim; powers the "retention check passed" element).
+ *  - taught but neither clock applies (procedural below the retention floor and
+ *    nothing to climb) → null.
+ *
+ * Records the governing clock, NOT a separate due/not-due gate — read surfaces
+ * can still filter by session recency. One indexed read on scheduling_state's
+ * unique (student_id, sub_topic_id) + the retention anchor. Runs in the caller's
+ * board-scoped tx (RLS applies).
+ */
+export async function resolveDispatchReason(
+  tx: Tx,
+  args: { studentId: string; subTopicId: string },
+): Promise<DispatchReason> {
+  const [sched] = await tx
+    .select({
+      taughtAt: schedulingState.taughtAt,
+      climbDue: schedulingState.climbNextDue,
+    })
+    .from(schedulingState)
+    .where(
+      and(
+        eq(schedulingState.studentId, args.studentId),
+        eq(schedulingState.subTopicId, args.subTopicId),
+      ),
+    )
+    .limit(1);
+
+  // Never taught → this is its first teach.
+  if (!sched || sched.taughtAt == null) return "first_teach";
+
+  const climbDue = sched.climbDue; // `date` column → string | null
+
+  // Retention: anchor on the LAST PRACTICE (latest observation), falling back to
+  // mastery_state.updatedAt — identical to computeDueQueue's anchor rule.
+  const [m] = await tx
+    .select({
+      proceduralLevel: masteryState.proceduralLevel,
+      updatedAt: masteryState.updatedAt,
+    })
+    .from(masteryState)
+    .where(
+      and(
+        eq(masteryState.studentId, args.studentId),
+        eq(masteryState.subTopicId, args.subTopicId),
+      ),
+    )
+    .limit(1);
+  const [lastObs] = await tx
+    .select({ lastAt: max(observation.createdAt) })
+    .from(observation)
+    .where(
+      and(
+        eq(observation.studentId, args.studentId),
+        eq(observation.subTopicId, args.subTopicId),
+      ),
+    );
+
+  const anchor = lastObs?.lastAt
+    ? new Date(lastObs.lastAt)
+    : (m?.updatedAt ?? null);
+  const retentionDue =
+    anchor != null
+      ? computeRetentionDue(anchor, m?.proceduralLevel ?? null)
+      : null;
+
+  if (climbDue == null && retentionDue == null) return null;
+  if (climbDue == null) return "retention";
+  if (retentionDue == null) return "climb";
+  // Both present → earlier wins; TIE → retention (S156 ruling).
+  return retentionDue <= climbDue ? "retention" : "climb";
+}
+
 export type DueItem = {
   subTopicId: string;
   subTopicName: string;

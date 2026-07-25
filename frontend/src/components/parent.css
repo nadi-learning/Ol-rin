@@ -3,17 +3,30 @@
 
 .par-root {
   min-height: 100vh;
-  padding: 28px clamp(20px, 5vw, 56px) 64px;
+  padding: 116px clamp(20px, 5vw, 56px) 64px;
   background: var(--page, #eef0f3);
   font-family: var(--font-body, Inter, system-ui, sans-serif);
   color: var(--ink, #15162b);
 }
 
+/* Fixed top bar — the "Parent" title and the Sign out button stay pinned while
+   the portfolio scrolls beneath. The bar itself is transparent + click-through;
+   only the button captures pointer events. */
 .par-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 28px;
+  padding: 28px clamp(20px, 5vw, 56px) 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+.par-header .par-signout {
+  pointer-events: auto;
 }
 .par-eyebrow {
   font-size: 12px;
@@ -28,6 +41,8 @@
   margin: 2px 0 0;
 }
 .par-signout {
+  position: relative;
+  z-index: 10;
   border: 1px solid var(--line, #d9dbe4);
   background: #fff;
   color: var(--ink, #15162b);

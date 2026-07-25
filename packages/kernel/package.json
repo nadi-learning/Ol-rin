@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
-    "./contracts": "./src/contracts.ts"
+    "./contracts": "./src/contracts.ts",
+    "./parent-copy": "./src/parent-copy.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",

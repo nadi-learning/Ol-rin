@@ -48,6 +48,72 @@ export function generateReferralCode(): string {
 }
 
 /**
+ * Slice REFERRAL-1 — how a TYPED code is compared to a STORED one.
+ *
+ * The alphabet above is upper-case and glyph-unambiguous precisely because a
+ * code travels through WhatsApp, a phone call and a parent's memory before it is
+ * typed back. So the read side must forgive the damage that journey does: case
+ * (a phone keyboard auto-lowercases), surrounding whitespace, and the spacing or
+ * dashes people insert to make seven characters readable ("K7M4 PQR").
+ *
+ * It deliberately does NOT try to repair glyph confusions (O→0, I→1): the
+ * alphabet excludes both members of every ambiguous pair, so a typed `0` cannot
+ * be a damaged `O` — it is simply not one of our codes, and silently rewriting it
+ * could land on a DIFFERENT real person's code. Forgive presentation, never
+ * content.
+ */
+export function normalizeReferralCode(raw: string): string {
+  return raw.replace(/[\s-]/g, "").toUpperCase();
+}
+
+/**
+ * Slice REFERRAL-1 — THE OFFER, as data (founder, S164).
+ *
+ *   referrer  → 50% off ONE month, once the person they referred books month 1
+ *   referred  → 25% off their FIRST THREE months
+ *
+ * These are the terms at the moment a referral is captured, and they are copied
+ * ONTO each `referral_reward` row rather than read back from here at redemption
+ * time. That is the point: there is no billing yet, so a reward may sit `pending`
+ * for months, and the offer will change before the first one is ever paid out.
+ * A ledger that resolved its terms live would silently restate what an already-
+ * earned reward was worth. Change this constant freely — history is immutable.
+ */
+export const REFERRAL_OFFER = {
+  referrer: { percentOff: 50, months: 1 },
+  referred: { percentOff: 25, months: 3 },
+} as const;
+
+/** Which side of a referral a reward row belongs to. */
+export const REFERRAL_SIDES = ["referrer", "referred"] as const;
+export const ReferralSide = z.enum(REFERRAL_SIDES);
+export type ReferralSide = z.infer<typeof ReferralSide>;
+
+/**
+ * Referral lifecycle. `pending` = captured, the referred party has not booked
+ * month 1 yet. `qualified` = an admin confirmed they did (the trigger the offer
+ * names) — which is what makes BOTH rewards claimable. `void` = withdrawn
+ * (duplicate, fraud, refund).
+ *
+ * Qualification is an ADMIN action rather than something the app observes,
+ * because "books month 1" is a billing event and no billing exists yet.
+ */
+export const REFERRAL_STATUSES = ["pending", "qualified", "void"] as const;
+export const ReferralStatus = z.enum(REFERRAL_STATUSES);
+export type ReferralStatus = z.infer<typeof ReferralStatus>;
+
+/**
+ * Reward lifecycle, tracked PER SIDE because the two halves are redeemed at
+ * different times by different people: the referred party's 25% applies at their
+ * first invoice, the referrer's 50% at whichever month they choose to spend it.
+ * `redeemed` = the discount was actually given (an ops fact, recorded by hand
+ * until billing can assert it).
+ */
+export const REWARD_STATUSES = ["pending", "redeemed", "void"] as const;
+export const RewardStatus = z.enum(REWARD_STATUSES);
+export type RewardStatus = z.infer<typeof RewardStatus>;
+
+/**
  * The roles a person may CLAIM for themselves at signup — the landing persona,
  * founder's call this session.
  *
@@ -105,6 +171,20 @@ export function isRole(role: string | null | undefined): role is Role {
 export const ADMIN_EMAILS = [
   "xxxx51263@gmail.com",
   "spranav.iitkgp@gmail.com",
+  // S165 — a DEMO admin for local E2E (walking the parent-link admin leg without
+  // a real admin's Google account), the admin twin of the existing
+  // parent@/student@/tutor@example.com demo logins. It is UNCONDITIONAL rather
+  // than NODE_ENV-gated on purpose: this list is the FE door check too
+  // (App.tsx), which must agree across FE and BE, and the isomorphic env-sniff
+  // that would keep them in sync is exactly the accidental-open footgun the note
+  // above warns against. It is safe in prod for two independent reasons:
+  //   1. `example.com` is RFC-2606 reserved — no Google account can exist for it,
+  //      and Google is the ONLY provider enabled in production (auth.ts).
+  //   2. email/password is DISABLED when NODE_ENV=production (auth.ts), so the
+  //      dev-login path this address is reached by does not exist in prod.
+  // Whitelisting it therefore grants a capability that is unreachable in prod —
+  // the same property the other @example.com demo accounts already rely on.
+  "admin@example.com",
 ] as const;
 
 /**

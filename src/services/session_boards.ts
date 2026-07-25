@@ -196,13 +196,36 @@ export async function whoami(email: string): Promise<Whoami> {
         .from(parent)
         .where(eq(parent.userId, p.id))
         .limit(1);
-      found.push({
-        slug: null,
-        name: null,
-        role: "parent",
-        enabled: !!pr && pr.status === "active",
-        at: p.at,
-      });
+      const active = !!pr && pr.status === "active";
+      // A parent is a GLOBAL identity, but the parent SURFACE is board-scoped:
+      // parentProcedure → authedProcedure needs an x-board, and listChildren reads
+      // the RLS-scoped `student` table. Unlike the tutor there is no in-page board
+      // switcher to pin one, so DERIVE the board(s) from the parent's children —
+      // iterate boards and emit one enabled entry per board on which a child
+      // (student.parent_id = this parent) exists, exactly as a multi-board tutor
+      // yields one entry per board. Boot pins the first (App.tsx). A childless (or
+      // inactive) parent yields the board-less entry it always did → waiting room
+      // / nothing to scope to yet.
+      const boardsWithChild: { slug: string; name: string }[] = [];
+      if (active) {
+        for (const b of boards) {
+          const [c] = await withBoard(b.id, (tx) =>
+            tx
+              .select({ userId: student.userId })
+              .from(student)
+              .where(eq(student.parentId, p.id))
+              .limit(1),
+          );
+          if (c) boardsWithChild.push({ slug: b.slug, name: b.name });
+        }
+      }
+      if (boardsWithChild.length === 0) {
+        found.push({ slug: null, name: null, role: "parent", enabled: active, at: p.at });
+      } else {
+        for (const bc of boardsWithChild) {
+          found.push({ slug: bc.slug, name: bc.name, role: "parent", enabled: true, at: p.at });
+        }
+      }
     } else {
       // admin — board-agnostic; the whitelist is the gate (adminProcedure).
       found.push({ slug: null, name: null, role: "admin", enabled: true, at: p.at });

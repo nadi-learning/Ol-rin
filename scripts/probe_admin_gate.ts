@@ -63,7 +63,10 @@ console.log("\n── probe_admin_gate (S124) ──\n");
 // ─────────────────────── 1. the list ───────────────────────
 console.log("1. ADMIN_EMAILS / isAdminEmail");
 
-check("the whitelist holds exactly 2 addresses", ADMIN_EMAILS.length === 2, `got ${ADMIN_EMAILS.length}`);
+// S165 — the list grew a third entry, the `admin@example.com` demo login (safe
+// in prod: reserved domain + password auth off — see contracts.ts).
+check("the whitelist holds exactly 3 addresses", ADMIN_EMAILS.length === 3, `got ${ADMIN_EMAILS.length}`);
+check("the demo admin is whitelisted", isAdminEmail("admin@example.com"));
 for (const e of ADMIN_EMAILS) {
   check(`whitelisted address is admitted: ${e}`, isAdminEmail(e));
 }

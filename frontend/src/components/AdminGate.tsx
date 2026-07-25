@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { signIn } from "../lib/auth";
+import { useEffect, useRef, useState } from "react";
+import { signIn, devLogin } from "../lib/auth";
 import "./admin-gate.css";
 
 // S125 — THE ADMIN FRONT DOOR (founder). Rendered by App.tsx only at `/admin`
@@ -30,6 +30,32 @@ export function AdminGate() {
       provider: "google",
       callbackURL: window.location.origin + "/admin",
     });
+  };
+
+  // S165 — DEV-ONLY admin dev-login, mirroring LandingPage's `.or-dev` form. The
+  // AdminGate only offered Google, so a local admin (admin@example.com) had no way
+  // in but to dev-login at `/` first and then navigate to `/admin`. This closes
+  // that: dev-login here, on `/admin`, so `useSession` picks up the session and
+  // App re-boots straight onto the admin door (x-profile:admin is URL-scoped, so
+  // resolving it while already on `/admin` is correct). LOCAL BUILDS ONLY — the
+  // whole block is behind `import.meta.env.DEV` and is dropped from prod bundles,
+  // exactly like the landing-page one. It grants nothing the server doesn't
+  // re-check: a non-whitelisted dev email still lands on the not-found page.
+  const [devEmail, setDevEmail] = useState(import.meta.env.DEV ? "admin@example.com" : "");
+  const [devBusy, setDevBusy] = useState(false);
+  const [devErr, setDevErr] = useState<string | null>(null);
+  const onDevSignIn = async () => {
+    setDevErr(null);
+    setDevBusy(true);
+    try {
+      await devLogin(devEmail.trim());
+      // No navigation: useSession picks up the session and App re-routes, the
+      // same path Google sign-in takes.
+    } catch (e: any) {
+      setDevErr(String(e?.message ?? e));
+    } finally {
+      setDevBusy(false);
+    }
   };
 
   // The silky wave backdrop — one canvas, green ramp. Ported from LandingPage's
@@ -172,6 +198,32 @@ export function AdminGate() {
           <p className="ag-note">
             Restricted access · only whitelisted accounts can enter.
           </p>
+
+          {/* S165 — dev sign-in, LOCAL BUILDS ONLY (import.meta.env.DEV is
+              statically false in prod, so this whole block is tree-shaken out). */}
+          {import.meta.env.DEV && (
+            <div className="ag-dev">
+              <p className="ag-dev-label">local dev only — not in production builds</p>
+              <div className="ag-dev-row">
+                <input
+                  className="ag-dev-input"
+                  value={devEmail}
+                  onChange={(e) => setDevEmail(e.target.value)}
+                  placeholder="admin@example.com"
+                  aria-label="Dev sign-in email"
+                />
+                <button
+                  className="ag-dev-btn"
+                  type="button"
+                  onClick={onDevSignIn}
+                  disabled={devBusy || !devEmail.trim()}
+                >
+                  {devBusy ? "Signing in…" : "Dev sign in"}
+                </button>
+              </div>
+              {devErr && <p className="ag-dev-err">{devErr}</p>}
+            </div>
+          )}
         </div>
       </aside>
     </div>

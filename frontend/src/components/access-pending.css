@@ -268,7 +268,135 @@
   color: var(--primary-hover, #17573a);
 }
 
+/* S165 — the parent self-serve link-request form. Sits inside the note (on the
+   paper, off the planks), a quiet card so it reads as "here's the one thing to
+   do" without competing with the fingerpost. */
+.shire-link {
+  margin: 18px 0 4px;
+  text-align: left;
+}
+/* S166 — the form is now TWO rows: the child's email/phone owns row one (it is
+   the errand), then the optional code shares row two with the button. Achieved
+   with wrap + a 100% basis on the primary input rather than a grid, so the
+   single-input past and the two-input present use the same rules. */
+.shire-link-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shire-link-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  border: 1px solid var(--border, #d9cbb6);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink, #2b1908);
+}
+.shire-link-input::placeholder { color: var(--ink-muted, #6b5844); opacity: 0.8; }
+.shire-link-input:focus {
+  outline: none;
+  border-color: var(--primary, #1f6f4a);
+  background: #fff;
+}
+.shire-link-btn {
+  flex: none;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  background: var(--primary, #1f6f4a);
+  cursor: pointer;
+}
+.shire-link-btn:hover { background: var(--primary-hover, #17573a); }
+.shire-link-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* The optional code: narrower than the field above it and set in the shape a
+   code actually has (upper, tracked, tabular) so it reads as a token, not prose.
+   `text-transform` is cosmetic only — the server normalizes what it receives. */
+.shire-link-input--code {
+  flex: 1 1 0;
+  min-width: 130px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+.shire-link-input--code::placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.shire-link-hint {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-muted, #6b5844);
+}
+
+.shire-link-code-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b06a4a;
+}
+.shire-link-code-note.is-ok { color: var(--primary, #1f6f4a); }
+
+.shire-link-error {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #9b1c1c;
+}
+
+.shire-link-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.shire-link-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-soft, #4b3018);
+}
+.shire-link-item--off { color: var(--ink-muted, #6b5844); }
+.shire-link-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translateY(1px);
+}
+.shire-link-dot--wait { background: #c79214; }
+.shire-link-dot--off { background: #b06a4a; }
+.shire-link-id { font-weight: 600; word-break: break-all; }
+.shire-link-state { color: var(--ink-muted, #6b5844); }
+
+/* The connected state — replaces the form once an admin has linked. */
+.shire-link--done { text-align: center; }
+.shire-link-done-head {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--primary, #1f6f4a);
+}
+.shire-link-done-sub {
+  margin: 4px 0 12px;
+  font-size: 14px;
+  color: var(--ink-soft, #4b3018);
+}
+
 @media (max-width: 480px) {
+  .shire-link-form { flex-wrap: wrap; }
+  .shire-link-btn { width: 100%; }
   .shire-signs {
     padding-bottom: 58px;
   }

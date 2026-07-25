@@ -206,9 +206,21 @@ export function App() {
       }
 
       // active is tutor or parent. Operational = the role-detail row exists
-      // (whoami's `enabled`); a tutor's is board-scoped, a parent's is not, so we
-      // ask `enabled` rather than `slug` (a parent's slug is always null).
+      // (whoami's `enabled`); a tutor's is board-scoped, and a parent's now carries
+      // a board too — whoami derives it from the parent's children (session_boards).
       const enabled = entries.some((m) => m.enabled);
+
+      // PARENT BOARD PIN — the parent surface is board-scoped (parentProcedure
+      // needs x-board) but, unlike the tutor, has no in-page switcher to pin one.
+      // Pin the parent's first child-board here, exactly as the student path pins
+      // its board above, so listChildren/getChildDashboard can read. Tutors pin
+      // inside TutorPage (listTutorBoards), so this is parent-only.
+      if (active === "parent") {
+        const boardEntry = entries.find((m) => m.enabled && m.slug);
+        if (boardEntry) setBoard(boardEntry.slug!);
+        else clearBoard();
+      }
+
       setMe(null);
       setDest(
         enabled

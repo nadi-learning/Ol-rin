@@ -1,0 +1,1971 @@
+/* Slice DASH-2 — the parent PORTFOLIO. A scrollable narrative of bands, Olórin
+   fixed bottom-right. All `.pdash-`-scoped (landmine-safe; shares the `.par-`
+   header/childlist/metrics from parent.css). TAITOR tokens from theme/tokens.css. */
+
+/* Canvas rails reserved for the two sketches — Olórin on the LEFT, the signpost
+   on the RIGHT. The reading column sits between them on wide screens so nothing
+   overlaps. */
+.par-root {
+  --olorin-rail: clamp(300px, 30vw, 500px);
+  --signpost-rail: clamp(220px, 22vw, 360px);
+}
+
+/* The reading column holds all three acts (hero · grid · scroll). */
+.pdash-column {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 900px;
+  margin: 0 auto;
+  padding-bottom: 96px;
+}
+.pdash-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+/* Wide screens: the reading column shifts right of Olórin's rail and stays clear
+   of the signpost rail on the right. */
+@media (min-width: 1024px) {
+  .pdash-column {
+    margin-left: calc(var(--olorin-rail) + 16px);
+    margin-right: auto;
+    width: min(860px, calc(100vw - var(--olorin-rail) - var(--signpost-rail) - 48px));
+    max-width: none;
+  }
+}
+
+/* ══ Act 1 — the vapour splash ══════════════════════════════════════════════
+   A full-screen overlay: the child's name resolves in, holds, then dissolves. */
+.pdash-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--page, #eef0f3);
+  text-align: center;
+  padding: 24px;
+}
+.pdash-splash-eyebrow {
+  font-size: clamp(12px, 1.4vw, 15px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+  font-weight: 600;
+}
+.pdash-splash-name {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: clamp(44px, 9vw, 104px);
+  line-height: 1.02;
+  margin: 0;
+  color: var(--ink, #15162b);
+  letter-spacing: -0.01em;
+  will-change: transform, filter, opacity;
+}
+
+/* ══ Act 2 — the narration hero ═════════════════════════════════════════════ */
+.pdash-hero {
+  padding: 8px 4px 4px;
+}
+.pdash-hero-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--olorin-voice, #5b6cc4);
+  font-weight: 700;
+}
+.pdash-hero-title {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: clamp(34px, 6vw, 60px);
+  line-height: 1.03;
+  margin: 6px 0 18px;
+  color: var(--ink, #15162b);
+  letter-spacing: -0.01em;
+}
+.pdash-hero-narration {
+  font-size: clamp(17px, 2vw, 21px);
+  line-height: 1.62;
+  color: #2c2e44;
+  max-width: 62ch;
+  min-height: 3.2em; /* holds height while typing so the grid doesn't jump */
+  margin: 0;
+}
+.pdash-hero-sign {
+  margin-top: 12px;
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 16px;
+  color: var(--olorin-voice, #5b6cc4);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.pdash-hero-sign.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* ══ Act 3 — the metric grid + morph-open tiles ═════════════════════════════ */
+.pdash-grid-wrap {
+  position: relative;
+}
+.pdash-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.pdash-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 148px;
+  padding: clamp(18px, 3vw, 26px);
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: var(--r-card, 20px);
+  background: var(--surface, #fff);
+  box-shadow: var(--shadow-card, 0 8px 24px rgba(20, 22, 43, 0.06));
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  overflow: hidden;
+}
+.pdash-tile--span2 {
+  grid-column: span 2;
+}
+.pdash-tile--ghost {
+  visibility: hidden;
+}
+.pdash-tile-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+  font-weight: 700;
+}
+.pdash-tile-value {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: clamp(32px, 5vw, 48px);
+  line-height: 1.04;
+  color: var(--ink, #15162b);
+  letter-spacing: -0.01em;
+}
+.pdash-tile-value--lg {
+  font-size: clamp(40px, 6vw, 60px);
+}
+.pdash-tile-caption {
+  font-size: 14px;
+  color: #4a4d63;
+}
+/* Expandable affordance — a persistent corner icon + a pill hint, so it's clear
+   the card opens. */
+.pdash-tile-expand {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e4e6ec);
+  background: #f1f4ff;
+  color: var(--primary, #2f63ff);
+  font-size: 15px;
+  line-height: 1;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.pdash-tile:hover {
+  border-color: var(--primary, #2f63ff);
+}
+.pdash-tile:hover .pdash-tile-expand {
+  background: var(--primary, #2f63ff);
+  color: #fff;
+  transform: scale(1.06);
+}
+.pdash-tile-hint {
+  margin-top: auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: #eef1ff;
+  color: var(--primary, #2f63ff);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+/* The morph-open panel + its dimming backdrop. The layer FLEX-centres the panel
+   (no transform on the panel itself) so framer-motion's shared-layout morph lands
+   dead-centre and smooth — a translate here fights the layout animation. */
+.pdash-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 40px);
+}
+.pdash-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 22, 43, 0.42);
+  backdrop-filter: blur(2px);
+}
+.pdash-tile-open {
+  position: relative;
+  width: min(760px, 100%);
+  max-height: min(86vh, 900px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: clamp(20px, 4vw, 32px);
+  border-radius: var(--r-card, 20px);
+  background: var(--surface, #fff);
+  box-shadow: 0 30px 80px rgba(20, 22, 43, 0.28);
+}
+.pdash-tile-open-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.pdash-tile-open-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pdash-tile-close {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--line, #d9dbe4);
+  background: #fff;
+  color: var(--ink, #15162b);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pdash-tile-close:hover {
+  background: #f6f7fa;
+}
+/* Inside the open panel the reused bands sit flush (no double card chrome). */
+.pdash-tile-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pdash-tile-detail .pdash-band {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+@media (max-width: 720px) {
+  .pdash-grid {
+    grid-template-columns: 1fr;
+  }
+  .pdash-tile--span2 {
+    grid-column: span 1;
+  }
+}
+
+/* ══ Headline charts — progress trend + contribution heatmap ═════════════════ */
+.pdash-stories {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pdash-chart-card {
+  padding: clamp(18px, 3vw, 26px);
+}
+.pdash-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.pdash-chart-head .pdash-band-title {
+  margin: 0;
+}
+.pdash-keypoint {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2f9757;
+  background: #e7f4ec;
+  border: 1px solid #cfe8d8;
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+.pdash-chart {
+  width: 100%;
+}
+.pdash-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #4a4d63;
+}
+.pdash-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pdash-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.pdash-legend-note {
+  margin-left: auto;
+  color: var(--muted, #6b6f80);
+  font-size: 12px;
+}
+
+/* Recharts tooltip (custom) */
+.pdash-charttip {
+  background: #fff;
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(20, 22, 43, 0.14);
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--ink, #15162b);
+}
+.pdash-charttip-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.pdash-charttip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  line-height: 1.7;
+}
+.pdash-charttip-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.pdash-charttip-total {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border, #e4e6ec);
+  color: var(--muted, #6b6f80);
+  font-size: 12px;
+}
+
+/* Contribution heatmap — ZOOMED: the grid fills the full board width, one
+   column per week from the start of the window through this month. Cells scale
+   to the container (aspect-ratio square), so it reads as a large calendar. */
+.pdash-heatmap {
+  position: relative; /* anchors the hover tooltip */
+}
+.pdash-heatmap-scroll {
+  padding-bottom: 4px;
+}
+/* Custom hover tooltip — sits just above the hovered box. */
+.pdash-heatmap-tip {
+  position: absolute;
+  z-index: 20;
+  transform: translate(-50%, calc(-100% - 8px));
+  pointer-events: none;
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: var(--sk-ink, #1c1917);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.35;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+}
+.pdash-heatmap-tip-day {
+  font-weight: 700;
+}
+.pdash-heatmap-tip-sub {
+  opacity: 0.85;
+}
+.pdash-heatmap-months {
+  display: grid;
+  gap: clamp(3px, 0.45vw, 8px);
+  height: 18px;
+  font-size: 12px;
+  color: var(--muted, #6b6f80);
+  margin-bottom: 4px;
+}
+.pdash-heatmap-month {
+  grid-row: 1;
+  white-space: nowrap;
+}
+.pdash-heatmap-grid {
+  display: grid;
+  gap: clamp(3px, 0.45vw, 8px);
+  width: 100%;
+}
+.pdash-heatmap-week {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: clamp(3px, 0.45vw, 8px);
+}
+.pdash-heatmap-cell {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: clamp(3px, 0.35vw, 6px);
+  background: #e9ebf0;
+}
+.pdash-heatmap-cell.is-empty {
+  background: transparent;
+}
+/* Legend swatches keep a fixed size — they're not part of the scaling grid. */
+.pdash-heatmap-legend .pdash-heatmap-cell {
+  width: 13px;
+  height: 13px;
+  aspect-ratio: auto;
+}
+.pdash-heatmap-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #4a4d63;
+  flex-wrap: wrap;
+}
+.pdash-heatmap-summary {
+  font-weight: 600;
+}
+.pdash-heatmap-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted, #6b6f80);
+}
+
+/* ── generic band ── */
+.pdash-band {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: var(--r-card, 20px);
+  padding: clamp(20px, 4vw, 34px);
+  box-shadow: var(--shadow-card, 0 8px 24px rgba(20, 22, 43, 0.06));
+  scroll-margin-top: 20px;
+}
+.pdash-band-title {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: clamp(20px, 3vw, 25px);
+  margin: 0 0 6px;
+  color: var(--ink, #15162b);
+}
+.pdash-band-lead {
+  margin: 0 0 18px;
+  color: var(--ink-soft, #4a4c66);
+  font-size: 15px;
+}
+
+/* ── 1. Cover ── */
+.pdash-cover {
+  background: linear-gradient(155deg, #f2f6ec 0%, var(--surface, #fff) 62%);
+  border-color: var(--sage, #cfe1bf);
+  text-align: left;
+  padding-top: clamp(28px, 5vw, 46px);
+  padding-bottom: clamp(28px, 5vw, 46px);
+}
+.pdash-cover-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #4d7a4f;
+  font-weight: 700;
+}
+.pdash-cover-title {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: clamp(30px, 6vw, 46px);
+  line-height: 1.08;
+  margin: 8px 0 18px;
+  color: var(--ink, #15162b);
+}
+.pdash-cover-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pdash-cover-num {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: clamp(22px, 4vw, 30px);
+  color: #1f7a3d;
+  font-weight: 700;
+}
+.pdash-cover-was {
+  font-size: 15px;
+  color: var(--ink-muted, #8b8da3);
+  font-style: italic;
+}
+
+/* ── 2. Story ── */
+.pdash-story {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pdash-story-line {
+  margin: 0;
+  font-size: 16.5px;
+  line-height: 1.55;
+  color: var(--ink, #15162b);
+}
+
+/* ── 3. Map ── */
+.pdash-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  font-size: 13px;
+  color: var(--ink-soft, #4a4c66);
+}
+.pdash-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.pdash-subject {
+  margin-top: 20px;
+}
+.pdash-subject:first-of-type {
+  margin-top: 0;
+}
+.pdash-subject-name {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 17px;
+  margin: 0 0 12px;
+  color: var(--ink, #15162b);
+}
+.pdash-chapter {
+  margin-bottom: 14px;
+}
+.pdash-chapter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.pdash-chapter-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink, #15162b);
+}
+.pdash-chapter-count {
+  font-size: 12.5px;
+  color: var(--ink-muted, #8b8da3);
+  white-space: nowrap;
+}
+.pdash-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pdash-cell {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  flex: none;
+  border: 1px solid rgba(20, 22, 43, 0.06);
+}
+.pdash-cell.is-green {
+  background: #63b17a;
+  border-color: #4d9964;
+}
+.pdash-cell.is-yellow {
+  background: #f2d16b;
+  border-color: #e2bd4c;
+}
+.pdash-cell.is-red {
+  background: #e08769;
+  border-color: #cf7052;
+}
+.pdash-cell.is-gray {
+  background: #e4e6ec;
+  border-color: #d3d6df;
+}
+
+/* Map view toggle — Detail (per-sub-topic cells) ⇄ Overview (chapter boxes). */
+.pdash-mapview {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: rgba(20, 22, 43, 0.05);
+  border: 1px solid rgba(20, 22, 43, 0.08);
+}
+.pdash-mapview-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 5px 14px;
+  border-radius: 8px;
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 13px;
+  color: var(--ink-soft, #4a4c66);
+  transition: background 0.15s, color 0.15s;
+}
+.pdash-mapview-tab.is-active {
+  background: var(--sk-ink, #1c1917);
+  color: #f7f1e3;
+}
+
+/* Bird's-eye chapter overview — one colour-filled box per chapter. */
+.pdash-chapmap {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.pdash-chapbox {
+  min-height: 84px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(20, 22, 43, 0.06);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pdash-chapbox-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #15162b;
+}
+.pdash-chapbox-tag {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 11.5px;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(21, 22, 43, 0.72);
+}
+.pdash-chapbox.is-green {
+  background: #cfe8d6;
+  border-color: #a9d4b6;
+}
+.pdash-chapbox.is-yellow {
+  background: #f7ecc2;
+  border-color: #ecdb95;
+}
+.pdash-chapbox.is-red {
+  background: #f2d3c6;
+  border-color: #e3b19d;
+}
+.pdash-chapbox.is-gray {
+  background: #eceef3;
+  border-color: #dcdfe7;
+}
+.pdash-chapbox.is-gray .pdash-chapbox-name {
+  color: #6b6d84;
+}
+
+/* topic detail (collapsed) */
+.pdash-detail {
+  margin-top: 6px;
+}
+.pdash-detail-summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--primary, #2f63ff);
+  padding: 4px 0;
+  list-style: none;
+}
+.pdash-detail-summary::-webkit-details-marker {
+  display: none;
+}
+.pdash-detail-summary::before {
+  content: "▸ ";
+}
+.pdash-detail[open] .pdash-detail-summary::before {
+  content: "▾ ";
+}
+.pdash-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.pdash-detail-card {
+  background: var(--surface-sunk, #f5f6f8);
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: var(--r-md, 14px);
+  padding: 14px 16px;
+}
+.pdash-detail-crumb {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-muted, #8b8da3);
+}
+.pdash-detail-st {
+  font-weight: 700;
+  font-size: 15px;
+  margin: 3px 0 10px;
+  color: var(--ink, #15162b);
+}
+.pdash-detail-buckets {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.pdash-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pdash-bucket-label {
+  font-size: 11.5px;
+  color: var(--ink-muted, #8b8da3);
+  font-weight: 600;
+}
+.pdash-bucket-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f7a3d;
+}
+.pdash-bucket-val.is-none {
+  color: var(--ink-muted, #8b8da3);
+  font-weight: 500;
+  font-style: italic;
+}
+.pdash-detail-desc {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-soft, #4a4c66);
+  margin: 0;
+}
+
+/* ── 4. Meters ── */
+.pdash-meters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.pdash-meter-card {
+  background: var(--surface-sunk, #f5f6f8);
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: var(--r-md, 14px);
+  padding: 16px 18px;
+}
+.pdash-meter {
+  margin-top: 14px;
+}
+.pdash-meter:first-of-type {
+  margin-top: 12px;
+}
+.pdash-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.pdash-meter-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink, #15162b);
+}
+.pdash-meter-count {
+  font-size: 12.5px;
+  color: var(--ink-muted, #8b8da3);
+}
+.pdash-meter-track {
+  height: 9px;
+  border-radius: 999px;
+  background: #e4e6ec;
+  overflow: hidden;
+}
+.pdash-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #63b17a;
+  transition: width 0.4s ease;
+}
+
+/* ── 5. Calibration ── */
+.pdash-calib {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.pdash-calib-stat {
+  flex: 1 1 180px;
+  border-radius: var(--r-md, 14px);
+  padding: 16px 18px;
+  border: 1px solid var(--border, #e4e6ec);
+}
+.pdash-calib-stat--over {
+  background: #fff6ed;
+  border-color: #f6d9b8;
+}
+.pdash-calib-stat--under {
+  background: #eef6f0;
+  border-color: #c9e3d1;
+}
+.pdash-calib-num {
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--ink, #15162b);
+}
+.pdash-calib-label {
+  font-size: 13px;
+  color: var(--ink-soft, #4a4c66);
+  margin-top: 5px;
+}
+.pdash-calib-where {
+  margin: 14px 0 0;
+  font-size: 14px;
+  color: var(--ink-soft, #4a4c66);
+}
+
+/* ── Pace — intended weeks per chapter vs the actual picture ── */
+.pdash-pace {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+/* Summary capsule + subject-filter capsules above the rows. */
+.pdash-pace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.pdash-pace-summary {
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 5px 14px;
+  white-space: nowrap;
+}
+.pdash-pace-summary.is-good {
+  color: #1f7a3d;
+  background: #e7f4ec;
+  border: 1px solid #cfe8d8;
+}
+.pdash-pace-summary.is-warn {
+  color: #8a5a12;
+  background: #fbf0d8;
+  border: 1px solid #f0dcae;
+}
+.pdash-pace-filters {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pdash-pace-filter {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sk-ink-soft, #4a4642);
+  background: transparent;
+  border: 1.5px solid rgba(28, 25, 23, 0.28);
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.pdash-pace-filter:hover {
+  background: rgba(28, 25, 23, 0.05);
+}
+.pdash-pace-filter.is-active {
+  color: #fff;
+  background: var(--sk-ink, #1c1917);
+  border-color: var(--sk-ink, #1c1917);
+}
+.pdash-pace-subhead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.pdash-pace-subhead .pdash-subject-name {
+  margin: 0;
+}
+.pdash-pace-rows {
+  display: flex;
+  flex-direction: column;
+}
+.pdash-pace-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 11px 2px;
+  border-bottom: 1px dashed rgba(28, 25, 23, 0.16);
+}
+.pdash-pace-row:last-child {
+  border-bottom: none;
+}
+.pdash-pace-ch {
+  flex: 1 1 170px;
+  min-width: 150px;
+  font-weight: 700;
+  font-size: 15.5px;
+  color: var(--sk-ink, #1c1917);
+}
+.pdash-pace-intended,
+.pdash-pace-actual {
+  font-size: 13.5px;
+  color: var(--sk-ink-soft, #4a4642);
+  white-space: nowrap;
+}
+.pdash-pace-prep {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--sk-ink-soft, #4a4642);
+}
+.pdash-pace-pill {
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 11px;
+  white-space: nowrap;
+}
+.pdash-pace-pill.is-good {
+  color: #1f7a3d;
+  background: #e7f4ec;
+  border: 1px solid #cfe8d8;
+}
+.pdash-pace-pill.is-warn {
+  color: #8a5a12;
+  background: #fbf0d8;
+  border: 1px solid #f0dcae;
+}
+.pdash-pace-pill.is-bad {
+  color: #a3341f;
+  background: #fbe4de;
+  border: 1px solid #f0c4b8;
+}
+
+/* ── 6. Weakness + plan ── */
+.pdash-weak-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pdash-weak-card {
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: var(--r-md, 14px);
+  padding: 16px 18px;
+}
+.pdash-weak-note {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink, #15162b);
+  margin-bottom: 12px;
+}
+.pdash-weak-where {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #b46a18;
+  background: #fbecd7;
+  border-radius: 6px;
+  padding: 2px 7px;
+  margin-right: 8px;
+}
+.pdash-plan {
+  background: var(--surface-sunk, #f5f6f8);
+  border-radius: var(--r-md, 14px);
+  padding: 12px 15px;
+}
+.pdash-plan.is-authored {
+  background: #eef1ff;
+}
+.pdash-plan-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted, #8b8da3);
+  margin-bottom: 4px;
+}
+.pdash-plan.is-authored .pdash-plan-label {
+  color: var(--primary, #2f63ff);
+}
+.pdash-plan-text {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink, #15162b);
+}
+.pdash-plan-by {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-muted, #8b8da3);
+  font-style: italic;
+}
+
+/* ── 7. Horizontals ── */
+.pdash-hz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.pdash-hz-card {
+  border: 1px solid var(--border, #e4e6ec);
+  border-radius: var(--r-md, 14px);
+  padding: 15px 17px;
+  background: var(--surface, #fff);
+}
+.pdash-hz-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.pdash-hz-label {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink, #15162b);
+}
+.pdash-hz-level {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1f7a3d;
+  white-space: nowrap;
+}
+.pdash-hz-level.is-none {
+  color: var(--ink-muted, #8b8da3);
+  font-weight: 500;
+  font-style: italic;
+}
+.pdash-hz-gloss {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-soft, #4a4c66);
+}
+.pdash-hz-subjects {
+  font-size: 11.5px;
+  color: var(--ink-muted, #8b8da3);
+  font-weight: 600;
+}
+
+/* ── Olórin — a BIG pencil sketch in the bottom-LEFT rail of the canvas ──
+   A fixed rail (width --olorin-rail) the content column is pushed clear of.
+   Non-interactive: the sketch must never intercept clicks on the cards. */
+.pdash-olorin {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: var(--olorin-rail, 460px);
+  z-index: 40;
+  pointer-events: none;
+}
+
+/* The sketch, drawn INTO the page: `multiply` makes its white paper ground
+   dissolve into the graph paper (only the pencil lines survive — part of the
+   canvas, not a pasted rectangle), and a mask feather softens the outer edges.
+   Height-driven `contain`, anchored bottom-left. This image is tall+narrow
+   (~0.5), so it never fills the rail — leaving clear canvas above the head. */
+.pdash-olorin-art {
+  position: absolute;
+  left: clamp(2px, 1vw, 18px);
+  bottom: 0;
+  height: clamp(320px, 72vh, 700px);
+  width: auto;
+  max-width: calc(100% - 8px);
+  object-fit: contain;
+  object-position: bottom left;
+  mix-blend-mode: multiply;
+  mask-image:
+    linear-gradient(to right, transparent 0, black 6%, black 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 4%, black 96%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  user-select: none;
+}
+
+/* His line — in clear canvas ABOVE his head (below the header, above the sketch's
+   top), tucked within the rail so it never reaches the content column. */
+.pdash-olorin-note {
+  position: absolute;
+  left: clamp(16px, 2.5vw, 44px);
+  top: clamp(100px, 13vh, 156px);
+  max-width: min(268px, calc(var(--olorin-rail, 460px) - 56px));
+  background: var(--periwinkle, #c9cdf7);
+  color: var(--ink, #15162b);
+  border-radius: 16px 16px 16px 4px;
+  padding: 13px 16px;
+  box-shadow: var(--shadow-rail, 0 6px 24px rgba(20, 22, 43, 0.12));
+}
+.pdash-olorin-line {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 1.5em; /* hold height while typing so the box doesn't jump */
+}
+/* The typing caret (mirrors the crew/onboarding beat). */
+.pdash-olorin-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.12em;
+  background: var(--ink, #15162b);
+  animation: pdash-caret 0.9s steps(1) infinite;
+}
+@keyframes pdash-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.pdash-olorin-sign {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft, #4a4c66);
+  text-align: right;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.pdash-olorin-sign.is-in {
+  opacity: 1;
+}
+
+/* ── The signpost — the second sketch, TOP-RIGHT canvas rail, tucked behind the
+   Sign out button (which paints in front of it). Shown as-is, no blur. ── */
+.pdash-signpost {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: var(--signpost-rail, 320px);
+  z-index: 5;
+  pointer-events: none;
+}
+/* The signpost art is a cut-out (transparent paper ground — only the ink), shown
+   at full strength as a top-right canvas motif. */
+.pdash-signpost-art {
+  position: absolute;
+  right: clamp(2px, 1vw, 18px);
+  top: 0;
+  height: clamp(260px, 58vh, 620px);
+  width: auto;
+  max-width: calc(100% - 8px);
+  object-fit: contain;
+  object-position: top right;
+  user-select: none;
+}
+
+/* Narrow screens: no room for rails — the signpost hides, Olórin steps back to a
+   small corner presence, and the content column (rail margins only apply ≥1024px)
+   returns to full width. */
+@media (max-width: 1023px) {
+  .pdash-signpost {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .pdash-olorin {
+    width: min(300px, 60vw);
+  }
+  .pdash-olorin-art {
+    height: clamp(200px, 40vh, 340px);
+  }
+  .pdash-olorin-note {
+    left: clamp(12px, 4vw, 40px);
+    top: clamp(90px, 12vh, 130px);
+    max-width: min(220px, 56vw);
+  }
+}
+
+/* ══ INK SKETCH DECK ════════════════════════════════════════════════════════
+   Hand-drawn ink boards (rough.js) on cream sketch paper — no colour. One BIG
+   board per full-viewport snap slide; scrolling turns the page one board at a
+   time. Titles/names are hand-lettered (Caveat). Ink botanicals in the corners.
+   --sk-ink = ink, --sk-paper = board fill, --sk-page = the page. */
+.pdash-deck {
+  --sk-ink: #1c1917;
+  --sk-ink-soft: #4a4642;
+  --sk-paper: #ffffff;
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+  /* The app's graph-paper canvas (the tutor-canvas signature, same as the splash)
+     — subtle blue-grey grid on grey-lavender. The board is a B&W ink sketch on it. */
+  background-color: var(--page-bg, #eef0f3);
+  background-image:
+    linear-gradient(var(--grid-line, rgba(120, 140, 200, 0.1)) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line, rgba(120, 140, 200, 0.1)) 1px, transparent 1px);
+  background-size: 26px 26px;
+  color: var(--sk-ink);
+}
+.pdash-slide {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  padding: 96px clamp(14px, 3vw, 40px) 40px;
+  box-sizing: border-box;
+}
+
+/* The hand-drawn board — BIG (≈3× the old plank). rough.js draws the wobbly
+   outline into the SVG behind; content sits crisp on top. */
+.pdash-sketch {
+  position: relative;
+  width: min(1320px, 96vw);
+  min-height: min(66vh, 620px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(34px, 5vw, 76px);
+  color: var(--sk-ink);
+}
+.pdash-sketch--cover,
+.pdash-sketch--narration {
+  text-align: center;
+  align-items: center;
+}
+.pdash-sketch--wide {
+  min-height: min(72vh, 680px);
+}
+.pdash-sketch-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+.pdash-sketch-inner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+/* Ink botanicals — one sprig drawing, mirrored into each corner. */
+.pdash-flora {
+  position: absolute;
+  width: clamp(74px, 9vw, 122px);
+  height: clamp(74px, 9vw, 122px);
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.9;
+}
+.pdash-flora--tl {
+  top: -6px;
+  left: -6px;
+}
+.pdash-flora--tr {
+  top: -6px;
+  right: -6px;
+  transform: scaleX(-1);
+}
+.pdash-flora--bl {
+  bottom: -6px;
+  left: -6px;
+  transform: scaleY(-1);
+}
+.pdash-flora--br {
+  bottom: -6px;
+  right: -6px;
+  transform: scale(-1, -1);
+}
+
+/* Board content on paper — strip inner card chrome, ink the muted text. */
+.pdash-sketch .pdash-band {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+.pdash-sketch .pdash-band-title {
+  font-family: "Caveat", cursive;
+  font-size: clamp(28px, 4vw, 40px);
+  color: var(--sk-ink);
+}
+.pdash-sketch .pdash-band-lead,
+.pdash-sketch .par-muted,
+.pdash-sketch .pdash-story-line {
+  color: var(--sk-ink-soft);
+}
+
+.pdash-plank-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.pdash-plank-title {
+  font-family: "Caveat", cursive;
+  font-weight: 700;
+  font-size: clamp(30px, 4.4vw, 46px);
+  line-height: 1;
+  margin: 0;
+  color: var(--sk-ink);
+}
+
+/* Cover board — hand-lettered name + Shire address. */
+.pdash-nameplate-eyebrow {
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--sk-ink-soft);
+  font-weight: 600;
+}
+.pdash-nameplate-name {
+  font-family: "Caveat", cursive;
+  font-weight: 700;
+  font-size: clamp(64px, 13vw, 148px);
+  line-height: 0.98;
+  margin: 6px 0 8px;
+  color: var(--sk-ink);
+}
+.pdash-nameplate-addr {
+  font-family: "EB Garamond", Georgia, serif;
+  font-style: italic;
+  font-size: clamp(17px, 2.4vw, 26px);
+  color: var(--sk-ink-soft);
+}
+.pdash-cover-sub {
+  margin: 34px 0 0;
+  font-family: "Caveat", cursive;
+  font-size: clamp(16px, 2vw, 22px);
+  color: var(--sk-ink-soft);
+}
+
+/* Narration board (hand-lettered, typed). */
+.pdash-narration-eyebrow {
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--sk-ink-soft);
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+.pdash-narration-text {
+  font-family: "EB Garamond", Georgia, serif;
+  font-size: clamp(22px, 3vw, 34px);
+  line-height: 1.5;
+  color: var(--sk-ink);
+  min-height: 4.6em; /* holds ~3 lines while typing so nothing jumps */
+  max-width: 48ch; /* wide enough that the intro lands on ~3 lines */
+  margin: 0 auto;
+}
+/* The effort tally merged into slide 2, centred under Olórin's word. */
+.pdash-narration-metrics {
+  width: 100%;
+  max-width: 720px;
+  margin: 28px auto 0;
+}
+.pdash-sketch--narration .pdash-hero-sign {
+  font-family: "Caveat", cursive;
+  font-size: clamp(20px, 2.4vw, 28px);
+  color: var(--sk-ink-soft);
+  margin-top: 18px;
+}
+.pdash-sketch .pdash-olorin-caret {
+  background: var(--sk-ink);
+}
+
+/* ══ Who is Olórin? — a fixed pill on the deck; clicking reveals the guide. ══ */
+.pdash-who-pill {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: 1.5px solid var(--sk-ink, #1c1917);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--sk-ink, #1c1917);
+  font-family: "Caveat", cursive;
+  font-size: 19px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.pdash-who-pill:hover {
+  background: #f6f6f4;
+}
+.pdash-who-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 40px);
+}
+.pdash-who-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 22, 43, 0.42);
+  backdrop-filter: blur(2px);
+}
+.pdash-who-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: clamp(16px, 3vw, 30px);
+  width: min(720px, 100%);
+  max-height: min(86vh, 760px);
+  padding: clamp(20px, 3vw, 30px);
+  background: #fff;
+  border: 1.5px solid var(--sk-ink, #1c1917);
+  border-radius: 20px;
+  box-shadow: 0 30px 80px rgba(20, 22, 43, 0.28);
+  overflow: hidden;
+}
+.pdash-who-art {
+  flex: none;
+  width: clamp(150px, 26vw, 232px);
+  align-self: stretch;
+  object-fit: contain;
+  object-position: bottom center;
+  mix-blend-mode: multiply;
+  user-select: none;
+}
+.pdash-who-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pdash-who-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+  font-weight: 700;
+}
+.pdash-who-name {
+  font-family: "Caveat", cursive;
+  font-size: clamp(40px, 6vw, 60px);
+  line-height: 1;
+  margin: 4px 0 14px;
+  color: var(--sk-ink, #1c1917);
+}
+.pdash-who-role {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #2c2e44;
+  margin: 0 0 18px;
+}
+.pdash-who-soon {
+  margin-top: auto;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #3a3c52;
+  background: #f4f1ea;
+  border: 1px dashed var(--sk-ink-soft, #4a4642);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.pdash-who-soon-tag {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a5b12;
+  background: #f3e2b8;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.pdash-who-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--line, #d9dbe4);
+  background: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pdash-who-close:hover {
+  background: #f6f7fa;
+}
+@media (max-width: 560px) {
+  .pdash-who-card {
+    flex-direction: column;
+  }
+  .pdash-who-art {
+    width: 100%;
+    height: 190px;
+    align-self: center;
+  }
+}
+
+/* ══ REFER & EARN (S166) ═══════════════════════════════════════════════════════
+   A second bottom pill beside "Who is Olórin?". Anchored to the RIGHT rather
+   than sharing a centred dock with it: the who-pill is centred and already
+   founder-eyeballed, and re-centring a pair would move a thing that was signed
+   off. Below 700px the two would collide, so the refer pill lifts above it. */
+.pdash-ref-pill {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border: 1.5px solid var(--sk-ink, #1c1917);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--sk-ink, #1c1917);
+  font-family: "Caveat", cursive;
+  font-size: 19px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.pdash-ref-pill:hover { background: #f6f6f4; }
+.pdash-ref-pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--pm-green, #2f8f5b);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+@media (max-width: 700px) {
+  .pdash-ref-pill { bottom: 70px; }
+}
+
+/* The card reuses .pdash-who-card's shell (border, shadow, backdrop) and only
+   overrides what differs: one column instead of art + body. */
+.pdash-ref-card {
+  width: min(460px, 100%);
+  flex-direction: column;
+}
+.pdash-ref-body {
+  overflow-y: auto;
+}
+.pdash-ref-head {
+  margin: 4px 0 8px;
+  font-family: "Caveat", cursive;
+  font-size: 34px;
+  line-height: 1.05;
+  color: var(--sk-ink, #1c1917);
+}
+.pdash-ref-sub {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--pm-ink, #1f2430);
+}
+.pdash-ref-codebox {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pdash-ref-code {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  border: 1.5px dashed var(--sk-ink, #1c1917);
+  border-radius: 12px;
+  background: #fbfbf9;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-variant-numeric: tabular-nums;
+  user-select: all; /* one tap selects the whole code when clipboard is blocked */
+}
+.pdash-ref-copy,
+.pdash-ref-share {
+  appearance: none;
+  cursor: pointer;
+  border-radius: 12px;
+  border: 1.5px solid var(--sk-ink, #1c1917);
+  background: #fff;
+  color: var(--sk-ink, #1c1917);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pdash-ref-copy { flex: none; padding: 0 16px; }
+.pdash-ref-copy:hover { background: #f6f6f4; }
+.pdash-ref-share-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pdash-ref-share {
+  flex: 1;
+  width: 100%;
+  padding: 12px;
+  background: var(--sk-ink, #1c1917);
+  color: #fff;
+}
+.pdash-ref-share:hover { background: #33302c; }
+.pdash-ref-share--wa {
+  background: #25d366;
+  border-color: #1da851;
+  color: #08301a;
+}
+.pdash-ref-share--wa:hover { background: #1fbe5b; }
+.pdash-ref-share--ghost {
+  margin-top: 8px;
+  background: transparent;
+  color: var(--sk-ink, #1c1917);
+  font-weight: 600;
+}
+.pdash-ref-share--ghost:hover { background: #f6f6f4; }
+
+.pdash-ref-stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.pdash-ref-stat {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 12px;
+  background: #fbfbfd;
+}
+.pdash-ref-stat-n {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--pm-ink, #1f2430);
+}
+.pdash-ref-stat-l {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.pdash-ref-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.pdash-ref-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: #f7f7f9;
+  font-size: 13px;
+}
+.pdash-ref-item-who { font-weight: 600; word-break: break-all; }
+.pdash-ref-item-state { flex: none; color: #6b7280; }
+.pdash-ref-item-state.is-on { color: var(--pm-green, #2f8f5b); font-weight: 600; }
+
+.pdash-ref-inbound {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--pm-green-bg, #e7f2ec);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1f4d36;
+}
+
+/* ══ PROGRESS MAP — clean, full-screen chapter-by-chapter overview ═════════════
+   Deliberately NOT in the sketch theme: neutral surface, real progress bars,
+   restrained palette — a view a parent reads as data they can trust. */
+:root {
+  --pm-green: #2f8f5b;
+  --pm-green-bg: #e7f2ec;
+  --pm-yellow: #c79214;
+  --pm-yellow-bg: #f7efd8;
+  --pm-red: #cf5f3c;
+  --pm-red-bg: #f6e5dd;
+  --pm-gray: #9aa0ac;
+  --pm-gray-bg: #f0f1f4;
+  --pm-ink: #1f2430;
+  --pm-ink-soft: #5b6170;
+}
+.pdash-pm-pill {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  appearance: none;
+  cursor: pointer;
+  padding: 9px 16px 9px 13px;
+  border-radius: 10px;
+  border: 1px solid #d7dae1;
+  background: #ffffff;
+  color: var(--pm-ink);
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgba(20, 22, 43, 0.1);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.pdash-pm-pill:hover {
+  transform: translateX(-50%) translateY(-1px);
+  border-color: #b9bec9;
+  box-shadow: 0 8px 20px rgba(20, 22, 43, 0.16);
+}
+.pdash-pm-pill-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  width: 15px;
+  height: 15px;
+}
+.pdash-pm-pill-grid i {
+  border-radius: 2px;
+}
+.pdash-pm-pill-grid i:nth-child(1) { background: var(--pm-green); }
+.pdash-pm-pill-grid i:nth-child(2) { background: var(--pm-yellow); }
+.pdash-pm-pill-grid i:nth-child(3) { background: var(--pm-gray); }
+.pdash-pm-pill-grid i:nth-child(4) { background: var(--pm-red); }
+
+.pdash-pm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.pdash-pm-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 24, 34, 0.5);
+  backdrop-filter: blur(3px);
+}
+.pdash-pm-sheet {
+  position: relative;
+  z-index: 1;
+  width: min(1160px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 32px 36px 40px;
+  border-radius: 16px;
+  border: 1px solid #e5e7ec;
+  background: #ffffff;
+  box-shadow: 0 30px 70px rgba(15, 18, 30, 0.35);
+}
+.pdash-pm-close {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  z-index: 2;
+  appearance: none;
+  cursor: pointer;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid #e0e2e8;
+  background: #f7f8fa;
+  color: var(--pm-ink-soft);
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.pdash-pm-close:hover {
+  background: var(--pm-ink);
+  color: #fff;
+}
+.pdash-pm-head {
+  margin-bottom: 18px;
+}
+.pdash-pm-title {
+  margin: 0;
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 25px;
+  line-height: 1.15;
+  color: var(--pm-ink);
+}
+.pdash-pm-sub {
+  margin: 6px 0 0;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  color: var(--pm-ink-soft);
+}
+.pdash-pm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding-bottom: 20px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #eef0f3;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13px;
+  color: var(--pm-ink-soft);
+}
+.pdash-pm-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pdash-pm-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+.pdash-pm-dot.is-green { background: var(--pm-green); }
+.pdash-pm-dot.is-yellow { background: var(--pm-yellow); }
+.pdash-pm-dot.is-red { background: var(--pm-red); }
+.pdash-pm-dot.is-gray { background: var(--pm-gray); }
+
+.pdash-pm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding-top: 22px;
+}
+.pdash-pm-subject-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.pdash-pm-subject-name {
+  margin: 0;
+  font-family: var(--font-display, Fredoka, sans-serif);
+  font-size: 19px;
+  color: var(--pm-ink);
+}
+.pdash-pm-subject-sum {
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pm-ink-soft);
+  white-space: nowrap;
+}
+.pdash-pm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.pdash-pm-tile {
+  padding: 14px 15px 15px;
+  border-radius: 11px;
+  border: 1px solid #e6e8ed;
+  border-left-width: 4px;
+  background: #fff;
+  font-family: var(--font-body, Inter, sans-serif);
+}
+.pdash-pm-tile.is-green { border-left-color: var(--pm-green); background: var(--pm-green-bg); }
+.pdash-pm-tile.is-yellow { border-left-color: var(--pm-yellow); background: var(--pm-yellow-bg); }
+.pdash-pm-tile.is-red { border-left-color: var(--pm-red); background: var(--pm-red-bg); }
+.pdash-pm-tile.is-gray { border-left-color: var(--pm-gray); background: var(--pm-gray-bg); }
+.pdash-pm-tile-name {
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--pm-ink);
+}
+.pdash-pm-tile-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 7px 0 10px;
+}
+.pdash-pm-tile-state {
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.pdash-pm-tile.is-green .pdash-pm-tile-state { color: var(--pm-green); }
+.pdash-pm-tile.is-yellow .pdash-pm-tile-state { color: #a9790a; }
+.pdash-pm-tile.is-red .pdash-pm-tile-state { color: var(--pm-red); }
+.pdash-pm-tile.is-gray .pdash-pm-tile-state { color: var(--pm-gray); }
+.pdash-pm-tile-count {
+  font-size: 12px;
+  color: var(--pm-ink-soft);
+  white-space: nowrap;
+}
+.pdash-pm-tile-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(20, 24, 34, 0.08);
+  overflow: hidden;
+}
+.pdash-pm-tile-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.pdash-pm-tile.is-green .pdash-pm-tile-fill { background: var(--pm-green); }
+.pdash-pm-tile.is-yellow .pdash-pm-tile-fill { background: var(--pm-yellow); }
+.pdash-pm-tile.is-red .pdash-pm-tile-fill { background: var(--pm-red); }
+.pdash-pm-tile.is-gray .pdash-pm-tile-fill { background: var(--pm-gray); }
+
+@media (max-width: 560px) {
+  .pdash-pm-sheet {
+    padding: 26px 18px 30px;
+  }
+  .pdash-pm-title {
+    font-size: 21px;
+  }
+}

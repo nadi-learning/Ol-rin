@@ -11,14 +11,17 @@
   "dependencies": {
     "@trpc/client": "^11.0.0",
     "better-auth": "^1.1.0",
+    "framer-motion": "^12.42.2",
     "heic2any": "^0.0.4",
     "katex": "^0.17.0",
     "qrcode.react": "^4.2.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.10.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
+    "roughjs": "^4.6.6",
     "superjson": "^2.2.1"
   },
   "devDependencies": {

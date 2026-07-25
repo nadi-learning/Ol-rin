@@ -790,6 +790,10 @@ export type CrossConceptFlagView = {
   fromSubTopicId: string | null;
   fromSubTopicName: string | null; // where the student was working when the OTHER skill broke
   addressedAt: Date | null;
+  /** CLOCK-3 — the tutor's human-authored "what's being done"; NULL → page shows a generated default. */
+  plan: string | null;
+  /** When the human plan sentence was last written (dates human text; generated fallbacks stay undated). */
+  planUpdatedAt: Date | null;
   createdAt: Date;
 };
 
@@ -825,6 +829,8 @@ export async function getCrossConceptFlags(
       fromSubTopicId: crossConceptFlag.fromSubTopicId,
       fromSubTopicName: subTopic.name,
       addressedAt: crossConceptFlag.addressedAt,
+      plan: crossConceptFlag.plan,
+      planUpdatedAt: crossConceptFlag.planUpdatedAt,
       createdAt: crossConceptFlag.createdAt,
     })
     .from(crossConceptFlag)
@@ -842,10 +848,20 @@ export class FlagNotFoundError extends Error {
   }
 }
 
-/** Close (or re-open) a cross-concept flag once the tutor has acted on it. */
+/**
+ * Close (or re-open) a cross-concept flag once the tutor has acted on it, and/or
+ * write the CLOCK-3 human plan ("what's being done" — parent dashboard element 6).
+ *
+ * `addressed` and `plan` are INDEPENDENT: the checkbox and the text box submit
+ * through this one surface, but either can move without the other. `plan` is
+ * tri-state to keep an unrelated toggle from wiping an authored sentence:
+ *   - undefined → leave the existing plan untouched (a bare addressed-toggle),
+ *   - non-empty string → set it, stamping `plan_updated_at`/`plan_by`,
+ *   - "" or null → clear it (revert the page to its generated default).
+ */
 export async function setCrossConceptFlagAddressed(
   tx: Tx,
-  args: { tutorUserId: string; flagId: string; addressed: boolean },
+  args: { tutorUserId: string; flagId: string; addressed: boolean; plan?: string | null },
 ): Promise<CrossConceptFlagView> {
   const [flag] = await tx
     .select()
@@ -854,12 +870,20 @@ export async function setCrossConceptFlagAddressed(
   if (!flag) throw new FlagNotFoundError(args.flagId);
   await assertTutorsStudent(tx, args.tutorUserId, flag.studentId);
 
+  const set: Partial<typeof crossConceptFlag.$inferInsert> = {
+    addressedAt: args.addressed ? new Date() : null,
+    addressedBy: args.addressed ? args.tutorUserId : null,
+  };
+  if (args.plan !== undefined) {
+    const trimmed = args.plan?.trim() || null;
+    set.plan = trimmed;
+    set.planUpdatedAt = trimmed ? new Date() : null;
+    set.planBy = trimmed ? args.tutorUserId : null;
+  }
+
   await tx
     .update(crossConceptFlag)
-    .set({
-      addressedAt: args.addressed ? new Date() : null,
-      addressedBy: args.addressed ? args.tutorUserId : null,
-    })
+    .set(set)
     .where(eq(crossConceptFlag.id, args.flagId));
 
   const [view] = await getCrossConceptFlags(tx, {

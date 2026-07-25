@@ -509,3 +509,47 @@ export async function getActiveAuthoringJob(
     return { jobId, phase: "draft" };
   }
 }
+
+// ───────────────────────── Slice CLOCK-2 — monthly snapshot ─────────────────────
+//
+// A single GLOBAL clock (no per-item enqueue): a BullMQ repeatable job fires on
+// the 1st of each month and freezes every student's mastery rollup (see
+// snapshot.ts). No job data carries a board — the handler enumerates boards and
+// snapshots each under its own claim. `period` is optional: the repeatable leaves
+// it empty and the handler derives it from the fire time, so every iteration
+// stamps the month it actually ran in; a manual backfill passes an explicit one.
+export const SNAPSHOT_QUEUE = "b2c.snapshot";
+
+export interface SnapshotJobData {
+  period?: string; // YYYY-MM-01; omitted on the repeatable → handler uses now()
+}
+
+export const snapshotQueue = new Queue<SnapshotJobData>(SNAPSHOT_QUEUE, {
+  connection: redisConnection,
+  defaultJobOptions: {
+    // Idempotent by construction (ON CONFLICT DO NOTHING per student); a couple
+    // of retries absorb a transient DB blip without ever double-writing.
+    attempts: 3,
+    removeOnComplete: { age: 30 * 24 * 3_600 }, // keep a month of run receipts
+    removeOnFail: { age: 30 * 24 * 3_600 },
+  },
+});
+
+// 03:00 UTC on the 1st of every month. Off-peak, and comfortably after any
+// month-end tutor finalizes have settled. Tune here.
+const MONTHLY_SNAPSHOT_PATTERN = "0 3 1 * *";
+
+/**
+ * Register the monthly snapshot as a BullMQ repeatable — this is the CLOCK's "on
+ * switch". Idempotent: BullMQ keys a repeatable by (name, pattern, jobId), so
+ * calling this on every worker boot never stacks duplicates. The clock only
+ * captures from the moment it is first switched on (deployed) — there is no
+ * backfill of months that predate it (scripts/snapshot_monthly.ts can seed one).
+ */
+export async function ensureMonthlySnapshotSchedule(): Promise<void> {
+  await snapshotQueue.add(
+    "monthly",
+    {},
+    { repeat: { pattern: MONTHLY_SNAPSHOT_PATTERN }, jobId: "monthly-snapshot" },
+  );
+}

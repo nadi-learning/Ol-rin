@@ -209,6 +209,59 @@
   color: var(--ink-soft);
 }
 
+/* S165 — dev sign-in, LOCAL ONLY. Sits under the note, separated by a hairline
+   so it reads as a developer aside, not part of the real (Google) sign-in. */
+.ag-dev {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+.ag-dev-label {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.ag-dev-row {
+  display: flex;
+  gap: 8px;
+}
+.ag-dev-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  background: #fff;
+  color: var(--ink);
+}
+.ag-dev-input:focus {
+  outline: none;
+  border-color: var(--emerald);
+}
+.ag-dev-btn {
+  flex: none;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  background: var(--emerald);
+  cursor: pointer;
+}
+.ag-dev-btn:hover { filter: brightness(1.05); }
+.ag-dev-btn:disabled { opacity: 0.5; cursor: default; }
+.ag-dev-err {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: #9b1c1c;
+}
+
 @media (max-width: 820px) {
   .ag-phrase {
     display: none;

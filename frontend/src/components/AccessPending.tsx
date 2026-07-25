@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { trpc } from "../trpc";
 import "./access-pending.css";
 
 // The waiting room — founder's ask this session.
@@ -7,10 +9,15 @@ import "./access-pending.css";
 // claim is real and recorded; the capability is not granted yet.
 //
 // Why it is a SIGNBOARD and not an error page: the person did nothing wrong and
-// nothing is broken. There is exactly one thing for them to do — call us — so
-// the page is that number, at a size you can read across a room, and almost
-// nothing else. A "request access" button would be a lie: there is no queue on
-// the other end of it, only a phone.
+// nothing is broken. For a TUTOR there is exactly one thing to do — call us — so
+// the page is that number, at a size you can read across a room, and little else.
+//
+// S165 — the PARENT case is no longer a dead phone number. A parent can now
+// self-serve: they tell us the email/phone on their child's account and it lands
+// as a pending request for an admin to match + link (parentLink.request, the
+// board-less sessionProcedure). So the parent branch grows an inline form +
+// their request statuses, with the phone kept as a fallback. The tutor branch is
+// unchanged — there is still no self-serve tutor onboarding.
 //
 // All classes are `.shire-`-scoped (the revision-shell.css global-leak
 // discipline, same as .par-/.tut-/.crew-).
@@ -119,10 +126,16 @@ export function AccessPending({
             <p className="shire-body">
               {role === "tutor"
                 ? "We set tutor accounts up by hand, so you're matched with the right students before you start."
-                : "We set parent accounts up by hand, so you're linked to your own child and nobody else's."}
+                : "You're one step from your child's progress. Tell us the email or phone on their account and we'll connect you."}
             </p>
+
+            {/* S165 — parent self-serve linking. Tutors keep the call-us flow. */}
+            {role === "parent" && <ParentLinkRequest />}
+
             <p className="shire-foot">
-              Give us a ring on the number above and we'll switch this on for you.
+              {role === "tutor"
+                ? "Give us a ring on the number above and we'll switch this on for you."
+                : "Prefer to sort it out by phone? Give us a ring on the number above."}
             </p>
 
             {/* 🔑 S124 — THE WAY BACK. Only rendered when this identity holds a
@@ -153,6 +166,199 @@ export function AccessPending({
           </div>
         </section>
       </main>
+    </div>
+  );
+}
+
+type LinkRequest = Awaited<ReturnType<typeof trpc.parentLink.myRequests.query>>[number];
+type RedeemOutcome = Awaited<
+  ReturnType<typeof trpc.parentLink.request.mutate>
+>["referral"];
+
+/**
+ * S166 — what to say about the referral code they typed.
+ *
+ * Each refusal gets its OWN sentence rather than a shared "invalid code": the
+ * four states are genuinely different problems for the person reading them, and
+ * only one of them ("we don't recognise that") is worth retyping the code over.
+ * `none` returns null — saying nothing about a field they left blank is correct.
+ */
+function referralNote(r: RedeemOutcome): { ok: boolean; text: string } | null {
+  switch (r.state) {
+    case "applied":
+      return {
+        ok: true,
+        text: `Code applied — ${r.percentOff}% off your first ${r.months} months is on your account.`,
+      };
+    case "unknown_code":
+      return { ok: false, text: "We don't recognise that code — check it and try again." };
+    case "self":
+      return { ok: false, text: "That's your own code — share it with someone else instead." };
+    case "already_referred":
+      return { ok: false, text: "A referral code is already on your account." };
+    case "none":
+      return null;
+  }
+}
+
+/**
+ * S165 — the parent's self-serve link-request form, shown in the waiting room.
+ *
+ * The parent is board-LESS here (no linked child yet), so this rides
+ * `parentLink.*` — the board-less `sessionProcedure` namespace. Submitting files
+ * a `pending` row against the raw email/phone; an admin matches it to a student
+ * on their board and links, at which point a reload boots the parent into their
+ * real dashboard (whoami now derives the board from the linked child).
+ *
+ * The submit is idempotent server-side (re-sending the same identifier while
+ * pending returns the existing row), so a double-tap can't stack duplicates.
+ */
+function ParentLinkRequest() {
+  const [requests, setRequests] = useState<LinkRequest[] | null>(null);
+  const [identifier, setIdentifier] = useState("");
+  // S166 — the optional referral code, captured in the SAME form (founder:
+  // "alongside student email/phone"). This is the one moment a brand-new parent
+  // is in front of us, so it is the only place a code can be entered.
+  const [code, setCode] = useState("");
+  const [codeNote, setCodeNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function load() {
+    trpc.parentLink.myRequests
+      .query()
+      .then(setRequests)
+      .catch((e) => setError(String(e?.message ?? e)));
+  }
+  useEffect(load, []);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const id = identifier.trim();
+    if (!id || busy) return;
+    setBusy(true);
+    setError(null);
+    setCodeNote(null);
+    try {
+      const res = await trpc.parentLink.request.mutate({
+        identifier: id,
+        referralCode: code.trim() || undefined,
+      });
+      setIdentifier("");
+      // The code NEVER fails the request (services/referral.ts) — the server
+      // reports what happened to it separately, so say so rather than leaving a
+      // parent to wonder whether their 25% landed.
+      setCodeNote(referralNote(res.referral));
+      if (res.referral.state === "applied") setCode("");
+      load();
+    } catch (err: any) {
+      setError(String(err?.message ?? err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Once an admin links a request, a reload re-boots into the real parent
+  // surface — so a `linked` request short-circuits the whole form into a
+  // "you're connected, refresh" card rather than inviting another request.
+  const linked = requests?.find((r) => r.status === "linked");
+  if (linked) {
+    return (
+      <div className="shire-link shire-link--done" role="status">
+        <p className="shire-link-done-head">You're connected.</p>
+        <p className="shire-link-done-sub">
+          We've matched you to your child's account.
+        </p>
+        <button className="shire-link-btn" onClick={() => window.location.reload()}>
+          Open the dashboard
+        </button>
+      </div>
+    );
+  }
+
+  const pending = (requests ?? []).filter((r) => r.status === "pending");
+  const rejected = (requests ?? []).filter((r) => r.status === "rejected");
+
+  return (
+    <div className="shire-link">
+      <form className="shire-link-form" onSubmit={onSubmit}>
+        <input
+          className="shire-link-input"
+          type="text"
+          inputMode="email"
+          autoComplete="off"
+          placeholder="Child's email or phone"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          disabled={busy}
+          aria-label="Your child's email or phone number"
+        />
+        {/* S166 — optional, and it LOOKS optional: a quieter field below the one
+            that matters, with the offer stated so the label is a reason rather
+            than a demand. `autoCapitalize`/`spellCheck` off because codes are
+            upper-case 7-char tokens a phone keyboard would otherwise mangle
+            (the server normalizes anyway — this just avoids the surprise). */}
+        <input
+          className="shire-link-input shire-link-input--code"
+          type="text"
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+          placeholder="Referral code (optional)"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          disabled={busy}
+          aria-label="Referral code, if someone gave you one"
+        />
+        <button
+          className="shire-link-btn"
+          type="submit"
+          disabled={!identifier.trim() || busy}
+        >
+          {busy ? "Sending…" : "Connect"}
+        </button>
+      </form>
+
+      <p className="shire-link-hint">
+        Got a code from another parent? Enter it for 25% off your first 3 months.
+      </p>
+
+      {codeNote && (
+        <p
+          className={`shire-link-code-note${codeNote.ok ? " is-ok" : ""}`}
+          role="status"
+        >
+          {codeNote.text}
+        </p>
+      )}
+
+      {error && <p className="shire-link-error">{error}</p>}
+
+      {pending.length > 0 && (
+        <ul className="shire-link-list">
+          {pending.map((r) => (
+            <li key={r.id} className="shire-link-item">
+              <span className="shire-link-dot shire-link-dot--wait" aria-hidden="true" />
+              <span className="shire-link-id">{r.enteredIdentifier}</span>
+              <span className="shire-link-state">waiting for us to match this</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {rejected.length > 0 && (
+        <ul className="shire-link-list">
+          {rejected.map((r) => (
+            <li key={r.id} className="shire-link-item shire-link-item--off">
+              <span className="shire-link-dot shire-link-dot--off" aria-hidden="true" />
+              <span className="shire-link-id">{r.enteredIdentifier}</span>
+              <span className="shire-link-state">
+                we couldn't match this — check it and try again
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

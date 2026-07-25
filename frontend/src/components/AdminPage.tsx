@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getAdminBoard, setAdminBoard, trpc } from "../trpc";
 import { AdminPeoplePanel } from "./AdminPeoplePanel";
 import { AdminChaptersPanel } from "./AdminChaptersPanel";
+import { AdminRequestsPanel } from "./AdminRequestsPanel";
+import { AdminReferralsPanel } from "./AdminReferralsPanel";
 import "./admin.css";
 
 type BoardOption = Awaited<ReturnType<typeof trpc.session.listBoards.query>>[number];
@@ -34,7 +36,16 @@ export function AdminPage({
   // admin arrives for; people is the new capability the whitelist's death
   // requires. Local state, not a route — AdminPage is already reached by role
   // routing, not by URL, so a router would be the only URL-aware thing here.
-  const [tab, setTab] = useState<"ingest" | "chapters" | "people">("ingest");
+  const [tab, setTab] = useState<
+    "ingest" | "chapters" | "people" | "requests" | "referrals"
+  >("ingest");
+
+  // S165 — the pending-parent-request badge on the Requests tab. Fetched here
+  // (not in the panel) so the count shows even while the admin is on another
+  // tab; `reqNonce` bumps after a resolve so the badge decrements. Board-scoped
+  // like the panel, so it re-fetches when the board switches.
+  const [pendingReqs, setPendingReqs] = useState(0);
+  const [reqNonce, setReqNonce] = useState(0);
 
   // ADM-CH — the admin's board. Every admin.* call is board-scoped (x-board),
   // but the founder is admin-only with no student board to borrow → without this
@@ -94,6 +105,18 @@ export function AdminPage({
   }
   // Re-fetch on board change — chapters are board-scoped.
   useEffect(loadChapters, [board]);
+
+  // Keep the Requests-tab badge current. Board-scoped (candidates resolve on the
+  // admin's board), so it re-runs on board change; `reqNonce` re-runs it after a
+  // resolve. Failures are swallowed to a 0 badge — a broken count must never
+  // block the content/people tools.
+  useEffect(() => {
+    if (!board) return;
+    trpc.admin.listParentLinkRequests
+      .query()
+      .then((rs) => setPendingReqs(rs.length))
+      .catch(() => setPendingReqs(0));
+  }, [board, reqNonce]);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -177,7 +200,16 @@ export function AdminPage({
       <header className="adm-header">
         <div>
           <div className="adm-eyebrow">
-            Admin · {tab === "ingest" ? "topics.md ingest" : tab === "chapters" ? "add chapters" : "people"}
+            Admin ·{" "}
+            {tab === "ingest"
+              ? "topics.md ingest"
+              : tab === "chapters"
+                ? "add chapters"
+                : tab === "requests"
+                  ? "parent requests"
+                  : tab === "referrals"
+                    ? "referral ledger"
+                    : "people"}
           </div>
           <h1 className="adm-title">{adminName}</h1>
         </div>
@@ -222,9 +254,34 @@ export function AdminPage({
         >
           People
         </button>
+        <button
+          className={`adm-tab${tab === "requests" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("requests")}
+        >
+          Requests
+          {pendingReqs > 0 && <span className="adm-tab-badge">{pendingReqs}</span>}
+        </button>
+        {/* S166 — the referral ledger. No badge and no board gate: unlike every
+            other tab this list is GLOBAL (a referral has no board), and there is
+            no "pending action" count worth chasing an admin with — qualifying
+            waits on a billing fact from outside the app, not on their attention. */}
+        <button
+          className={`adm-tab${tab === "referrals" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("referrals")}
+        >
+          Referrals
+        </button>
       </nav>
 
-      {tab === "people" ? (
+      {tab === "referrals" ? (
+        <AdminReferralsPanel />
+      ) : tab === "requests" ? (
+        board ? (
+          <AdminRequestsPanel board={board} onResolved={() => setReqNonce((n) => n + 1)} />
+        ) : (
+          <p className="adm-muted">Pick a board to see parent link requests.</p>
+        )
+      ) : tab === "people" ? (
         <AdminPeoplePanel adminEmail={adminEmail} />
       ) : tab === "chapters" ? (
         board ? (

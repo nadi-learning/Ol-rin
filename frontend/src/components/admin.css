@@ -482,7 +482,252 @@
 .adm-group .adm-links { margin-top: 6px; }
 .adm-group-empty { margin: 6px 0 0; }
 
+/* S165 — parent link requests (Requests tab). A count badge on the tab, then a
+   list of request cards: parent head · the identifier they gave · radio-picked
+   candidate students on this board · Link / Dismiss. */
+.adm-tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 17px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  color: #fff;
+  background: #e87b35;
+  border-radius: 9px;
+  vertical-align: 1px;
+}
+
+.adm-req-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+.adm-req {
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 10px;
+  padding: 14px;
+  background: #fbfaf8;
+}
+.adm-req-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.adm-req-name { font-weight: 600; }
+.adm-req-email {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  word-break: break-all;
+}
+.adm-req-identifier {
+  font-size: 12.5px;
+  color: var(--ink-soft, #6b6459);
+  margin: 6px 0 10px;
+}
+.adm-req-identifier b { color: var(--ink, #33302b); word-break: break-all; }
+.adm-req-empty { margin: 0 0 10px; }
+
+.adm-req-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.adm-req-cand {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.adm-req-cand:hover { border-color: #c9c0b2; }
+.adm-req-cand input { margin-top: 3px; flex: none; }
+.adm-req-cand-off { opacity: 0.6; cursor: default; }
+.adm-req-cand-off:hover { border-color: var(--line, #e6e0d7); }
+.adm-req-cand-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.adm-req-cand-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.adm-req-cand-class {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-req-cand-email {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  word-break: break-all;
+}
+.adm-req-cand-flag {
+  font-size: 11.5px;
+  color: #9b6b1c;
+  margin-top: 2px;
+}
+.adm-req-note {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  margin: 0 0 10px;
+}
+.adm-req-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.adm-req-actions .adm-btn { flex: none; }
+
+/* ── S166 · REFERRAL LEDGER ────────────────────────────────────────────────── */
+
+/* Two button modifiers this panel needs: rows carry per-reward actions, so the
+   full-size .adm-btn would dominate a line of text, and a destructive "Void"
+   should not read as loud as the action beside it. */
+.adm-btn-sm {
+  align-self: center;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  border-radius: 7px;
+}
+.adm-btn-ghost {
+  background: transparent;
+  color: var(--ink-soft, #8a8175);
+  border: 1px solid var(--border, #d9cbb6);
+}
+.adm-btn-ghost:hover:not(:disabled) {
+  background: #fbf7f0;
+  color: var(--ink, #2b1908);
+}
+
+.adm-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.adm-ref-row {
+  border: 1px solid var(--border, #d9cbb6);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fffdfa;
+}
+.adm-ref-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.adm-ref-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.adm-ref-name { font-size: 14px; font-weight: 600; }
+.adm-ref-kind {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: #efe9dd;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-ref-arrow { color: var(--ink-soft, #8a8175); }
+
+.adm-ref-status {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.adm-ref-status--pending { background: #f7efd8; color: #9b6b1c; }
+.adm-ref-status--qualified { background: #e7f2ec; color: #1c6b3a; }
+.adm-ref-status--void { background: #f0f1f4; color: #6b7280; }
+
+.adm-ref-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+  word-break: break-all;
+}
+.adm-ref-code {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink, #2b1908);
+  background: #f3ede2;
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.adm-ref-rewards {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.adm-ref-reward {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #f7f4ee;
+  font-size: 13px;
+}
+.adm-ref-reward-l { flex: 1; min-width: 160px; }
+.adm-ref-chip {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.adm-ref-chip--pending { background: #f7efd8; color: #9b6b1c; }
+.adm-ref-chip--redeemed { background: #e7f2ec; color: #1c6b3a; }
+.adm-ref-chip--void { background: #eceef2; color: #6b7280; }
+.adm-ref-when { flex: none; font-size: 12px; }
+
+.adm-ref-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.adm-ref-actions .adm-btn { flex: none; align-self: center; }
+
 @media (max-width: 560px) {
   .adm-row { flex-wrap: wrap; }
   .adm-table td:last-child { white-space: normal; }
+  .adm-ref-reward-l { min-width: 100%; }
 }

@@ -1,5 +1,7 @@
 import { UnrecoverableError, Worker } from "bullmq";
+import { board } from "@b2c/kernel/schema";
 import { redisConnection } from "../redis/connection";
+import { db } from "../db/client";
 import { withBoard } from "../db/with-board";
 import { __aiConfigured } from "../services/ai/gemini";
 import { extractTopicsMd } from "../services/admin_ingest";
@@ -7,17 +9,21 @@ import { authorFromChat, planFromChat, reviseDraft } from "../services/authoring
 import { scoreAttempt } from "../services/assessment";
 import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
+import { monthPeriod, runMonthlySnapshot } from "../services/snapshot";
 import {
   ASSESSMENT_QUEUE,
   AUTHORING_QUEUE,
   type AuthoringJobData,
   type AuthoringJobResult,
   CONTENT_QUEUE,
+  ensureMonthlySnapshotSchedule,
   type ExtractTopicsJobData,
   GENERATE_IMAGE_QUEUE,
   type GenerateImageJobData,
   REVISE_QUEUE,
   type ReviseJobData,
+  SNAPSHOT_QUEUE,
+  type SnapshotJobData,
   type Stage1JobData,
 } from "./queue";
 
@@ -217,8 +223,52 @@ authoringWorker.on("failed", (job, err) =>
   ),
 );
 
+// Slice CLOCK-2 — monthly mastery snapshot. A GLOBAL clock (no per-item job): one
+// repeatable fires monthly and freezes every student's mastery rollup so the
+// parent dashboard's "was 19 last month" number can't drift. The handler carries
+// no board — it enumerates boards (global table) and snapshots each under its own
+// claim (RLS). `period` defaults to the fire-time month; a manual/backfill run
+// passes an explicit one. Idempotent (ON CONFLICT DO NOTHING) → retries + a
+// second same-month fire are both safe. concurrency 1 — a once-a-month sweep.
+const snapshotWorker = new Worker<SnapshotJobData>(
+  SNAPSHOT_QUEUE,
+  async (job) => {
+    const period = job.data.period || monthPeriod(new Date());
+    const boards = await db.select({ id: board.id }).from(board);
+    let written = 0;
+    let skipped = 0;
+    for (const b of boards) {
+      const r = await withBoard(b.id, (tx) =>
+        runMonthlySnapshot(tx, { boardId: b.id, period }),
+      );
+      written += r.written;
+      skipped += r.skipped;
+    }
+    return { period, boards: boards.length, written, skipped };
+  },
+  { connection: redisConnection, concurrency: 1 },
+);
+
+snapshotWorker.on("completed", (job, res) =>
+  console.log(
+    `[b2c-worker] monthly snapshot ${res?.period ?? job.data.period ?? "?"}: ` +
+      `${res?.written ?? 0} written, ${res?.skipped ?? 0} already-captured ` +
+      `across ${res?.boards ?? 0} board(s)`,
+  ),
+);
+snapshotWorker.on("failed", (job, err) =>
+  console.error(
+    `[b2c-worker] monthly snapshot FAILED (${job?.data.period ?? "auto"}): ${err.message}`,
+  ),
+);
+
+// Switch the monthly clock on (idempotent — BullMQ dedupes the repeatable by key).
+ensureMonthlySnapshotSchedule().catch((e) =>
+  console.error("[b2c-worker] could not register monthly snapshot schedule", e),
+);
+
 console.log(
-  `[b2c-worker] up — assessment + image-render + content-extract + revise + authoring processors registered ` +
+  `[b2c-worker] up — assessment + image-render + content-extract + revise + authoring + monthly-snapshot processors registered ` +
     `(AI ${__aiConfigured() ? "configured" : "DISABLED: no GEMINI_API_KEY — jobs will fail loudly"})`,
 );
 

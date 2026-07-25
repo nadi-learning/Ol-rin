@@ -1,0 +1,1 @@
+ALTER TABLE "practice_session" ADD COLUMN "dispatch_reason" text;

@@ -171,6 +171,128 @@ export const parent = pgTable(
   (t) => [check("parent_status_check", sql`${t.status} IN ('active','inactive')`)],
 );
 
+// Parent→student LINK REQUEST — the self-serve staging queue (S164). A parent
+// signs up (board-less, no linked child yet) and submits the email/phone they
+// use for their child; the request lands here as `pending` and surfaces in the
+// admin dashboard, where an admin resolves it to a real student on their board
+// and links via the existing `linkStudent` (which flips `student.parent_id`).
+//
+// GLOBAL — NO board_id, NO RLS — on purpose, exactly like `app_user`/`parent`:
+// the requesting parent has no board to scope the row to (that is what they are
+// asking the admin to establish). Candidate-student resolution happens on the
+// ADMIN side, inside the admin's board-scoped tx, so the board wall still holds
+// for the linking action itself. The entered identifier is stored RAW (an email
+// or a phone) and matched at read time — never trusted as a foreign key.
+export const parentLinkRequest = pgTable(
+  "parent_link_request",
+  {
+    id: id(),
+    // The requesting parent PROFILE (user_type='parent'); cascade with identity.
+    parentUserId: uuid("parent_user_id")
+      .notNull()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    // Raw email OR phone the parent typed for their child. Matched, not FK'd.
+    enteredIdentifier: text("entered_identifier").notNull(),
+    // pending → the admin worklist; linked/rejected → closed (terminal).
+    status: text("status").notNull().default("pending"),
+    // Set when an admin closes it: which student it resolved to, who actioned it.
+    resolvedStudentId: uuid("resolved_student_id").references(() => appUser.id),
+    resolvedBy: uuid("resolved_by").references(() => appUser.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check(
+      "parent_link_request_status_check",
+      sql`${t.status} IN ('pending','linked','rejected')`,
+    ),
+  ],
+);
+
+// ── Referrals (Slice REFERRAL-1, S166) ───────────────────────────────────────
+//
+// The relationship: one row per person who was REFERRED. `app_user.referral_code`
+// (above) is the share-out-loud artifact and already existed; these two tables are
+// the redemption side — who used whose code, and what each side is owed.
+//
+// GLOBAL — NO board_id, NO RLS — for the same reason as `parent_link_request`:
+// a code is redeemed by a board-LESS parent at the moment they sign up, before
+// any child is linked. There is also no honest board to put on the row afterwards
+// — a referral spans two identities who may sit on different boards, or on none.
+// The admin ledger is therefore global too (see services/referral.ts).
+export const referral = pgTable(
+  "referral",
+  {
+    id: id(),
+    // Whose code was used. Any profile may refer — codes are minted for every
+    // user_type — so this is deliberately not restricted to parents.
+    referrerUserId: uuid("referrer_user_id")
+      .notNull()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    // Who redeemed it. UNIQUE: a person is referred once, ever. That single
+    // constraint is what stops a parent stacking codes for repeat discounts,
+    // and it does so in the DB rather than in a service that could be bypassed.
+    referredUserId: uuid("referred_user_id")
+      .notNull()
+      .unique()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    // The code AS MATCHED (normalized), snapshotted. `referral_code` is mutable
+    // in principle and the referrer's row could be reissued one; the ledger must
+    // still be able to say which string was actually redeemed that day.
+    codeUsed: text("code_used").notNull(),
+    // pending → qualified (admin confirms month 1 was booked) | void.
+    status: text("status").notNull().default("pending"),
+    resolvedBy: uuid("resolved_by").references(() => appUser.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("referral_status_check", sql`${t.status} IN ('pending','qualified','void')`),
+    // Self-referral is also blocked in the service with a typed error (so the UI
+    // can say something kind), but the CHECK is what makes it impossible.
+    check("referral_no_self_check", sql`${t.referrerUserId} <> ${t.referredUserId}`),
+    index("referral_referrer_idx").on(t.referrerUserId),
+  ],
+);
+
+// What each side of a referral is OWED. Two rows per referral (referrer +
+// referred), written at capture time in `pending`.
+//
+// The terms are COPIED here, not looked up from REFERRAL_OFFER at read time: a
+// reward can sit pending for months with no billing to redeem it, and the offer
+// will change first. See the constant's comment in contracts.ts.
+export const referralReward = pgTable(
+  "referral_reward",
+  {
+    id: id(),
+    referralId: uuid("referral_id")
+      .notNull()
+      .references(() => referral.id, { onDelete: "cascade" }),
+    // Denormalized from referral.referrer/referred_user_id so "what am I owed"
+    // is one indexed lookup on the surface that asks it most (the parent card).
+    beneficiaryUserId: uuid("beneficiary_user_id")
+      .notNull()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    side: text("side").notNull(), // 'referrer' | 'referred'
+    percentOff: smallint("percent_off").notNull(),
+    months: smallint("months").notNull(),
+    status: text("status").notNull().default("pending"),
+    redeemedBy: uuid("redeemed_by").references(() => appUser.id),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("referral_reward_side_check", sql`${t.side} IN ('referrer','referred')`),
+    check(
+      "referral_reward_status_check",
+      sql`${t.status} IN ('pending','redeemed','void')`,
+    ),
+    // Exactly one reward per side per referral — makes the writer idempotent.
+    unique("referral_reward_referral_side_uq").on(t.referralId, t.side),
+    index("referral_reward_beneficiary_idx").on(t.beneficiaryUserId),
+  ],
+);
+
 // `whitelist` (the access gate) lived here until Slice F (S113), which DROPPED
 // the table (migration 0034). The gate is open: anyone who signs in is a
 // student; roles above student are set from the admin People surface.
@@ -587,6 +709,18 @@ export const crossConceptFlag = pgTable(
     sourceSessionId: uuid("source_session_id").references(() => assessmentSession.id),
     addressedAt: timestamp("addressed_at", { withTimezone: true }), // null = open
     addressedBy: uuid("addressed_by").references(() => appUser.id),
+    // CLOCK-3 (parent dashboard, element 6 "named weakness + current plan"). The
+    // tutor's human-authored answer to "what's being done about this weakness" —
+    // the honesty that makes the parent page's green believable. Independent of
+    // `addressed`: a flag can carry a plan while still open, or be addressed with
+    // no written plan. NULL = no tutor plan yet → the read surface (dashboard) falls
+    // back to a GENERATED default line, same code-default-the-DB-overrides pattern as
+    // the copy table; only human sentences carry a date (`plan_updated_at`), so a
+    // generated fallback renders undated. Started capturing now (a CLOCK: authored
+    // history only accrues from when it is switched on) though the page ships later.
+    plan: text("plan"),
+    planUpdatedAt: timestamp("plan_updated_at", { withTimezone: true }),
+    planBy: uuid("plan_by").references(() => appUser.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -660,6 +794,40 @@ export const masteryHistory = pgTable("mastery_history", {
   sourceEventId: uuid("source_event_id").references(() => eventLog.id),
   snapshotAt: timestamp("snapshot_at", { withTimezone: true }).notNull(),
 });
+
+// Slice CLOCK-2 — the DURABLE monthly rollup of a student's mastery counts.
+// mastery_state is a whiteboard (current truth); mastery_history stamps when a
+// value was REPLACED, not when it was true. The "31 of 47 solid — was 19 last
+// month" number a parent screenshots into WhatsApp must NOT drift as
+// re-certifications and overrides move mastery_state — so a monthly job FREEZES
+// the counts per (student, period). One row per student per calendar month; the
+// job is idempotent and FIRST-CAPTURE-WINS (unique (student_id, period) +
+// ON CONFLICT DO NOTHING) — a re-run never disturbs an already-published number.
+//   covered = the student has a mastery_state row for that sub_topic (certified
+//             at least once — the only thing that writes mastery_state).
+//   solid   = BOTH axes >= 4 (the chapter-map green; bucketForLevel "strong"+).
+// `metrics` carries the per-subject breakdown + headroom for future rollups
+// (relational scalars for cheap querying, jsonb for shape growth — the hybrid).
+export const masterySnapshot = pgTable(
+  "mastery_snapshot",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    period: date("period").notNull(), // first-of-month boundary this snapshot represents
+    coveredCount: integer("covered_count").notNull(),
+    solidCount: integer("solid_count").notNull(),
+    metrics: jsonb("metrics").notNull(), // { perSubject: [{ subjectId, subjectName, covered, solid }] }
+    capturedAt: timestamp("captured_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [unique().on(t.studentId, t.period)],
+);
 
 // ────────── 3b. Above-sub-topic insight stores (Slice S2R-3) ──────────
 //
@@ -941,6 +1109,14 @@ export const practiceSession = pgTable("practice_session", {
   currentIndex: integer("current_index").notNull().default(0),
   status: text("status").notNull().default("active"), // 'active'|'completed'
   origin: text("origin").notNull().default("self_serve"), // 'self_serve' | 'tutor_assigned'
+  // Slice CLOCK-1: WHICH spiral clock governed this dispatch, stamped at start
+  // (the reason is destroyed by the act of practising — the clocks move). Values
+  // 'first_teach' | 'climb' | 'retention' | null (taught but no clock applies, OR
+  // a legacy pre-0039 row). Orthogonal to `origin`: WHO dispatched (self/tutor)
+  // vs WHY the scheduler surfaced it — a tutor can assign a retention-due topic.
+  // Derived by resolveDispatchReason (scheduler.ts), reusing computeRetentionDue
+  // so it cannot drift from the due-queue.
+  dispatchReason: text("dispatch_reason"), // null = no scheduler reason / legacy
   // Slice ASG: links a tutor-assigned execution back to its assignment (Option A).
   // Null for self-serve sessions. Additive — existing rows unaffected.
   assignmentId: uuid("assignment_id"), // FK → assignment.id (app-enforced; declared after assignment to avoid cycle)
@@ -1555,6 +1731,7 @@ export const TENANT_SCOPED_TABLES = [
   "cross_concept_flag",
   "mastery_state",
   "mastery_history",
+  "mastery_snapshot", // Slice CLOCK-2 — durable monthly rollup (student data → RLS)
   "scheduling_state",
   "content_unit",
   "question",
@@ -1589,6 +1766,12 @@ export const ALL_TABLES = [
   // GLOBAL identity role/instance/flow tables (ID-0, decision 5 — not scoped):
   "tutor",
   "parent",
+  "parent_link_request", // S164 — GLOBAL pre-link staging (no RLS); needs the grant
+  // S166 — the referral ledger. GLOBAL (a referral spans boards / precedes one),
+  // so NOT in TENANT_SCOPED_TABLES — but non-RLS tables still need the DML grant
+  // or the app role 42501s on first write (the lesson S164 paid for).
+  "referral",
+  "referral_reward",
   "hero",
   "pet",
   "onboarding",

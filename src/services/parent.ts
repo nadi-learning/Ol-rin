@@ -27,18 +27,26 @@
  * Runs inside the board-scoped tx (parentProcedure → withBoard): parent_child,
  * mastery_state, mastery_history and attempt reads are all RLS-gated to the board.
  */
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   attempt,
   chapter,
+  crossConceptFlag,
+  horizontalSkillState,
   masteryHistory,
+  masterySnapshot,
   masteryState,
+  observation,
+  practiceSession,
   student,
   subTopic,
+  subject,
   topic,
 } from "@b2c/kernel/schema";
+import { horizontalLabel, resolveParentCopy } from "@b2c/kernel/parent-copy";
+import { getPlan } from "./pace";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -277,4 +285,754 @@ export async function computeChildReport(
     },
     mastery,
   };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Slice DASH-1 — the PARENT DASHBOARD read path.
+ *
+ * The Slice-P report (above) surfaces only mastery cards + effort metrics. The
+ * locked portfolio (brainstorm-parent-dashboard.md) narrates far more, and the
+ * three CLOCKS (S156/S157) wrote the data but no read path yet exposes it. This
+ * assembler builds, in ONE board-scoped pass, everything the 8 portfolio sections
+ * need — applying the six rulings (D-PDASH-1..6):
+ *   §3 chapter map  — 3-colour per topic, one-axis-null → YELLOW (D-PDASH-1)
+ *   §3 headline     — solid-now vs the CLOCK-2 monthly snapshot ("7 of 13 — was 4")
+ *   §4 axis meters  — count-aggregated: proportion of COVERED topics green (D-PDASH-2)
+ *   §2 story        — CLOCK-1 dispatch_reason + origin rollup
+ *   §5 calibration  — confidence × calibration_flag, POOLED, hidden below a floor
+ *   §6 weakness     — cross_concept_flag + CLOCK-3 plan (generated default when null)
+ *   §7 horizontals  — subject-grain, parent-facing labels (D-PDASH-5, placeholder copy)
+ *
+ * The M11 projection boundary holds exactly as in computeChildReport: it selects
+ * `description` and NEVER `log`, never `observation.tutor_level`, never a raw 1–5
+ * level over the wire (levels become colour states / green-counts before leaving).
+ * ════════════════════════════════════════════════════════════════════════ */
+
+// Element 8 hides below this many answered questions — a small denominator makes
+// an over/under count noise (brainstorm §sitting-3). Answers, never questions.
+export const CALIBRATION_MIN_ANSWERS = 10;
+
+// Story window: sessions this recent feed the §2 "this period" narrative.
+const STORY_WINDOW_DAYS = 35;
+
+export type MapCellState = "gray" | "yellow" | "green";
+
+export type MapCell = {
+  subTopicId: string;
+  subTopicName: string;
+  state: MapCellState;
+};
+
+export type ChapterRow = {
+  chapterId: string;
+  chapterName: string;
+  cells: MapCell[];
+  solid: number; // green cells
+  total: number; // all cells (incl. gray) — sums to the headline denominator
+};
+
+export type AxisMeter = {
+  green: number; // covered topics green on this axis (level >= 4)
+  covered: number; // denominator — topics with a mastery row (D-PDASH-2)
+};
+
+export type SubjectPanel = {
+  subjectId: string;
+  subjectName: string;
+  chapters: ChapterRow[];
+  meters: { conceptual: AxisMeter; procedural: AxisMeter };
+  horizontals: DashboardHorizontal[];
+  mastery: ReportMasteryCard[]; // certified detail, per-topic on expand
+};
+
+export type DashboardHorizontal = {
+  slug: string;
+  label: string; // parent-facing (D-PDASH-5 placeholder copy)
+  gloss: string;
+  subjectId: string;
+  subjectName: string;
+  level: number | null; // null = not yet observed (never "level 1")
+  prose: string;
+};
+
+export type DashboardTotals = {
+  solidNow: number;
+  coveredNow: number;
+  totalNow: number; // all mapped sub_topics (incl. gray)
+  solidPrior: number | null; // CLOCK-2 snapshot ("was N last month"); null = no snapshot
+  coveredPrior: number | null;
+  priorPeriod: string | null; // the snapshot's period (YYYY-MM-DD)
+};
+
+export type StorySlots = {
+  topicsPracticed: number; // distinct sub_topics practised in the window
+  retentionTopics: string[]; // names a retention check brought back, recent-first
+  selfDirectedCount: number; // sessions the student started on her own
+};
+
+export type Calibration = {
+  shown: boolean; // false when answered < CALIBRATION_MIN_ANSWERS (noise floor)
+  answered: number; // denominator — answers she rated confidence on
+  over: number; // confident-and-wrong
+  under: number; // unsure-and-right
+  locations: string[]; // sub_topics where the misses clustered
+};
+
+export type DashboardWeakness = {
+  fromSubTopicName: string | null; // where it surfaced (null for a synthesis item)
+  note: string;
+  planAuthored: boolean; // true → a tutor wrote it; false → generated default
+  planText: string; // never blank (generated default when unauthored)
+  planUpdatedAt: Date | null; // only authored plans carry a date
+};
+
+// A monthly progress point — the mastery_snapshot rollup, plus per-subject. The
+// LIVE "now" point is appended by the read path (it isn't a stored snapshot).
+export type TrendPoint = {
+  period: string; // YYYY-MM-DD, first-of-month
+  label: string; // short month, e.g. "Mar"
+  covered: number;
+  solid: number;
+  perSubject: { subjectId: string; subjectName: string; covered: number; solid: number }[];
+  live: boolean; // true for the appended current-month point
+};
+
+// Daily practice for the contribution heatmap; monthly rollup for the effort bars.
+export type ActivityDay = { date: string; count: number }; // count = answered attempts
+export type ActivityMonth = {
+  month: string; // YYYY-MM-01
+  label: string; // "Mar"
+  answered: number;
+  minutes: number;
+};
+export type DashboardActivity = {
+  days: number; // window length the daily grid spans
+  daily: ActivityDay[]; // answered attempts per day, sparse (active days only)
+  monthly: ActivityMonth[]; // last few months, oldest-first
+};
+
+// Pace — intended time per chapter vs the actual picture (Slice PACE-1/2, surfaced
+// parent-side). Reuses pace.getPlan; the payload is the parent-safe projection.
+export type ParentPaceStatus =
+  | "completed"
+  | "on_time"
+  | "delay_risk"
+  | "amber"
+  | "red";
+export type ParentPrepLabel =
+  | "strong"
+  | "on_track"
+  | "needs_work"
+  | "not_started";
+export type DashboardPaceChapter = {
+  name: string;
+  recommendedWeeks: number; // intended time
+  completed: boolean;
+  projectedEndDate: string | null; // null until a plan is set up
+  status: ParentPaceStatus | null;
+  daysOver: number | null; // days past the projected end (behind), else null/0
+  preparedness: ParentPrepLabel | null;
+};
+export type DashboardPaceSubject = {
+  subjectId: string;
+  subjectName: string;
+  needsSetup: boolean; // no deadline chosen yet → no projection
+  endDate: string | null; // the student-set deadline (set-up plans)
+  subjectStatus: ParentPaceStatus | null;
+  chapters: DashboardPaceChapter[];
+};
+
+export type ChildDashboard = {
+  child: ChildSummary;
+  totals: DashboardTotals;
+  story: StorySlots;
+  subjects: SubjectPanel[];
+  calibration: Calibration;
+  weaknesses: DashboardWeakness[];
+  metrics: ReportMetrics;
+  trend: TrendPoint[]; // monthly progress, oldest-first, live point last
+  activity: DashboardActivity; // effort — daily heatmap + monthly bars
+  pace: DashboardPaceSubject[]; // intended-vs-actual, per subject with a plan
+};
+
+// D-PDASH-1 — a topic's map colour from its two axes. GREEN both ≥4; GRAY when no
+// axis is observed (no row, OR a row with both axes null); YELLOW everything else
+// observed (incl. one-axis-null-one-observed — "in progress", never a gap).
+function cellState(c: number | null, p: number | null): MapCellState {
+  if (c == null && p == null) return "gray";
+  if ((c ?? 0) >= 4 && (p ?? 0) >= 4) return "green";
+  return "yellow";
+}
+
+/**
+ * Pace, per in-scope subject — the parent-safe projection of pace.getPlan
+ * (intended weeks per chapter + projected end + on-time/behind + preparedness).
+ * getPlan self-loads everything (subject, chapters, plan row, certified mastery),
+ * so this is a per-subject delegate + a flatten to the never-raw parent shape.
+ */
+async function readPace(
+  tx: Tx,
+  child: ChildSummary,
+  subjectIds: string[],
+): Promise<DashboardPaceSubject[]> {
+  const now = new Date();
+  const todayMs = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  const out: DashboardPaceSubject[] = [];
+  for (const subjectId of subjectIds) {
+    const view = await getPlan(tx, { self: child, subjectId });
+    if (view.needsSetup) {
+      out.push({
+        subjectId,
+        subjectName: view.subject.name,
+        needsSetup: true,
+        endDate: null,
+        subjectStatus: null,
+        chapters: view.chapters.map((c) => ({
+          name: c.name,
+          recommendedWeeks: c.recommendedWeeks,
+          completed: c.completed,
+          projectedEndDate: null,
+          status: null,
+          daysOver: null,
+          preparedness: null,
+        })),
+      });
+      continue;
+    }
+    out.push({
+      subjectId,
+      subjectName: view.subject.name,
+      needsSetup: false,
+      endDate: view.summary.endDate,
+      subjectStatus: view.summary.subjectStatus,
+      chapters: view.chapters.map((c) => {
+        const end = c.projectedEndDate ?? null;
+        const daysOver =
+          end && !c.completed
+            ? Math.max(
+                0,
+                Math.round(
+                  (todayMs - Date.parse(`${end}T00:00:00Z`)) / 86_400_000,
+                ),
+              )
+            : null;
+        return {
+          name: c.name,
+          recommendedWeeks: c.recommendedWeeks,
+          completed: c.completed,
+          projectedEndDate: end,
+          status: c.paceStatus ?? null,
+          daysOver,
+          preparedness: c.preparedness?.label ?? null,
+        };
+      }),
+    });
+  }
+  return out;
+}
+
+/** Guarded entry — assert the parent→child link, then assemble. */
+export async function getChildDashboard(
+  tx: Tx,
+  args: { parentUserId: string; childId: string },
+): Promise<ChildDashboard> {
+  const child = await assertParentsChild(tx, args.parentUserId, args.childId);
+  return computeChildDashboard(tx, child);
+}
+
+/**
+ * The guard-free core: assemble the full parent dashboard for an ALREADY-resolved
+ * child (ownership is the caller's job). RLS scopes every read to the board.
+ */
+export async function computeChildDashboard(
+  tx: Tx,
+  child: ChildSummary,
+): Promise<ChildDashboard> {
+  const childId = child.studentId;
+
+  // In-scope subjects = those the child has ANY certified mastery in. The map
+  // then shows every topic of those subjects (incl. never-taught gray), so the
+  // per-chapter counts honestly encode the job ahead.
+  const scopeRows = await tx
+    .selectDistinct({ subjectId: subject.id })
+    .from(masteryState)
+    .innerJoin(subTopic, eq(subTopic.id, masteryState.subTopicId))
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .innerJoin(subject, eq(subject.id, chapter.subjectId))
+    .where(eq(masteryState.studentId, childId));
+  const subjectIds = scopeRows.map((r) => r.subjectId);
+
+  // Prior snapshot (CLOCK-2) — most recent month captured. Read regardless of
+  // scope so the "was N" survives even a between-snapshot subject change.
+  const [snap] = await tx
+    .select({
+      period: masterySnapshot.period,
+      coveredCount: masterySnapshot.coveredCount,
+      solidCount: masterySnapshot.solidCount,
+    })
+    .from(masterySnapshot)
+    .where(eq(masterySnapshot.studentId, childId))
+    .orderBy(desc(masterySnapshot.period))
+    .limit(1);
+
+  // Effort metrics + calibration + story + weakness reads don't depend on scope.
+  const metrics = await readMetrics(tx, childId);
+  const calibration = await readCalibration(tx, childId);
+  const story = await readStory(tx, childId);
+  const weaknesses = await readWeaknesses(tx, childId);
+  const activity = await readActivity(tx, childId);
+  const snapshotRows = await readSnapshots(tx, childId); // ASC, all months
+
+  // No certified mastery yet → an empty-but-valid dashboard (the honest thin state).
+  if (subjectIds.length === 0) {
+    return {
+      child,
+      totals: {
+        solidNow: 0,
+        coveredNow: 0,
+        totalNow: 0,
+        solidPrior: snap?.solidCount ?? null,
+        coveredPrior: snap?.coveredCount ?? null,
+        priorPeriod: snap ? String(snap.period) : null,
+      },
+      story,
+      subjects: [],
+      calibration,
+      weaknesses,
+      metrics,
+      trend: buildTrend(snapshotRows, { covered: 0, solid: 0, perSubject: [] }),
+      activity,
+      pace: [],
+    };
+  }
+
+  // The spine + mastery, one LEFT JOIN — EVERY sub_topic of the in-scope subjects,
+  // carrying its levels/description or nulls (gray) when the child has no row.
+  const spine = await tx
+    .select({
+      subjectId: subject.id,
+      subjectName: subject.name,
+      chapterId: chapter.id,
+      chapterName: chapter.name,
+      chapterOrdinal: chapter.ordinal,
+      topicName: topic.name,
+      subTopicId: subTopic.id,
+      subTopicName: subTopic.name,
+      conceptualLevel: masteryState.conceptualLevel,
+      proceduralLevel: masteryState.proceduralLevel,
+      description: masteryState.description, // M11: user-visible blob, never `log`
+      updatedAt: masteryState.updatedAt, // non-null ⇔ a mastery row exists (= covered)
+    })
+    .from(subTopic)
+    .innerJoin(topic, eq(topic.id, subTopic.topicId))
+    .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+    .innerJoin(subject, eq(subject.id, chapter.subjectId))
+    .leftJoin(
+      masteryState,
+      and(
+        eq(masteryState.subTopicId, subTopic.id),
+        eq(masteryState.studentId, childId),
+      ),
+    )
+    .where(inArray(subject.id, subjectIds))
+    .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
+
+  // Prior snapshots per sub_topic → the movement trend on the detail cards.
+  const priorBySubTopic = await readPriorMastery(tx, childId);
+
+  // Build subject panels. One pass groups by subject → chapter, computes the map
+  // cells + per-chapter/per-subject/global counts + the count-aggregated meters.
+  const bySubject = new Map<string, SubjectPanel>();
+  const chapterRows = new Map<string, ChapterRow>(); // chapterId → row
+  let solidNow = 0;
+  let coveredNow = 0;
+
+  for (const r of spine) {
+    let panel = bySubject.get(r.subjectId);
+    if (!panel) {
+      panel = {
+        subjectId: r.subjectId,
+        subjectName: r.subjectName,
+        chapters: [],
+        meters: { conceptual: { green: 0, covered: 0 }, procedural: { green: 0, covered: 0 } },
+        horizontals: [],
+        mastery: [],
+      };
+      bySubject.set(r.subjectId, panel);
+    }
+
+    let row = chapterRows.get(r.chapterId);
+    if (!row) {
+      row = { chapterId: r.chapterId, chapterName: r.chapterName, cells: [], solid: 0, total: 0 };
+      chapterRows.set(r.chapterId, row);
+      panel.chapters.push(row);
+    }
+
+    const state = cellState(r.conceptualLevel, r.proceduralLevel);
+    row.cells.push({ subTopicId: r.subTopicId, subTopicName: r.subTopicName, state });
+    row.total += 1;
+    if (state === "green") {
+      row.solid += 1;
+      solidNow += 1;
+    }
+
+    const covered = r.updatedAt != null; // a mastery row exists (D-PDASH-2 denominator)
+    if (covered) {
+      coveredNow += 1;
+      panel.meters.conceptual.covered += 1;
+      panel.meters.procedural.covered += 1;
+      if ((r.conceptualLevel ?? 0) >= 4) panel.meters.conceptual.green += 1;
+      if ((r.proceduralLevel ?? 0) >= 4) panel.meters.procedural.green += 1;
+
+      // Certified detail card (the per-topic expand). Only covered topics get one.
+      const prior = priorBySubTopic.get(r.subTopicId);
+      panel.mastery.push({
+        subTopicId: r.subTopicId,
+        subTopicName: r.subTopicName,
+        topicName: r.topicName,
+        chapterId: r.chapterId,
+        chapterName: r.chapterName,
+        conceptualLevel: r.conceptualLevel,
+        proceduralLevel: r.proceduralLevel,
+        description: r.description ?? "",
+        updatedAt: r.updatedAt!,
+        trend: trendOf(r.conceptualLevel, r.proceduralLevel, prior),
+        priorConceptualLevel: prior?.conceptualLevel ?? null,
+        priorProceduralLevel: prior?.proceduralLevel ?? null,
+      });
+    }
+  }
+
+  // Horizontals (subject-grain) → attach to their subject panel with parent copy.
+  const hRows = await tx
+    .select({
+      slug: horizontalSkillState.slug,
+      subjectId: horizontalSkillState.subjectId,
+      subjectName: subject.name,
+      level: horizontalSkillState.level,
+      prose: horizontalSkillState.prose,
+    })
+    .from(horizontalSkillState)
+    .innerJoin(subject, eq(subject.id, horizontalSkillState.subjectId))
+    .where(eq(horizontalSkillState.studentId, childId))
+    .orderBy(asc(horizontalSkillState.slug));
+  for (const h of hRows) {
+    const panel = bySubject.get(h.subjectId);
+    if (!panel) continue; // a horizontal on a subject with no mastery — skip silently
+    const { label, gloss } = horizontalLabel(h.slug);
+    panel.horizontals.push({
+      slug: h.slug,
+      label,
+      gloss,
+      subjectId: h.subjectId,
+      subjectName: h.subjectName,
+      level: h.level,
+      prose: h.prose,
+    });
+  }
+
+  const totalNow = spine.length;
+
+  const pace = await readPace(tx, child, subjectIds);
+
+  // Live per-subject covered/solid (topic counts) → the trend's "now" point.
+  const livePerSubject = [...bySubject.values()].map((p) => ({
+    subjectId: p.subjectId,
+    subjectName: p.subjectName,
+    covered: p.meters.conceptual.covered,
+    solid: p.chapters.reduce((a, c) => a + c.solid, 0),
+  }));
+
+  return {
+    child,
+    totals: {
+      solidNow,
+      coveredNow,
+      totalNow,
+      solidPrior: snap?.solidCount ?? null,
+      coveredPrior: snap?.coveredCount ?? null,
+      priorPeriod: snap ? String(snap.period) : null,
+    },
+    story,
+    subjects: [...bySubject.values()],
+    calibration,
+    weaknesses,
+    metrics,
+    trend: buildTrend(snapshotRows, {
+      covered: coveredNow,
+      solid: solidNow,
+      perSubject: livePerSubject,
+    }),
+    activity,
+    pace,
+  };
+}
+
+// ── Trend + activity read helpers ───────────────────────────────────────────
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const monthLabel = (period: string) => {
+  const m = Number(period.slice(5, 7)); // 'YYYY-MM-DD' → MM
+  return MONTH_LABELS[(m - 1 + 12) % 12] ?? period;
+};
+const firstOfThisMonth = () => {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+};
+
+type SnapshotRow = {
+  period: string;
+  coveredCount: number;
+  solidCount: number;
+  metrics: { perSubject?: TrendPoint["perSubject"] } | null;
+};
+
+/** All monthly snapshots for the child, oldest-first (the trend basis). */
+async function readSnapshots(tx: Tx, childId: string): Promise<SnapshotRow[]> {
+  const rows = await tx
+    .select({
+      period: masterySnapshot.period,
+      coveredCount: masterySnapshot.coveredCount,
+      solidCount: masterySnapshot.solidCount,
+      metrics: masterySnapshot.metrics,
+    })
+    .from(masterySnapshot)
+    .where(eq(masterySnapshot.studentId, childId))
+    .orderBy(asc(masterySnapshot.period));
+  return rows.map((r) => ({
+    period: String(r.period),
+    coveredCount: r.coveredCount,
+    solidCount: r.solidCount,
+    metrics: r.metrics as SnapshotRow["metrics"],
+  }));
+}
+
+/** Snapshots → trend points, with the live current-month point appended last. */
+function buildTrend(
+  rows: SnapshotRow[],
+  live: { covered: number; solid: number; perSubject: TrendPoint["perSubject"] },
+): TrendPoint[] {
+  const points: TrendPoint[] = rows.map((r) => ({
+    period: r.period,
+    label: monthLabel(r.period),
+    covered: r.coveredCount,
+    solid: r.solidCount,
+    perSubject: r.metrics?.perSubject ?? [],
+    live: false,
+  }));
+  const nowPeriod = firstOfThisMonth();
+  // If a snapshot already exists for the current month, replace it with live.
+  const dropLast = points.length > 0 && points[points.length - 1]!.period === nowPeriod;
+  if (dropLast) points.pop();
+  points.push({
+    period: nowPeriod,
+    label: monthLabel(nowPeriod),
+    covered: live.covered,
+    solid: live.solid,
+    perSubject: live.perSubject,
+    live: true,
+  });
+  return points;
+}
+
+/** Practice activity — daily answered-attempt counts (heatmap) + monthly rollup. */
+async function readActivity(tx: Tx, childId: string): Promise<DashboardActivity> {
+  // Year-to-date window — the heatmap runs from Jan 1 of the current year to
+  // today, so the deck shows the whole year so far (zoomed out).
+  const now = new Date();
+  const jan1 = Date.UTC(now.getUTCFullYear(), 0, 1);
+  const todayUtc = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  const days = Math.floor((todayUtc - jan1) / 86_400_000) + 1;
+  const daily = await tx
+    .select({
+      date: sql<string>`to_char(${attempt.submittedAt}, 'YYYY-MM-DD')`,
+      count: sql<string>`count(*)`,
+    })
+    .from(attempt)
+    .where(
+      and(
+        eq(attempt.appUserId, childId),
+        sql`${attempt.answerText} is not null`,
+        gte(attempt.submittedAt, sql`date_trunc('year', now())`),
+      ),
+    )
+    .groupBy(sql`to_char(${attempt.submittedAt}, 'YYYY-MM-DD')`)
+    .orderBy(sql`to_char(${attempt.submittedAt}, 'YYYY-MM-DD')`);
+
+  const monthly = await tx
+    .select({
+      month: sql<string>`to_char(date_trunc('month', ${attempt.submittedAt}), 'YYYY-MM-DD')`,
+      answered: sql<string>`count(*)`,
+      timeMs: sql<string>`coalesce(sum(${attempt.timeMs}), 0)`,
+    })
+    .from(attempt)
+    .where(
+      and(
+        eq(attempt.appUserId, childId),
+        sql`${attempt.answerText} is not null`,
+        gte(attempt.submittedAt, sql`date_trunc('month', now()) - interval '5 months'`),
+      ),
+    )
+    .groupBy(sql`date_trunc('month', ${attempt.submittedAt})`)
+    .orderBy(sql`date_trunc('month', ${attempt.submittedAt})`);
+
+  return {
+    days,
+    daily: daily.map((r) => ({ date: r.date, count: Number(r.count) })),
+    monthly: monthly.map((r) => ({
+      month: r.month,
+      label: monthLabel(r.month),
+      answered: Number(r.answered),
+      minutes: Math.round(Number(r.timeMs) / 60000),
+    })),
+  };
+}
+
+/** Effort metrics — answered vs skipped + total engaged time (RLS/board-scoped). */
+async function readMetrics(tx: Tx, childId: string): Promise<ReportMetrics> {
+  const [m] = await tx
+    .select({
+      answered: sql<string>`count(*) filter (where ${attempt.answerText} is not null)`,
+      skipped: sql<string>`count(*) filter (where ${attempt.skipReason} is not null)`,
+      totalTimeMs: sql<string>`coalesce(sum(${attempt.timeMs}), 0)`,
+    })
+    .from(attempt)
+    .where(eq(attempt.appUserId, childId));
+  return {
+    questionsAnswered: Number(m?.answered ?? 0),
+    questionsSkipped: Number(m?.skipped ?? 0),
+    totalTimeMs: Number(m?.totalTimeMs ?? 0),
+  };
+}
+
+/**
+ * Calibration (element 8) — confidence × calibration_flag, POOLED cross-subject
+ * (D §pool-and-locate). Denominator = answers she rated confidence on (skips carry
+ * none). Hidden below the floor; the value is the LOCATION as much as the count.
+ */
+async function readCalibration(tx: Tx, childId: string): Promise<Calibration> {
+  const [ans] = await tx
+    .select({ n: sql<string>`count(*)` })
+    .from(attempt)
+    .where(and(eq(attempt.appUserId, childId), sql`${attempt.confidence} is not null`));
+  const answered = Number(ans?.n ?? 0);
+
+  // over/under from observations tied to an answered attempt (a flag with no
+  // confidence-bearing answer isn't a calibration signal).
+  const flags = await tx
+    .select({ flag: observation.calibrationFlag, subTopicName: subTopic.name })
+    .from(observation)
+    .innerJoin(attempt, eq(attempt.id, observation.attemptId))
+    .innerJoin(subTopic, eq(subTopic.id, observation.subTopicId))
+    .where(
+      and(
+        eq(observation.studentId, childId),
+        sql`${attempt.confidence} is not null`,
+        sql`${observation.calibrationFlag} in ('over','under')`,
+      ),
+    );
+  let over = 0;
+  let under = 0;
+  const locations = new Set<string>();
+  for (const f of flags) {
+    if (f.flag === "over") over += 1;
+    else if (f.flag === "under") under += 1;
+    locations.add(f.subTopicName);
+  }
+  return {
+    shown: answered >= CALIBRATION_MIN_ANSWERS,
+    answered,
+    over,
+    under,
+    locations: [...locations],
+  };
+}
+
+/** §2 story slots — CLOCK-1 dispatch reasons over the recent window. */
+async function readStory(tx: Tx, childId: string): Promise<StorySlots> {
+  const since = new Date(Date.now() - STORY_WINDOW_DAYS * 86_400_000);
+  const rows = await tx
+    .select({
+      subTopicId: practiceSession.subTopicId,
+      subTopicName: subTopic.name,
+      dispatchReason: practiceSession.dispatchReason,
+      origin: practiceSession.origin,
+      createdAt: practiceSession.createdAt,
+    })
+    .from(practiceSession)
+    .innerJoin(subTopic, eq(subTopic.id, practiceSession.subTopicId))
+    .where(and(eq(practiceSession.appUserId, childId), gte(practiceSession.createdAt, since)))
+    .orderBy(desc(practiceSession.createdAt));
+
+  const topics = new Set<string>();
+  const retention: string[] = [];
+  let selfDirected = 0;
+  for (const s of rows) {
+    topics.add(s.subTopicId);
+    if (s.dispatchReason === "retention" && !retention.includes(s.subTopicName)) {
+      retention.push(s.subTopicName);
+    }
+    if (s.origin === "self_serve") selfDirected += 1;
+  }
+  return { topicsPracticed: topics.size, retentionTopics: retention, selfDirectedCount: selfDirected };
+}
+
+/** §6 weaknesses — cross_concept_flags + CLOCK-3 plan (generated default when null). */
+async function readWeaknesses(tx: Tx, childId: string): Promise<DashboardWeakness[]> {
+  const rows = await tx
+    .select({
+      note: crossConceptFlag.note,
+      plan: crossConceptFlag.plan,
+      planUpdatedAt: crossConceptFlag.planUpdatedAt,
+      fromSubTopicName: subTopic.name,
+    })
+    .from(crossConceptFlag)
+    .leftJoin(subTopic, eq(subTopic.id, crossConceptFlag.fromSubTopicId))
+    .where(eq(crossConceptFlag.studentId, childId))
+    .orderBy(desc(crossConceptFlag.createdAt));
+  return rows.map((r) => ({
+    fromSubTopicName: r.fromSubTopicName ?? null,
+    note: r.note,
+    planAuthored: r.plan != null,
+    planText: r.plan ?? resolveParentCopy("plan.generated_default"),
+    planUpdatedAt: r.planUpdatedAt ?? null,
+  }));
+}
+
+/** Most-recent prior mastery snapshot per sub_topic (the trend basis). */
+async function readPriorMastery(
+  tx: Tx,
+  childId: string,
+): Promise<Map<string, { conceptualLevel: number | null; proceduralLevel: number | null }>> {
+  const history = await tx
+    .select({
+      subTopicId: masteryHistory.subTopicId,
+      conceptualLevel: masteryHistory.conceptualLevel,
+      proceduralLevel: masteryHistory.proceduralLevel,
+    })
+    .from(masteryHistory)
+    .where(eq(masteryHistory.studentId, childId))
+    .orderBy(desc(masteryHistory.snapshotAt));
+  const map = new Map<string, { conceptualLevel: number | null; proceduralLevel: number | null }>();
+  for (const h of history) {
+    if (!map.has(h.subTopicId)) {
+      map.set(h.subTopicId, {
+        conceptualLevel: h.conceptualLevel,
+        proceduralLevel: h.proceduralLevel,
+      });
+    }
+  }
+  return map;
 }
