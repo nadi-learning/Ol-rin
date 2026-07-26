@@ -84,9 +84,13 @@ type HandOff = {
  * (slug, grade) pairs. Mapped explicitly and exhaustively — an unmapped ref
  * throws rather than silently skipping a whole subject's worth of rows.
  */
-const SUBJECT_MAP: Record<string, { slug: string; grade: string }> = {
-  "Maths 10": { slug: "mathematics", grade: "10" },
-  "Physics 10": { slug: "physics", grade: "10" },
+// Two slugs for Maths, in preference order — prod calls it `maths`, the hand-off
+// `mathematics`, and `merge:spine` collapses the second into the first. Same trap
+// as `backfill_dashboard.ts`'s SUBJECT_MAP (S170): a single slug works on the
+// database it was written against and throws on the other one.
+const SUBJECT_MAP: Record<string, { slugs: string[]; grade: string }> = {
+  "Maths 10": { slugs: ["maths", "mathematics"], grade: "10" },
+  "Physics 10": { slugs: ["physics"], grade: "10" },
 };
 
 /**
@@ -246,7 +250,10 @@ async function main() {
       .from(chapter)
       .innerJoin(subject, eq(subject.id, chapter.subjectId)),
   );
-  const haveChapter = new Set(chapters.map((c) => `${c.subjectSlug}|${c.grade}|${norm(c.name)}`));
+  // Keyed on subjectId, not slug: the same subject answers to `maths` on prod and
+  // `mathematics` in the hand-off, and a slug-keyed check would miss an existing
+  // chapter and plan a DUPLICATE shell beside it (S170).
+  const haveChapter = new Set(chapters.map((c) => `${c.subjectId}|${c.grade}|${norm(c.name)}`));
   const subjectIdOf = new Map(chapters.map((c) => [`${c.subjectSlug}|${c.grade}`, c.subjectId]));
 
   const chapPlan = new Map<string, { subjectId: string; slug: string; name: string; ordinal: number }>();
@@ -255,16 +262,16 @@ async function main() {
     for (const p of s.pace) {
       const m = SUBJECT_MAP[p.subjectRef];
       if (!m) throw new Error(`unmapped subjectRef "${p.subjectRef}" — extend SUBJECT_MAP`);
-      const subjectId = subjectIdOf.get(`${m.slug}|${m.grade}`);
-      if (!subjectId) throw new Error(`subject ${m.slug} grade ${m.grade} not on cbse`);
+      const subjectId = m.slugs.map((sl) => subjectIdOf.get(`${sl}|${m.grade}`)).find(Boolean);
+      if (!subjectId) throw new Error(`subject ${m.slugs.join("|")} grade ${m.grade} not on cbse`);
       for (const c of p.chapters) {
-        if (haveChapter.has(`${m.slug}|${m.grade}|${norm(c.chapterRef)}`)) continue;
+        if (haveChapter.has(`${subjectId}|${m.grade}|${norm(c.chapterRef)}`)) continue;
         const ordinal = CHAPTER_ORDINAL[c.chapterRef];
         if (ordinal == null) {
           unknownOrdinal.push(`${p.subjectRef} / ${c.chapterRef}`);
           continue;
         }
-        chapPlan.set(`${m.slug}|${m.grade}|${norm(c.chapterRef)}`, {
+        chapPlan.set(`${subjectId}|${m.grade}|${norm(c.chapterRef)}`, {
           subjectId,
           slug: `ch${ordinal}-${slugify(c.chapterRef)}`,
           name: c.chapterRef,
