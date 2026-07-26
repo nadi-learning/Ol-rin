@@ -805,7 +805,10 @@ export const masteryHistory = pgTable("mastery_history", {
 // ON CONFLICT DO NOTHING) — a re-run never disturbs an already-published number.
 //   covered = the student has a mastery_state row for that sub_topic (certified
 //             at least once — the only thing that writes mastery_state).
-//   solid   = BOTH axes >= 4 (the chapter-map green; bucketForLevel "strong"+).
+//   solid   = `isSolid` (mastery.ts) — the chapter-map green. D-PDASH-7 moved
+//             this from "both axes >= 4" to "either axis >= 3, both assessed";
+//             rows frozen before S168 were counted under the OLD rule and are
+//             deliberately left alone (first-capture-wins is the point).
 // `metrics` carries the per-subject breakdown + headroom for future rollups
 // (relational scalars for cheap querying, jsonb for shape growth — the hybrid).
 export const masterySnapshot = pgTable(
@@ -961,6 +964,109 @@ export const studentSubjectInsight = pgTable(
       .defaultNow(),
   },
   (t) => [unique().on(t.studentId, t.subjectId)],
+);
+
+// ── Parent-dashboard copy overrides (S168 — D-PDASH-3's other half) ──────────
+// D-PDASH-3 ruled "CODE ships the full default map; a DB row OVERRIDES per key;
+// a missing key FALLS BACK to the default and NEVER renders blank." Only the
+// code half shipped (S159); this is the DB half, so the founder can retune the
+// voice a parent reads without a deploy.
+//
+// TWO SCOPES, resolved in one chain (S169, founder ruling D-PDASH-8):
+//
+//     code default  →  board override (student_id NULL)  →  student override
+//
+//   · global was rejected: one board's rewording would silently change another's;
+//   · per-STUDENT was rejected in S168 and the founder REVERSED it in S169 — the
+//     ask is to open a named child and retune that child's page. The S168
+//     objection still stands as a WARNING, not a bar: a per-student row can make
+//     a claim about one child that no pipeline produced and nothing validates
+//     (the line this project holds everywhere else — see the backfill's refusal
+//     to invent a weakness). It is now an explicit, attributed admin act
+//     (`updated_by`), not a silent default.
+// Board-scoped CONTENT, so it sits in TENANT_SCOPED_TABLES with `chapter`. A
+// student-scoped row is scoped by the SAME board_id — `student_id` narrows
+// within a board, it never crosses one.
+//
+// `key` is a `ParentCopyKey` (parent-copy.ts) — text, not an enum, per the M23
+// convention and because the key set grows with the copy map. An unknown key is
+// simply never read, so a stale row after a copy refactor is inert, not a fault.
+//
+// ⚠️ `value` MUST NOT introduce a `{token}` the default does not have: call sites
+// supply exactly the default's tokens, and `fillCopy` THROWS on an unsupplied
+// one — a bad override would blank a real parent's dashboard. The service
+// validates that on write (services/parent_copy.ts); this comment exists so the
+// constraint is visible from the schema, where someone will inevitably add a row
+// by hand.
+export const parentCopy = pgTable(
+  "parent_copy",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    // NULL = this board's default voice (what every parent reads). Set = an
+    // override for ONE child's page only, layered on top of the board row.
+    studentId: uuid("student_id").references(() => appUser.id),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+    updatedBy: uuid("updated_by").references(() => appUser.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  // nullsNotDistinct so the board-level rows (student_id NULL) still collapse to
+  // ONE row per key. Postgres's default treats two NULLs as distinct, which would
+  // let a second board-level row for the same key exist and make "the board's
+  // value" ambiguous — and ON CONFLICT could no longer infer this constraint.
+  (t) => [unique().on(t.boardId, t.studentId, t.key).nullsNotDistinct()],
+);
+
+// ── chapter_budget — how many sub-topics a chapter is WORTH (S169) ───────────
+//
+// The denominator behind every "N of M" a parent reads. Until now M was derived:
+// `count(sub_topic)` reachable through the chapter. That is only correct when the
+// spine is fully carved, and on prod it is not — 4 of 24 CBSE chapters carry
+// sub-topics, so a derived M silently describes what we happen to have PUBLISHED
+// rather than what the child has to learn. The growth chart draws against this
+// number, so an understated M reads as "nearly finished" when they are not.
+//
+// This is Pranav's hand-off ask #3, built as a TABLE rather than a column on
+// `chapter`, so that a curriculum figure is an explicit, attributed, editable
+// fact with its own history — not a field someone silently retypes.
+//
+// ── OVERRIDE, not source of truth (founder ruling, S169) ────────────────────
+// A missing row means "keep counting sub_topics". Nothing changes on any page
+// until a number is actually set, and prod can be corrected chapter by chapter
+// instead of in one cutover. `subTopicCount` is what the derived count was WHEN
+// the override was written: it is not read by anything, it exists so that a
+// later reviewer can see whether the spine has since caught up with the claim.
+export const chapterBudget = pgTable(
+  "chapter_budget",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id), // RLS key — board-scoped CONTENT, like `chapter`
+    chapterId: uuid("chapter_id")
+      .notNull()
+      .references(() => chapter.id, { onDelete: "cascade" }),
+    // The authored figure: how many sub-topics this chapter is worth in full.
+    budget: integer("budget").notNull(),
+    // The derived count at the moment this row was written — provenance only.
+    subTopicCount: integer("sub_topic_count"),
+    note: text("note"), // why this number (a syllabus reference, usually)
+    updatedBy: uuid("updated_by").references(() => appUser.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique().on(t.chapterId),
+    // A budget below the sub-topics that already exist would make a chapter read
+    // as more than 100% done, so the SERVICE refuses it. Zero passes this check
+    // but only clears the service guard for a chapter with nothing carved yet —
+    // which is what "deliberately out of scope" amounts to in practice.
+    check("chapter_budget_non_negative", sql`${t.budget} >= 0`),
+  ],
 );
 
 // ───────────────────────── 5. Scheduling store ─────────────────────────
@@ -1755,6 +1861,13 @@ export const TENANT_SCOPED_TABLES = [
   "horizontal_skill_state",
   "student_chapter_insight",
   "student_subject_insight",
+  // S168 — per-board overrides of the parent-dashboard copy (D-PDASH-3's other
+  // half). Board-scoped CONTENT, not student data: it is a board's voice, and it
+  // is scoped for the same reason `chapter` is.
+  "parent_copy",
+  // S169 — the authored sub-topic budget per chapter. Board-scoped CONTENT: it
+  // is a statement about one board's curriculum, same as `chapter` itself.
+  "chapter_budget",
 ] as const;
 
 // All table names (for blanket GRANTs to the app role). Includes the GLOBAL

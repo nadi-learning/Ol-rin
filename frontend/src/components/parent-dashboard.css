@@ -919,9 +919,20 @@
   display: flex;
   flex-direction: column;
 }
+/* S169 — a fixed GRID, not a wrapping flex row. Under flex, `planned ~N weeks`,
+   the due date and the status pill each started wherever the previous field
+   happened to end, so no two rows agreed on a column and the list could only be
+   read one row at a time. Now every field owns a column and the eye can scan
+   straight down it. Columns are sized to their longest realistic content
+   ("planned ~10 weeks", "Well behind · 49d over") so nothing wraps. */
 .pdash-pace-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr) /* chapter                       */
+    120px /* planned ~N weeks              */
+    96px /* finished / due D Mon          */
+    172px /* status pill                   */
+    88px; /* preparedness                  */
   align-items: center;
   gap: 8px 14px;
   padding: 11px 2px;
@@ -931,8 +942,7 @@
   border-bottom: none;
 }
 .pdash-pace-ch {
-  flex: 1 1 170px;
-  min-width: 150px;
+  min-width: 0;
   font-weight: 700;
   font-size: 15.5px;
   color: var(--sk-ink, #1c1917);
@@ -943,10 +953,28 @@
   color: var(--sk-ink-soft, #4a4642);
   white-space: nowrap;
 }
+/* The pill sits in its own cell so an absent status still holds the column. */
+.pdash-pace-status {
+  display: flex;
+  min-width: 0;
+}
 .pdash-pace-prep {
   font-size: 12.5px;
   font-style: italic;
   color: var(--sk-ink-soft, #4a4642);
+  white-space: nowrap;
+}
+
+/* Narrow: the grid collapses to name + a wrapped detail line, because five
+   columns in 480px is worse than no columns at all. */
+@media (max-width: 760px) {
+  .pdash-pace-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+  }
+  .pdash-pace-ch {
+    grid-column: 1 / -1;
+  }
 }
 .pdash-pace-pill {
   font-size: 12px;
@@ -1405,11 +1433,14 @@
 }
 
 /* ══ Who is Olórin? — a fixed pill on the deck; clicking reveals the guide. ══ */
+/* Bottom dock, S168 (founder): three anchors, left → right —
+     [+] add a child   ·   Refer & earn (centre)   ·   Who is Olórin? (right)
+   Refer and Olórin were SWAPPED here: Refer held the right corner and Olórin the
+   centre until the founder moved the commercial offer into the middle. */
 .pdash-who-pill {
   position: fixed;
-  left: 50%;
+  right: 20px;
   bottom: 20px;
-  transform: translateX(-50%);
   z-index: 60;
   display: inline-flex;
   align-items: center;
@@ -1543,14 +1574,14 @@
 }
 
 /* ══ REFER & EARN (S166) ═══════════════════════════════════════════════════════
-   A second bottom pill beside "Who is Olórin?". Anchored to the RIGHT rather
-   than sharing a centred dock with it: the who-pill is centred and already
-   founder-eyeballed, and re-centring a pair would move a thing that was signed
-   off. Below 700px the two would collide, so the refer pill lifts above it. */
+   The CENTRE pill of the bottom dock as of S168 (founder swap — it held the
+   right corner before, with "Who is Olórin?" centred). Below 700px the centre
+   and right pills would collide, so the RIGHT one lifts above this row. */
 .pdash-ref-pill {
   position: fixed;
-  right: 20px;
+  left: 50%;
   bottom: 20px;
+  transform: translateX(-50%);
   z-index: 60;
   display: inline-flex;
   align-items: center;
@@ -1582,7 +1613,142 @@
   line-height: 1;
 }
 @media (max-width: 700px) {
-  .pdash-ref-pill { bottom: 70px; }
+  /* The RIGHT pill lifts clear of the centred one (they swapped in S168, so this
+     moved from .pdash-ref-pill to .pdash-who-pill with them). The + circle stays
+     on the bottom row: it is 44px wide in the corner and clears a centred pill. */
+  .pdash-who-pill { bottom: 70px; }
+}
+
+/* ══ ADD ANOTHER CHILD (S168) ═════════════════════════════════════════════════
+   The bottom-LEFT anchor of the dock: a plain circle with a +, deliberately the
+   quietest of the three. It files a parent_link_request — the SAME board-less
+   procedure the signed-out waiting room uses (parentLink.request) — so a parent
+   with one child already on screen can add the next without leaving the page or
+   ringing anyone. An admin still confirms the match; nothing here links a child
+   directly (D-PLINK: admin CONFIRMS, never auto-link). */
+.pdash-add-pill {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1.5px solid var(--sk-ink, #1c1917);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--sk-ink, #1c1917);
+  font-family: "Caveat", cursive;
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.pdash-add-pill:hover { background: #f6f6f4; }
+.pdash-add-pill-glyph {
+  /* Optically centre the glyph: Caveat's "+" sits high in its own box. */
+  display: block;
+  margin-top: -2px;
+}
+.pdash-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 2px;
+}
+.pdash-add-head {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--sk-ink, #1c1917);
+}
+.pdash-add-sub {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #5b5750;
+}
+.pdash-add-form {
+  display: flex;
+  gap: 8px;
+}
+.pdash-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1.5px solid #d6d1c7;
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  font-size: 15px;
+  color: var(--sk-ink, #1c1917);
+}
+.pdash-add-input:focus {
+  outline: none;
+  border-color: var(--sk-ink, #1c1917);
+}
+.pdash-add-btn {
+  padding: 10px 18px;
+  border: 1.5px solid var(--sk-ink, #1c1917);
+  border-radius: 10px;
+  background: var(--sk-ink, #1c1917);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pdash-add-btn:disabled { opacity: 0.55; cursor: default; }
+.pdash-add-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pdash-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #f6f4ef;
+  font-size: 14px;
+  color: #443f39;
+}
+.pdash-add-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdash-add-status {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pdash-add-status.is-pending { background: #f6e3b8; color: #7a5a10; }
+.pdash-add-status.is-rejected { background: #f3d7cf; color: #8a3a22; }
+.pdash-add-status.is-linked { background: #cfe8d8; color: #1f6340; }
+.pdash-add-err { margin: 0; font-size: 14px; color: #a2452b; }
+.pdash-add-refresh {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1.5px solid var(--pm-green, #2f8f5b);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--pm-green, #2f8f5b);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* The card reuses .pdash-who-card's shell (border, shadow, backdrop) and only
@@ -1968,4 +2134,114 @@
   .pdash-pm-title {
     font-size: 21px;
   }
+}
+
+/* ── The CHILD SWITCHER (S169) — fixed top-LEFT, one chip per child ──
+   Top-centre is the progress-map pill and top-right is Sign out, so the left
+   corner is the only free anchor. Chips scroll horizontally rather than wrap:
+   this bar must never grow tall enough to push into the first slide. */
+.pdash-kids {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(46vw, 520px);
+  overflow-x: auto;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(20, 22, 43, 0.1);
+  scrollbar-width: none;
+}
+.pdash-kids::-webkit-scrollbar { display: none; }
+.pdash-kid {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  appearance: none;
+  cursor: pointer;
+  padding: 5px 11px 5px 5px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--pm-ink-soft, #5b6170);
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.pdash-kid:hover { background: #f1f2f6; color: var(--pm-ink, #1f2430); }
+/* The child being read is the one chip that carries ink and a border. */
+.pdash-kid.is-current {
+  background: #ffffff;
+  border-color: #c9ced9;
+  color: var(--pm-ink, #1f2430);
+  cursor: default;
+}
+.pdash-kid-avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e6e9f0;
+  color: #3f4657;
+  font-size: 12px;
+  font-weight: 700;
+}
+.pdash-kid.is-current .pdash-kid-avatar { background: #dfe6ff; color: #2149b8; }
+.pdash-kid-name { white-space: nowrap; }
+.pdash-kid-all { padding: 5px 11px; font-weight: 600; }
+
+@media (max-width: 900px) {
+  /* Narrow: initials only — the names are what makes this bar wide. */
+  .pdash-kids { max-width: calc(100vw - 32px); }
+  .pdash-kid-name { display: none; }
+  .pdash-kid { padding: 5px; }
+  .pdash-kid-all { padding: 5px 9px; }
+}
+
+/* ── Growth-chart subject chips (S169) — All + one per subject, All default.
+   Sits above the plot, right-aligned so the eye lands on the bars first: the
+   filter is a refinement of the story, not the story. ── */
+.pdash-trend-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: -4px 0 10px;
+}
+.pdash-trend-chip {
+  appearance: none;
+  cursor: pointer;
+  padding: 5px 13px;
+  border: 1px solid #d7dae1;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--pm-ink-soft, #5b6170);
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.pdash-trend-chip:hover {
+  border-color: #b9bec9;
+  color: var(--pm-ink, #1f2430);
+}
+/* The selected subject is the one chip that inverts — same treatment the pace
+   slide's filter capsules use, so the two read as the same control. */
+.pdash-trend-chip.is-on {
+  background: var(--sk-ink, #1c1917);
+  border-color: var(--sk-ink, #1c1917);
+  color: #fff;
+}
+@media (max-width: 620px) {
+  .pdash-trend-chips { justify-content: flex-start; }
 }

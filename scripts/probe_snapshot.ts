@@ -120,11 +120,14 @@ async function main() {
     return {
       sPhys: sPhys!.id,
       sBio: sBio!.id,
-      // Physics: p1 solid (5/4), p2 not (4/3), p3 not (null/2)
+      // D-PDASH-7 fixtures — the two clauses of `isSolid`, one per row:
+      // Physics: p1 solid (5/4), p2 solid (3/2 — ONE axis reaches 3, the new
+      // rule's whole point), p3 NOT (null/4 — an axis at 4 cannot carry a row
+      // whose other axis was never assessed).
       p1: await st(tP!.id, "p1", 1),
       p2: await st(tP!.id, "p2", 2),
       p3: await st(tP!.id, "p3", 3),
-      // Biology: b1 solid (4/4)
+      // Biology: b1 NOT solid (2/2 — both assessed, neither reaches 3)
       b1: await st(tB!.id, "b1", 1),
     };
   });
@@ -161,13 +164,14 @@ async function main() {
       log: "log",
     });
 
-  // Student A: 4 covered, 2 solid (p1 5/4, b1 4/4). p2 4/3 not solid, p3 null/2 not.
+  // Student A: 4 covered, 2 solid (p1 5/4, p2 3/2). p3 null/4 blocked by the
+  // unassessed axis; b1 2/2 assessed but below the bar.
   await withBoard(P.id, async (tx) => {
     await mastery(tx, studentA, fx.p1, 5, 4);
-    await mastery(tx, studentA, fx.p2, 4, 3);
-    await mastery(tx, studentA, fx.p3, null, 2);
-    await mastery(tx, studentA, fx.b1, 4, 4);
-    // Student B: 1 covered, 0 solid (p1 3/3) — for the scoping test.
+    await mastery(tx, studentA, fx.p2, 3, 2);
+    await mastery(tx, studentA, fx.p3, null, 4);
+    await mastery(tx, studentA, fx.b1, 2, 2);
+    // Student B: 1 covered, 1 solid (p1 3/3) — for the scoping test.
     await mastery(tx, studentB, fx.p1, 3, 3);
   });
 
@@ -184,26 +188,33 @@ async function main() {
       .then((r) => r[0]),
   );
   check("3b. covered = 4 (all mastery rows)", rowA1?.coveredCount === 4);
-  check("3c. solid = 2 (both axes ≥ 4: p1 5/4, b1 4/4)", rowA1?.solidCount === 2);
+  check("3c. solid = 2 (D-PDASH-7: p1 5/4, p2 3/2)", rowA1?.solidCount === 2);
+  // The both-assessed clause, asserted on its own: p3 carries a 4 and is still
+  // not solid. Negative control — setting p3's conceptual to any 1–5 makes this
+  // count 3 and reddens the leg.
+  check(
+    "3c-ii. an axis at 4 does NOT carry a row whose other axis is null (p3)",
+    rowA1?.solidCount === 2,
+  );
   const perSub = (rowA1?.metrics as any)?.perSubject as Array<any>;
   const phys = perSub?.find((s) => s.subjectId === fx.sPhys);
   const bio = perSub?.find((s) => s.subjectId === fx.sBio);
   check(
-    "3d. per-subject: Physics covered 3 / solid 1",
-    phys?.covered === 3 && phys?.solid === 1,
+    "3d. per-subject: Physics covered 3 / solid 2",
+    phys?.covered === 3 && phys?.solid === 2,
   );
   check(
-    "3e. per-subject: Biology covered 1 / solid 1",
-    bio?.covered === 1 && bio?.solid === 1,
+    "3e. per-subject: Biology covered 1 / solid 0",
+    bio?.covered === 1 && bio?.solid === 0,
   );
 
-  // 4. DURABILITY — bump p2 to solid (4→5 procedural), re-run SAME period.
+  // 4. DURABILITY — bump b1 to solid (2→4 conceptual), re-run SAME period.
   await withBoard(P.id, (tx) =>
     tx
       .update(masteryState)
-      .set({ proceduralLevel: 5 })
+      .set({ conceptualLevel: 4 })
       .where(
-        sql`${masteryState.studentId} = ${studentA} and ${masteryState.subTopicId} = ${fx.p2}`,
+        sql`${masteryState.studentId} = ${studentA} and ${masteryState.subTopicId} = ${fx.b1}`,
       ),
   );
   const wroteA1again = await withBoard(P.id, (tx) =>
@@ -218,7 +229,7 @@ async function main() {
       .then((r) => r[0]),
   );
   check(
-    "4b. frozen: solid STILL 2 despite p2 now solid (the drift the snapshot prevents)",
+    "4b. frozen: solid STILL 2 despite b1 now solid (the drift the snapshot prevents)",
     rowA1after?.solidCount === 2,
   );
 
@@ -235,7 +246,7 @@ async function main() {
       )
       .then((r) => r[0]),
   );
-  check("5. next-month snapshot → solid 3 (p2 moved up); 'was 2 last month' holds", rowA2?.solidCount === 3);
+  check("5. next-month snapshot → solid 3 (b1 moved up); 'was 2 last month' holds", rowA2?.solidCount === 3);
 
   // 6. runMonthlySnapshot SCOPING (M22) — only studentA, for a fresh period.
   const P3 = "2026-08-01";

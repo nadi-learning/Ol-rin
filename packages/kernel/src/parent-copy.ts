@@ -22,6 +22,22 @@
  *
  * NO raw 1–5 levels, NO `tutor_level`, NO `log` appear in any string here — the
  * never-show boundary (brainstorm §never-shown) is a copy constraint too.
+ *
+ * ── NO GENDERED PRONOUNS. Use `{name}`. (founder, S168) ──────────────────────
+ * Every string here said "she"/"her". `student.pronoun` exists as a column and
+ * the backfill even populates it, but NOTHING reads it — so the page was not
+ * inferring anything, it was asserting one gender in 18 strings. Both students
+ * loaded so far happen to be girls, which is exactly why it went unnoticed: the
+ * first boy's dashboard would have misgendered him on every heading.
+ *
+ * The fix is the founder's: say the child's NAME. It reads warmer than "they",
+ * it removes the failure mode rather than deferring it to a pronoun-inflection
+ * table, and `{name}` was already threaded through half these strings.
+ *
+ * ⚠️ Adding `{name}` to a string makes it MANDATORY at every call site —
+ * `fillCopy` throws on a missing token, by design. If you add `{name}` to a key,
+ * check `ParentPage.tsx` passes it (S168 had to thread `name` into five
+ * components that did not previously receive it).
  */
 
 // ────────────────────────── the default map ──────────────────────────
@@ -53,39 +69,49 @@ export const PARENT_COPY_DEFAULTS = {
   "bucket.strong": "strong",
   "bucket.secure": "secure",
 
+  // Horizontal-skill scale — DELIBERATELY three words, not the four mastery
+  // buckets (S170). A cross-subject skill is a coarser claim than a topic level:
+  // a tutor says "she can do this / it's uneven / this needs work", and the
+  // founder's authored assessments are written in exactly those terms. Reusing
+  // `bucket.*` here would either misquote them or drag topic cards along with a
+  // rewording meant only for this slide.
+  "hz.strong": "strong",
+  "hz.mixed": "mixed",
+  "hz.needswork": "needs work",
+
   // Section headings (the portfolio's 8 sections).
   "section.cover.title": "{name}'s progress",
   "section.month.title": "This month",
-  "section.map.title": "What she's covered",
-  "section.meters.title": "What she can do now",
-  "section.calibration.title": "How well she knows herself",
-  "section.weakness.title": "Where she's stuck — and what's being done",
+  "section.map.title": "What {name} has covered",
+  "section.meters.title": "What {name} can do now",
+  "section.calibration.title": "How well {name} judges their own work",
+  "section.weakness.title": "Where {name} is stuck — and what's being done",
   "section.horizontals.title": "Skills that carry across subjects",
   "section.closing.title": "That's the picture",
-  "section.pace.title": "The plan — and where she is",
+  "section.pace.title": "The plan — and where {name} is",
 
   // Olórin's per-section lines — DEFAULTS (v1 templated; generation is a later
   // slice). Each says the thing its section can't say about itself, never a caption.
-  "olorin.cover": "{name} is a bright one — quick to catch on, and coming along nicely. I've walked beside her since the start; here's what she's built.",
+  "olorin.cover": "{name} is a bright one — quick to catch on, and coming along nicely. I've walked beside {name} since the start; here's what those months have built.",
   "olorin.month": "The work that came back wasn't {name}'s to choose — the schedule brought it back to check it held.",
-  "olorin.map": "Green doesn't mean {name} got it right once. It means she got it right again, weeks later, when I brought it back.",
+  "olorin.map": "Green doesn't mean {name} got it right once. It means {name} got it right again, weeks later, when I brought it back.",
   "olorin.meters": "Understanding a thing and being able to do it are different skills. Where {name} has a gap between them, it's the normal kind — and the fixable one.",
   "olorin.calibration": "Being wrong is fine. Being sure while wrong is where marks quietly slip — so it's worth watching with {name}.",
   "olorin.weakness": "I don't hide these from you. A page with no problems on it would be one you shouldn't trust.",
-  "olorin.horizontals": "These aren't one subject's skills. They're the ones that follow {name} into every subject she'll take.",
+  "olorin.horizontals": "These aren't one subject's skills. They're the ones that follow {name} into every subject ahead.",
   "olorin.closing": "That's {name}'s story so far. I'll keep watching — come back whenever you like.",
-  "olorin.pace": "Every chapter has a rhythm I plan for {name}. Here's the pace I set — and honestly, how close she's keeping to it.",
+  "olorin.pace": "Every chapter has a rhythm I plan for {name}. Here's the pace I set — and honestly, how close {name} is keeping to it.",
 
   // Mechanism names — WHY a topic was practised (CLOCK-1 dispatch_reason + origin).
   "mechanism.first_teach": "learning it for the first time",
-  "mechanism.climb": "building on what she knew",
+  "mechanism.climb": "building on what {name} already knew",
   "mechanism.retention": "a retention check brought it back",
-  "mechanism.self_serve": "on her own",
-  "mechanism.tutor_assigned": "set by her tutor",
+  "mechanism.self_serve": "unprompted",
+  "mechanism.tutor_assigned": "set by the tutor",
 
   // Small print (interpolated — validated).
   "smallprint.coverage": "across {covered} of {total} topics covered",
-  "smallprint.calibration": "based on {answered} answers she rated her confidence on",
+  "smallprint.calibration": "based on {answered} answers {name} rated their confidence on",
 
   // The one headline number (element 2).
   "headline.solid": "{solid} of {total} solid",
@@ -97,9 +123,9 @@ export const PARENT_COPY_DEFAULTS = {
     "Flagged and on the tutor's worklist — a specific plan will appear here once it's set.",
 
   // Story template slots (element 2 — the templated story, all data-filled).
-  "story.topics": "This period she worked on {topics} topics.",
-  "story.retention": "A retention check brought back {topic} — and she got it.",
-  "story.self_directed": "She practised {count} of them on her own.",
+  "story.topics": "This period {name} worked on {topics} topics.",
+  "story.retention": "A retention check brought back {topic} — and {name} got it.",
+  "story.self_directed": "{name} practised {count} of them unprompted.",
 } as const;
 
 export type ParentCopyKey = keyof typeof PARENT_COPY_DEFAULTS;
@@ -160,6 +186,40 @@ export const HORIZONTAL_COPY: Record<string, { label: string; gloss: string }> =
   notation_discipline: {
     label: "Writes it cleanly",
     gloss: "Keeps every line a true equation — no dropped signs or misused equals.",
+  },
+
+  // ── Authored taxonomy (S170) ────────────────────────────────────────────
+  // Names for skills a tutor actually named, added when the founder authored
+  // real per-student assessments. These are TAXONOMY — the name of a skill and
+  // what it means in general — so they belong here. The sentence about a
+  // particular child lives in `horizontal_skill_state.prose`, in the database,
+  // sourced from the out-of-repo hand-off; it must never be pasted into this
+  // file, which is a shared git-tracked package.
+  // The `gloss` is the generic meaning and is what renders when a student has
+  // no authored prose of their own.
+  transfer_to_new_situations: {
+    label: "Transfer to new situations",
+    gloss: "Carries an idea into an unfamiliar setup without being told to.",
+  },
+  spotting_contradictions: {
+    label: "Spotting contradictions",
+    gloss: "Notices when a reason doesn't hold, even when it sounds convincing.",
+  },
+  picking_the_right_tool: {
+    label: "Picking the right tool",
+    gloss: "Asks what kind of question this is before starting to calculate.",
+  },
+  diagram_to_algebra: {
+    label: "Moving between diagram and algebra",
+    gloss: "Turns a picture into equations, and equations back into a picture.",
+  },
+  precision_of_language: {
+    label: "Precision of language",
+    gloss: "Says exactly what is wrong, not only that something is wrong.",
+  },
+  fixed_vs_varying: {
+    label: "Separating what's fixed from what varies",
+    gloss: "Keeps what is given apart from what is being asked for.",
   },
 };
 

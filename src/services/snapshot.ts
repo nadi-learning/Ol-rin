@@ -16,7 +16,12 @@
  * Definitions (must agree with the chapter map + insights, insights.ts):
  *   covered = the student has a mastery_state row for the sub_topic (certified at
  *             least once — the only thing that writes mastery_state).
- *   solid   = BOTH axes >= 4 (bucketForLevel "strong"+ = the chapter-map green).
+ *   solid   = `isSolid` from @b2c/kernel/mastery — the SAME predicate the live
+ *             parent row uses (D-PDASH-7: either axis >= 3, both assessed).
+ *             It was a local `SOLID_LEVEL = 4` until S168; a frozen month row
+ *             computed on one rule under a live total computed on another draws
+ *             a chart that contradicts itself, so the constant now lives in one
+ *             module both paths import.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
@@ -29,11 +34,9 @@ import {
   subject,
   topic,
 } from "@b2c/kernel/schema";
+import { isSolid } from "@b2c/kernel/mastery";
 
 type Tx = PgTransaction<any, any, any>;
-
-/** Both axes at or above this = "solid" (the chapter-map green). One place. */
-const SOLID_LEVEL = 4;
 
 export type SubjectRollup = {
   subjectId: string;
@@ -85,18 +88,17 @@ export async function snapshotStudent(
   let solid = 0;
   for (const r of rows) {
     covered++;
-    // A null axis is "not yet observed" — it cannot be solid (?? 0 < 4).
-    const isSolid =
-      (r.conceptualLevel ?? 0) >= SOLID_LEVEL &&
-      (r.proceduralLevel ?? 0) >= SOLID_LEVEL;
-    if (isSolid) solid++;
+    // A null axis is "not yet observed" — it cannot be solid, and under
+    // D-PDASH-7 it also blocks the OTHER axis from carrying the row.
+    const rowIsSolid = isSolid(r.conceptualLevel, r.proceduralLevel);
+    if (rowIsSolid) solid++;
     let s = bySubject.get(r.subjectId);
     if (!s) {
       s = { subjectId: r.subjectId, subjectName: r.subjectName, covered: 0, solid: 0 };
       bySubject.set(r.subjectId, s);
     }
     s.covered++;
-    if (isSolid) s.solid++;
+    if (rowIsSolid) s.solid++;
   }
   const metrics: SnapshotMetrics = { perSubject: [...bySubject.values()] };
 

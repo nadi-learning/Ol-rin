@@ -4,6 +4,8 @@ import { AdminPeoplePanel } from "./AdminPeoplePanel";
 import { AdminChaptersPanel } from "./AdminChaptersPanel";
 import { AdminRequestsPanel } from "./AdminRequestsPanel";
 import { AdminReferralsPanel } from "./AdminReferralsPanel";
+import { AdminCopyPanel } from "./AdminCopyPanel";
+import { AdminBudgetPanel } from "./AdminBudgetPanel";
 import "./admin.css";
 
 type BoardOption = Awaited<ReturnType<typeof trpc.session.listBoards.query>>[number];
@@ -37,7 +39,7 @@ export function AdminPage({
   // requires. Local state, not a route — AdminPage is already reached by role
   // routing, not by URL, so a router would be the only URL-aware thing here.
   const [tab, setTab] = useState<
-    "ingest" | "chapters" | "people" | "requests" | "referrals"
+    "ingest" | "chapters" | "people" | "requests" | "referrals" | "copy" | "budgets"
   >("ingest");
 
   // S165 — the pending-parent-request badge on the Requests tab. Fetched here
@@ -209,7 +211,11 @@ export function AdminPage({
                   ? "parent requests"
                   : tab === "referrals"
                     ? "referral ledger"
-                    : "people"}
+                    : tab === "copy"
+                      ? "parent dashboard copy"
+                      : tab === "budgets"
+                        ? "chapter budgets"
+                        : "people"}
           </div>
           <h1 className="adm-title">{adminName}</h1>
         </div>
@@ -271,9 +277,38 @@ export function AdminPage({
         >
           Referrals
         </button>
+        {/* S168 — D-PDASH-3's DB half. Board-gated like Chapters/Requests: the
+            copy IS a board's voice, so editing it without a board selected has
+            no meaning. */}
+        <button
+          className={`adm-tab${tab === "copy" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("copy")}
+        >
+          Copy
+        </button>
+        {/* S169 — the per-chapter sub-topic budget. Board-gated for the same
+            reason as Chapters: a budget is a claim about ONE board's syllabus. */}
+        <button
+          className={`adm-tab${tab === "budgets" ? " adm-tab-on" : ""}`}
+          onClick={() => setTab("budgets")}
+        >
+          Budgets
+        </button>
       </nav>
 
-      {tab === "referrals" ? (
+      {tab === "budgets" ? (
+        board ? (
+          <AdminBudgetPanel board={board} />
+        ) : (
+          <p className="adm-muted">Pick a board to set its chapter budgets.</p>
+        )
+      ) : tab === "copy" ? (
+        board ? (
+          <AdminCopyPanel board={board} />
+        ) : (
+          <p className="adm-muted">Pick a board to edit its parent-dashboard copy.</p>
+        )
+      ) : tab === "referrals" ? (
         <AdminReferralsPanel />
       ) : tab === "requests" ? (
         board ? (

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import rough from "roughjs";
 import { trpc } from "../trpc";
 import {
+  fillCopy,
   resolveParentCopy,
   type ParentCopyKey,
 } from "@b2c/kernel/parent-copy";
@@ -26,6 +27,8 @@ import "./parent-dashboard.css";
 // already cut at the read path. All classes `.par-`/`.pdash-`-scoped (landmine-safe).
 
 type Child = Awaited<ReturnType<typeof trpc.parent.listChildren.query>>[number];
+/** One of this parent's own link requests (S168 — the add-another-child pill). */
+type LinkRequest = Awaited<ReturnType<typeof trpc.parentLink.myRequests.query>>[number];
 type Dashboard = Awaited<
   ReturnType<typeof trpc.parent.getChildDashboard.query>
 >;
@@ -33,9 +36,37 @@ type SubjectPanel = Dashboard["subjects"][number];
 type MasteryCard = SubjectPanel["mastery"][number];
 type Horizontal = SubjectPanel["horizontals"][number];
 
-// A `.query`-inferred copy helper. resolveParentCopy always returns a string
-// (fallback is total — every key exists in the default map).
+// ── copy resolution: board OVERRIDE first, code default second (D-PDASH-3) ────
+// The portfolio resolves most of its own copy client-side, so the overrides have
+// to travel in the dashboard payload (`dash.copyOverrides`) and be applied here,
+// or the two halves of one page would speak in two voices.
+//
+// Held in a module-level map rather than a React context, because `copy()` is
+// called from ~36 places including plain helper functions that are not
+// components and could not read a hook. It is SET DURING RENDER by `Portfolio`,
+// before any child renders — React renders a parent to completion before its
+// children, so every consumer below sees the right board's voice on the first
+// paint. NOT a latch (M78's failure mode): it is re-set on every dashboard load,
+// so switching child A → B cannot leave A's overrides behind.
+let COPY_OVERRIDES: Record<string, string> = {};
+
+// A `.query`-inferred copy helper. Always returns a string: an override wins if
+// present, else the code default — and every key exists in the default map, so
+// the fallback is total and nothing can render blank.
 function copy(key: ParentCopyKey, vars?: Record<string, string | number>): string {
+  const override = COPY_OVERRIDES[key];
+  // `fillCopy` throws on a token the caller didn't supply. The admin editor
+  // refuses to save an override introducing a NEW token (services/parent_copy.ts)
+  // — but a row written by hand could still do it, and a throw during render is a
+  // BLANK DASHBOARD, not a blank string. So the override is best-effort and the
+  // default is the floor.
+  if (override !== undefined) {
+    try {
+      return fillCopy(override, vars ?? {});
+    } catch {
+      /* fall through to the code default */
+    }
+  }
   return resolveParentCopy(key, vars);
 }
 
@@ -80,7 +111,8 @@ export function ParentPage({
         <ChildPortfolio
           key={selected.studentId}
           child={selected}
-          showBack={(children?.length ?? 0) > 1}
+          siblings={children ?? []}
+          onPick={(c) => setSelected(c)}
           onBack={() => setSelected(null)}
         />
       )}
@@ -124,13 +156,66 @@ function ChildList({
 
 // ───────────────────────────── the portfolio ─────────────────────────────
 
+/**
+ * The child SWITCHER (S169, founder ask: "if i am a parent which has multiple
+ * child no option to switch").
+ *
+ * Before this there was only `← All children` — a round trip out of the
+ * portfolio and back in, which reads as leaving one child's page rather than
+ * comparing two. A parent with three children moves between them constantly, so
+ * the children are always on screen and one tap apart.
+ *
+ * Fixed top-LEFT because the two other fixed anchors are taken: the progress-map
+ * pill is top-centre and Sign out is top-right. Hidden entirely for an only
+ * child — a switcher with one option is furniture.
+ */
+function ChildSwitcher({
+  siblings,
+  currentId,
+  onPick,
+  onBack,
+}: {
+  siblings: Child[];
+  currentId: string;
+  onPick: (c: Child) => void;
+  onBack: () => void;
+}) {
+  if (siblings.length < 2) return null;
+  return (
+    <nav className="pdash-kids" aria-label="Switch child">
+      {siblings.map((c) => {
+        const isCurrent = c.studentId === currentId;
+        return (
+          <button
+            key={c.studentId}
+            className={`pdash-kid${isCurrent ? " is-current" : ""}`}
+            aria-current={isCurrent ? "page" : undefined}
+            onClick={() => !isCurrent && onPick(c)}
+            title={c.email}
+          >
+            <span className="pdash-kid-avatar">
+              {(c.name ?? c.email).trim().slice(0, 1).toUpperCase()}
+            </span>
+            <span className="pdash-kid-name">{(c.name ?? c.email).split(" ")[0]}</span>
+          </button>
+        );
+      })}
+      <button className="pdash-kid pdash-kid-all" onClick={onBack} title="Back to all children">
+        All
+      </button>
+    </nav>
+  );
+}
+
 function ChildPortfolio({
   child,
-  showBack,
+  siblings,
+  onPick,
   onBack,
 }: {
   child: Child;
-  showBack: boolean;
+  siblings: Child[];
+  onPick: (c: Child) => void;
   onBack: () => void;
 }) {
   const [dash, setDash] = useState<Dashboard | null>(null);
@@ -147,11 +232,12 @@ function ChildPortfolio({
 
   return (
     <div>
-      {showBack && (
-        <button className="par-back" onClick={onBack}>
-          ← All children
-        </button>
-      )}
+      <ChildSwitcher
+        siblings={siblings}
+        currentId={child.studentId}
+        onPick={onPick}
+        onBack={onBack}
+      />
 
       {error && <p className="par-error">{error}</p>}
       {dash === null && !error && (
@@ -185,11 +271,15 @@ function prefersReduced(): boolean {
 // The portfolio is a SLIDE DECK: the name resolves in and dissolves like vapour,
 // then a vertical snap-scroll of wooden planks (rough-edged, centre-aligned) —
 // scrolling turns the page one slide at a time. A carved nameplate opens it with
-// a Shire address; then narration, the two charts, the numbers, and the details.
-// (Gandalf + signpost sketches removed for this pass.)
-const SHIRE_ADDRESS = "Bag End · Bagshot Row · Hobbiton · The Shire";
+// the child's name; then narration, the two charts, the numbers, and the details.
+// (Gandalf + signpost sketches removed for this pass. The Tolkien Shire address
+// under the nameplate was removed S170 — real parents are about to read this.)
 
 function Portfolio({ dash }: { dash: Dashboard }) {
+  // Apply this board's copy overrides BEFORE anything below renders (see the
+  // COPY_OVERRIDES note at the top). Render-phase on purpose: an effect would
+  // run AFTER the first paint, so a parent would see the default voice flash.
+  COPY_OVERRIDES = dash.copyOverrides ?? {};
   const name = dash.child.name ?? dash.child.email;
   const reduced = prefersReduced();
   const [splashDone, setSplashDone] = useState(false);
@@ -214,6 +304,7 @@ function Portfolio({ dash }: { dash: Dashboard }) {
 
       {splashDone && <WhoIsOlorin name={name} />}
       {splashDone && <ReferEarn />}
+      {splashDone && <AddChild />}
       {splashDone && <RealmMapControl subjects={dash.subjects} name={name} />}
 
       {splashDone && (
@@ -231,10 +322,22 @@ function Portfolio({ dash }: { dash: Dashboard }) {
           </Slide>
           <Slide>
             <Plank
-              title="How her mastery has grown"
+              title={`How ${name}'s mastery has grown`}
               badge={gain > 0 && first ? `+${gain} solid since ${first.label}` : undefined}
             >
-              <ProgressTrend trend={trend} />
+              {/* `totalNow` is the syllabus budget — it honours chapter_budget
+                  where set and falls back to the carved count (S169). Each chip
+                  carries its OWN budget, summed from that subject's chapters, so
+                  filtering to Maths measures against Maths, not the whole page. */}
+              <ProgressTrend
+                trend={trend}
+                budget={dash.totals.totalNow}
+                scopes={dash.subjects.map((s) => ({
+                  subjectId: s.subjectId,
+                  subjectName: s.subjectName,
+                  budget: s.chapters.reduce((n, c) => n + c.budget, 0),
+                }))}
+              />
             </Plank>
           </Slide>
           <Slide>
@@ -252,17 +355,17 @@ function Portfolio({ dash }: { dash: Dashboard }) {
           </Slide>
           <Slide>
             <Plank>
-              <WeaknessSection weaknesses={dash.weaknesses} />
+              <WeaknessSection name={name} weaknesses={dash.weaknesses} />
             </Plank>
           </Slide>
           <Slide>
-            <Plank title={copy("section.pace.title")}>
+            <Plank title={copy("section.pace.title", { name })}>
               <PaceSection pace={dash.pace} name={name} />
             </Plank>
           </Slide>
           <Slide>
             <Plank>
-              <HorizontalsSection subjects={dash.subjects} />
+              <HorizontalsSection name={name} subjects={dash.subjects} />
             </Plank>
           </Slide>
         </motion.div>
@@ -483,13 +586,12 @@ function Plank({
   );
 }
 
-// The opening board — the child's name hand-lettered + a Shire address.
+// The opening board — the child's name, hand-lettered.
 function Nameplate({ name }: { name: string }) {
   return (
     <SketchBoard variant="cover">
       <div className="pdash-nameplate-eyebrow">A progress portfolio</div>
       <div className="pdash-nameplate-name">{name}</div>
-      <div className="pdash-nameplate-addr">{SHIRE_ADDRESS}</div>
       <p className="pdash-cover-sub">Scroll to turn the page ↓</p>
     </SketchBoard>
   );
@@ -586,7 +688,7 @@ function WhoIsOlorin({ name }: { name: string }) {
                 <h3 className="pdash-who-name">Olórin</h3>
                 <p className="pdash-who-role">
                   I watch over {name}'s whole journey — every subject, every
-                  practice session, and every plan her tutors set — and keep this
+                  practice session, and every plan their tutors set — and keep this
                   portfolio up to date for you.
                 </p>
                 <div className="pdash-who-soon">
@@ -594,6 +696,183 @@ function WhoIsOlorin({ name }: { name: string }) {
                   You'll be able to speak with me directly, right here, to ask
                   anything about your child's progress.
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+// ══ ADD ANOTHER CHILD (S168) ═════════════════════════════════════════════════
+// The bottom-LEFT anchor of the dock — a + in a circle (founder's shape), opening
+// a small form that files a link request for a SECOND child.
+//
+// It reuses `parentLink.request` / `parentLink.myRequests` exactly as the
+// signed-out waiting room does (AccessPending.tsx): a board-less
+// `sessionProcedure`, idempotent per (parent, identifier, pending). No backend
+// work was needed for this — the same request an unlinked parent files is the
+// one a linked parent files for their next child, and an admin confirms both in
+// the /admin Requests tab.
+//
+// TWO deliberate differences from the waiting-room copy of this form:
+//  1. NO referral field. That offer lives in the Refer & earn pill beside it;
+//     asking for a code again here would be the same ask in two places.
+//  2. NO short-circuit on a `linked` request. The waiting room replaces its whole
+//     form once anything is linked (that parent's errand is finished). Here, a
+//     linked request is HISTORY — this parent already has a dashboard, and
+//     blocking the form on it would mean a third child could never be added.
+//
+// FAIL-OPEN like ReferEarn (D-AVAIL-1): if the request list can't load, the pill
+// still renders and the form still submits. A parent's view of the child they
+// already have must not depend on this.
+function AddChild() {
+  const [open, setOpen] = useState(false);
+  const [requests, setRequests] = useState<LinkRequest[] | null>(null);
+  const [identifier, setIdentifier] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [justFiled, setJustFiled] = useState(false);
+
+  function load() {
+    trpc.parentLink.myRequests
+      .query()
+      .then(setRequests)
+      .catch(() => setRequests([])); // fail-open: an empty list, never a dead card
+  }
+  useEffect(() => {
+    if (open) load();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const id = identifier.trim();
+    if (!id || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await trpc.parentLink.request.mutate({ identifier: id });
+      setIdentifier("");
+      setJustFiled(true);
+      load();
+    } catch (err: any) {
+      setError(String(err?.message ?? err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A request an admin has since linked means there is a child on this account
+  // the CURRENT page hasn't loaded — the dashboard fetched its children on mount.
+  // Offer the reload rather than silently showing a stale roster.
+  const hasFreshLink = (requests ?? []).some((r) => r.status === "linked");
+
+  return (
+    <>
+      <button
+        className="pdash-add-pill"
+        onClick={() => setOpen(true)}
+        aria-label="Add another child"
+        title="Add another child"
+      >
+        <span className="pdash-add-pill-glyph" aria-hidden>
+          +
+        </span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <div className="pdash-who-layer">
+            <motion.div
+              className="pdash-who-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setOpen(false)}
+            />
+            <motion.div
+              className="pdash-who-card pdash-ref-card"
+              initial={{ opacity: 0, y: 24, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 260, damping: 26 }}
+            >
+              <button
+                className="pdash-who-close"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+
+              <div className="pdash-add-body">
+                <div className="pdash-who-eyebrow">Your family</div>
+                <h3 className="pdash-add-head">Add another child</h3>
+                <p className="pdash-add-sub">
+                  Enter the email or phone number on your other child's account.
+                  We'll match it and connect them to this dashboard — you'll see
+                  them here once it's confirmed.
+                </p>
+
+                <form className="pdash-add-form" onSubmit={onSubmit}>
+                  <input
+                    className="pdash-add-input"
+                    type="text"
+                    inputMode="email"
+                    autoComplete="off"
+                    placeholder="Child's email or phone"
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    disabled={busy}
+                    aria-label="Your other child's email or phone number"
+                  />
+                  <button className="pdash-add-btn" disabled={busy || !identifier.trim()}>
+                    {busy ? "Sending…" : "Connect"}
+                  </button>
+                </form>
+
+                {error && <p className="pdash-add-err">{error}</p>}
+                {justFiled && !error && (
+                  <p className="pdash-add-sub">
+                    Sent. We'll match it and connect them shortly.
+                  </p>
+                )}
+
+                {(requests ?? []).length > 0 && (
+                  <ul className="pdash-add-list">
+                    {(requests ?? []).map((r) => (
+                      <li key={r.id} className="pdash-add-row">
+                        <span className="pdash-add-who">{r.enteredIdentifier}</span>
+                        <span className={`pdash-add-status is-${r.status}`}>
+                          {r.status === "pending"
+                            ? "waiting to match"
+                            : r.status === "linked"
+                              ? "connected"
+                              : "couldn't match"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {hasFreshLink && (
+                  <button
+                    className="pdash-add-refresh"
+                    onClick={() => window.location.reload()}
+                  >
+                    Reload to see them
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>
@@ -925,7 +1204,7 @@ function RealmMapControl({
               <header className="pdash-pm-head">
                 <h2 className="pdash-pm-title">Progress across the syllabus</h2>
                 <p className="pdash-pm-sub">
-                  Every chapter {name} is studying, coloured by how secure she is.
+                  Every chapter {name} is studying, coloured by how secure {name} is.
                 </p>
               </header>
               <div className="pdash-pm-legend">
@@ -981,9 +1260,11 @@ function ChapterTile({
   chapter: SubjectPanel["chapters"][number];
 }) {
   const state = chapterBoxState(chapter);
-  const pct = chapter.total
-    ? Math.round((chapter.solid / chapter.total) * 100)
-    : 0;
+  // Denominator is the chapter's BUDGET, not its carved cells (S170) — a
+  // chapter we have only half carved must still read against what it is worth,
+  // or these tiles sum to a different number than the headline above them.
+  const outOf = chapter.budget || chapter.total;
+  const pct = outOf ? Math.round((chapter.solid / outOf) * 100) : 0;
   return (
     <div className={`pdash-pm-tile is-${state}`}>
       <div className="pdash-pm-tile-name">{chapter.chapterName}</div>
@@ -993,7 +1274,7 @@ function ChapterTile({
         </span>
         {state !== "gray" && (
           <span className="pdash-pm-tile-count">
-            {chapter.solid}/{chapter.total} secure
+            {chapter.solid}/{outOf} secure
           </span>
         )}
       </div>
@@ -1083,7 +1364,7 @@ function buildTiles(dash: Dashboard, name: string): Tile[] {
     detail: (
       <>
         <MapSection name={name} subjects={dash.subjects} totals={t} />
-        <MetersSection subjects={dash.subjects} />
+        <MetersSection name={name} subjects={dash.subjects} />
       </>
     ),
   });
@@ -1105,7 +1386,7 @@ function buildTiles(dash: Dashboard, name: string): Tile[] {
       value: String(dash.calibration.over + dash.calibration.under),
       caption: "moments to calibrate",
       span: 1,
-      detail: <CalibrationSection calibration={dash.calibration} />,
+      detail: <CalibrationSection name={name} calibration={dash.calibration} />,
     });
   }
 
@@ -1119,7 +1400,7 @@ function buildTiles(dash: Dashboard, name: string): Tile[] {
         ? `answered · ${minutes} min practising`
         : "questions answered",
     span: dash.calibration.shown ? 2 : 1,
-    detail: <ClosingSection metrics={dash.metrics} />,
+    detail: <ClosingSection name={name} metrics={dash.metrics} />,
   });
 
   return tiles;
@@ -1262,11 +1543,11 @@ function MonthStory({
 }) {
   const lines: string[] = [];
   if (story.topicsPracticed > 0)
-    lines.push(copy("story.topics", { topics: story.topicsPracticed }));
+    lines.push(copy("story.topics", { name, topics: story.topicsPracticed }));
   if (story.retentionTopics.length > 0)
-    lines.push(copy("story.retention", { topic: story.retentionTopics[0]! }));
+    lines.push(copy("story.retention", { name, topic: story.retentionTopics[0]! }));
   if (story.selfDirectedCount > 0)
-    lines.push(copy("story.self_directed", { count: story.selfDirectedCount }));
+    lines.push(copy("story.self_directed", { name, count: story.selfDirectedCount }));
 
   return (
     <Band section="month" title={copy("section.month.title")}>
@@ -1329,7 +1610,7 @@ function MapSection({
         )} now — ${copy("headline.was", { prior: totals.solidPrior })}.`
       : undefined;
   return (
-    <Band section="map" title={copy("section.map.title")} lead={lead}>
+    <Band section="map" title={copy("section.map.title", { name })} lead={lead}>
       <div className="pdash-mapview">
         <button
           type="button"
@@ -1377,7 +1658,7 @@ function MapSection({
                   <div className="pdash-chapter-head">
                     <span className="pdash-chapter-name">{ch.chapterName}</span>
                     <span className="pdash-chapter-count">
-                      {ch.solid} / {ch.total} {copy("map.green")}
+                      {ch.solid} / {ch.budget || ch.total} {copy("map.green")}
                     </span>
                   </div>
                   <div className="pdash-cells">
@@ -1408,7 +1689,7 @@ function MapSection({
                       className={`pdash-chapbox ${MAP_STATE_CLASS[st]}`}
                       title={`${ch.chapterName} — ${copy(
                         `map.over.${st}` as ParentCopyKey,
-                      )} (${ch.solid}/${ch.total} ${copy("map.green")})`}
+                      )} (${ch.solid}/${ch.budget || ch.total} ${copy("map.green")})`}
                     >
                       <span className="pdash-chapbox-name">
                         {ch.chapterName}
@@ -1499,9 +1780,9 @@ function BucketPill({
 }
 
 // ── 4. Meters — what she can do now (D-PDASH-2, count-aggregated) ────────────
-function MetersSection({ subjects }: { subjects: SubjectPanel[] }) {
+function MetersSection({ name, subjects }: { name: string; subjects: SubjectPanel[] }) {
   return (
-    <Band section="meters" title={copy("section.meters.title")}>
+    <Band section="meters" title={copy("section.meters.title", { name })}>
       {subjects.length === 0 && (
         <p className="par-muted">Nothing to show yet.</p>
       )}
@@ -1552,16 +1833,18 @@ function Meter({
 
 // ── 5. Calibration — how well she knows herself (element 8) ──────────────────
 function CalibrationSection({
+  name,
   calibration,
 }: {
+  name: string;
   calibration: Dashboard["calibration"];
 }) {
   const c = calibration;
   return (
     <Band
       section="calibration"
-      title={copy("section.calibration.title")}
-      lead={copy("smallprint.calibration", { answered: c.answered })}
+      title={copy("section.calibration.title", { name })}
+      lead={copy("smallprint.calibration", { name, answered: c.answered })}
     >
       <div className="pdash-calib">
         <CalibStat
@@ -1720,19 +2003,26 @@ function PaceSection({ pace, name }: { pace: PaceSubject[]; name: string }) {
                             ? `due ${fmtPaceDate(ch.projectedEndDate)}`
                             : ""}
                       </span>
-                      {st && (
-                        <span className={`pdash-pace-pill is-${st.tone}`}>
-                          {st.label}
-                          {ch.daysOver && ch.daysOver > 0
-                            ? ` · ${ch.daysOver}d over`
-                            : ""}
-                        </span>
-                      )}
-                      {ch.preparedness && ch.preparedness !== "not_started" && (
-                        <span className="pdash-pace-prep">
-                          {PACE_PREP[ch.preparedness]}
-                        </span>
-                      )}
+                      {/* S169: the status and preparedness cells are ALWAYS
+                          rendered, empty when there is nothing to say. The row is
+                          a fixed grid now, so a missing cell would pull every
+                          later field left and break the column the eye is
+                          scanning down — the whole point of the change. */}
+                      <span className="pdash-pace-status">
+                        {st && (
+                          <span className={`pdash-pace-pill is-${st.tone}`}>
+                            {st.label}
+                            {ch.daysOver && ch.daysOver > 0
+                              ? ` · ${ch.daysOver}d over`
+                              : ""}
+                          </span>
+                        )}
+                      </span>
+                      <span className="pdash-pace-prep">
+                        {ch.preparedness && ch.preparedness !== "not_started"
+                          ? PACE_PREP[ch.preparedness]
+                          : ""}
+                      </span>
                     </div>
                   );
                 })}
@@ -1747,12 +2037,14 @@ function PaceSection({ pace, name }: { pace: PaceSubject[]; name: string }) {
 
 // ── 6. Weakness + plan (CLOCK-3) ────────────────────────────────────────────
 function WeaknessSection({
+  name,
   weaknesses,
 }: {
+  name: string;
   weaknesses: Dashboard["weaknesses"];
 }) {
   return (
-    <Band section="weakness" title={copy("section.weakness.title")}>
+    <Band section="weakness" title={copy("section.weakness.title", { name })}>
       {weaknesses.length === 0 ? (
         <p className="par-muted">Nothing flagged right now.</p>
       ) : (
@@ -1774,7 +2066,7 @@ function WeaknessSection({
                 <p className="pdash-plan-text">{w.planText}</p>
                 {w.planAuthored && w.planUpdatedAt && (
                   <div className="pdash-plan-by">
-                    — Olórin, relaying her tutor's plan ·{" "}
+                    — Olórin, relaying the tutor's plan ·{" "}
                     {new Date(w.planUpdatedAt).toLocaleDateString()}
                   </div>
                 )}
@@ -1792,6 +2084,8 @@ type HGroup = {
   slug: string;
   label: string;
   gloss: string;
+  /** This child's authored sentence, when a tutor wrote one. Beats the gloss. */
+  prose: string;
   subjects: string[];
   level: number | null;
 };
@@ -1806,6 +2100,7 @@ function groupHorizontals(subjects: SubjectPanel[]): HGroup[] {
           slug: h.slug,
           label: h.label,
           gloss: h.gloss,
+          prose: h.prose ?? "",
           subjects: [h.subjectName],
           level: h.level,
         });
@@ -1814,13 +2109,23 @@ function groupHorizontals(subjects: SubjectPanel[]): HGroup[] {
         // Keep the highest observed level across subjects.
         if (h.level !== null && (g.level === null || h.level > g.level))
           g.level = h.level;
+        if (!g.prose && h.prose) g.prose = h.prose;
       }
     }
   }
   return [...map.values()];
 }
 
-function HorizontalsSection({ subjects }: { subjects: SubjectPanel[] }) {
+// A cross-subject skill is a coarser claim than a topic level — three words, not
+// the four mastery buckets. See the `hz.*` note in parent-copy.ts.
+function horizontalBucket(level: number | null): string {
+  if (level == null) return "not yet observed";
+  if (level >= 4) return copy("hz.strong");
+  if (level >= 3) return copy("hz.mixed");
+  return copy("hz.needswork");
+}
+
+function HorizontalsSection({ name, subjects }: { name: string; subjects: SubjectPanel[] }) {
   const groups = groupHorizontals(subjects);
   return (
     <Band section="horizontals" title={copy("section.horizontals.title")}>
@@ -1837,10 +2142,14 @@ function HorizontalsSection({ subjects }: { subjects: SubjectPanel[] }) {
                     g.level === null ? " is-none" : ""
                   }`}
                 >
-                  {g.level === null ? "not yet observed" : levelBucket(g.level)}
+                  {horizontalBucket(g.level)}
                 </span>
               </div>
-              <p className="pdash-hz-gloss">{g.gloss}</p>
+              {/* The child's own authored sentence when a tutor wrote one; the
+                  generic meaning of the skill otherwise. Before S170 the prose
+                  was carried in the payload and never rendered, so an authored
+                  observation about a real child reached the page and stopped. */}
+              <p className="pdash-hz-gloss">{g.prose || g.gloss}</p>
               <div className="pdash-hz-subjects">{g.subjects.join(" · ")}</div>
             </div>
           ))}
@@ -1851,7 +2160,7 @@ function HorizontalsSection({ subjects }: { subjects: SubjectPanel[] }) {
 }
 
 // ── 8. Closing ──────────────────────────────────────────────────────────────
-function ClosingSection({ metrics }: { metrics: Dashboard["metrics"] }) {
+function ClosingSection({ name, metrics }: { name: string; metrics: Dashboard["metrics"] }) {
   const minutes = Math.round(metrics.totalTimeMs / 60000);
   return (
     <Band section="closing" title={copy("section.closing.title")}>

@@ -731,3 +731,298 @@
   .adm-table td:last-child { white-space: normal; }
   .adm-ref-reward-l { min-width: 100%; }
 }
+
+/* ══ PARENT-DASHBOARD COPY EDITOR (S168, D-PDASH-3's DB half) ════════════════
+   A long list of prose fields, so it optimises for SCANNING: the key is a code
+   token, the current text is the only thing at full contrast, and the default
+   sits underneath in small print so "revert" is a comparison, not a leap. */
+/* S169 — the scope rail (board default + one row per student) beside the editor. */
+.adm-copy-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.adm-copy-rail {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.adm-copy-rail-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-copy-rail-label {
+  margin: 12px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-copy-rail-empty { font-size: 13px; }
+.adm-copy-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.adm-copy-scope:hover { background: #f6f4f0; }
+.adm-copy-scope.is-active {
+  border-color: var(--blue, #2563eb);
+  background: #eef3ff;
+}
+.adm-copy-scope-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink, #2b2620);
+}
+.adm-copy-scope-sub {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+}
+/* How many keys this student already overrides — 0 shows nothing at all. */
+.adm-copy-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e5edff;
+  color: #2149b8;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.adm-copy-badge--board {
+  background: #f1efea;
+  color: #5d5648;
+}
+.adm-copy-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.adm-copy-title {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 700;
+}
+.adm-copy-sub {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-copy-filter { min-width: 200px; }
+.adm-copy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+.adm-copy-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "key     key"
+    "input   input"
+    "meta    actions";
+  gap: 6px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #e6e0d7);
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  background: #fdfdfc;
+}
+/* An overridden row is the exception, so it is the one that gets a colour. */
+.adm-copy-row.is-overridden {
+  border-left-color: var(--blue, #2563eb);
+  background: #fff;
+}
+.adm-copy-key {
+  grid-area: key;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copy-key code {
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-copy-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e5edff;
+  color: #2149b8;
+  font-size: 11px;
+  font-weight: 600;
+}
+.adm-copy-input {
+  grid-area: input;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line, #e6e0d7);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.adm-copy-input:focus {
+  outline: none;
+  border-color: var(--blue, #2563eb);
+}
+.adm-copy-meta {
+  grid-area: meta;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-copy-tokens code {
+  margin-right: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1efea;
+  color: #5d5648;
+}
+.adm-copy-tokens--none { font-style: italic; }
+.adm-copy-default {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-copy-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.adm-copy-save { align-self: auto; padding: 7px 14px; font-size: 14px; }
+.adm-copy-revert {
+  align-self: auto;
+  padding: 7px 14px;
+  font-size: 14px;
+  background: #fff;
+  color: var(--ink-soft, #8a8175);
+  border: 1px solid var(--line, #e6e0d7);
+}
+@media (max-width: 900px) {
+  /* The rail stops being a rail and becomes a scrollable strip above the editor. */
+  .adm-copy-layout { grid-template-columns: minmax(0, 1fr); }
+  .adm-copy-rail {
+    position: static;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+  .adm-copy-rail-title,
+  .adm-copy-rail-label { display: none; }
+  .adm-copy-scope { width: auto; min-width: 160px; flex: 0 0 auto; }
+}
+@media (max-width: 720px) {
+  .adm-copy-row {
+    grid-template-columns: 1fr;
+    grid-template-areas: "key" "input" "meta" "actions";
+  }
+  .adm-copy-default { white-space: normal; }
+}
+
+/* ── Chapter budgets (S169) — one row per chapter, columns aligned so the
+   carved-vs-authored comparison can be scanned straight down. ── */
+.adm-budget-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.adm-budget-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px 92px auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line, #e6e0d7);
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  background: #fdfdfc;
+}
+/* An authored budget is the exception, so it is the row that gets a colour. */
+.adm-budget-row.is-overridden {
+  border-left-color: var(--blue, #2563eb);
+  background: #fff;
+}
+.adm-budget-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.adm-budget-subject {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft, #8a8175);
+}
+.adm-budget-chapter {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink, #2b2620);
+}
+.adm-budget-carved {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--ink-soft, #8a8175);
+  white-space: nowrap;
+}
+.adm-budget-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1efea;
+  color: #5d5648;
+  font-size: 11px;
+  font-weight: 600;
+}
+.adm-budget-input {
+  width: 100%;
+  text-align: right;
+}
+.adm-budget-actions {
+  display: flex;
+  gap: 8px;
+}
+@media (max-width: 760px) {
+  .adm-budget-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .adm-budget-carved { grid-column: 1; }
+  .adm-budget-input { grid-column: 2; width: 90px; }
+  .adm-budget-actions { grid-column: 1 / -1; }
+}

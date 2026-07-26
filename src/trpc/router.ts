@@ -63,6 +63,19 @@ import {
   RequestNotPendingError,
 } from "../services/parent_link";
 import {
+  BudgetBelowCarvedError,
+  listChapterBudgets,
+  setChapterBudget,
+} from "../services/chapter_budget";
+import {
+  listParentCopy,
+  listParentCopyStudents,
+  setParentCopy,
+  UnknownCopyKeyError,
+  UnknownCopyStudentError,
+  UnsafeCopyTokensError,
+} from "../services/parent_copy";
+import {
   getReferralCard,
   listReferrals,
   setReferralStatus,
@@ -2686,6 +2699,102 @@ export const appRouter = router({
             e instanceof MissingStudentError ||
             e instanceof InvalidLinkError
           ) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    /**
+     * S168 — the PARENT-DASHBOARD COPY editor (D-PDASH-3's DB half). Board-scoped
+     * (adminProcedure already runs inside `withBoard`), so an admin edits the
+     * voice of the board they have selected and cannot touch another's.
+     *
+     * S169 (D-PDASH-8): `studentId` narrows the scope to ONE child's page. Absent
+     * = the board's default voice, which is also what a student's page falls back
+     * to when its own row is cleared.
+     */
+    listParentCopy: adminProcedure
+      .input(z.object({ studentId: z.string().uuid().nullish() }).optional())
+      .query(async ({ ctx, input }) => {
+        try {
+          return await listParentCopy(ctx.tx, { studentId: input?.studentId ?? null });
+        } catch (e) {
+          if (e instanceof UnknownCopyStudentError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    /**
+     * S169 — the per-chapter SUB-TOPIC BUDGET (what a chapter is worth). An
+     * OVERRIDE: no row means the dashboard keeps counting carved sub_topics, so
+     * these procedures change nothing until a number is actually set.
+     */
+    listChapterBudgets: adminProcedure.query(({ ctx }) => listChapterBudgets(ctx.tx)),
+
+    /** Set one chapter's budget, or clear it (null) back to the carved count. */
+    setChapterBudget: adminProcedure
+      .input(
+        z.object({
+          chapterId: z.string().uuid(),
+          // null CLEARS. Capped well above any real chapter so a typo cannot
+          // make one chapter dwarf the whole syllabus on the growth bar.
+          budget: z.number().int().min(0).max(2000).nullable(),
+          note: z.string().max(300).nullish(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setChapterBudget(ctx.tx, {
+            boardId: ctx.board.id,
+            chapterId: input.chapterId,
+            budget: input.budget,
+            note: input.note ?? null,
+            actorId: ctx.membership.userId,
+          });
+        } catch (e) {
+          // Shown verbatim: "budget 4 is below the 9 sub-topics already carved"
+          // is the entire explanation an editor needs.
+          if (e instanceof BudgetBelowCarvedError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+          }
+          throw e;
+        }
+      }),
+
+    /** The Copy tab's student picker — every student on this board. */
+    listParentCopyStudents: adminProcedure.query(({ ctx }) => listParentCopyStudents(ctx.tx)),
+
+    /** Set one key's override at one scope, or clear it (empty value) to fall back. */
+    setParentCopy: adminProcedure
+      .input(
+        z.object({
+          key: z.string().min(1).max(120),
+          // Absent/null = the BOARD's voice; set = this one child's page.
+          studentId: z.string().uuid().nullish(),
+          // `null`/"" CLEARS. Capped because this is prose a parent reads, not a
+          // document — and an unbounded text box on an admin form is an invitation.
+          value: z.string().max(600).nullable(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setParentCopy(ctx.tx, {
+            boardId: ctx.board.id,
+            studentId: input.studentId ?? null,
+            key: input.key,
+            value: input.value,
+            actorId: ctx.membership.userId,
+          });
+        } catch (e) {
+          if (e instanceof UnknownCopyKeyError || e instanceof UnknownCopyStudentError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          // The token guard — the editor shows this verbatim, because "you used
+          // {subject} and only {name} is available" is the whole explanation.
+          if (e instanceof UnsafeCopyTokensError) {
             throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
           }
           throw e;

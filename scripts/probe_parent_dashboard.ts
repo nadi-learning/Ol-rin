@@ -7,9 +7,13 @@
  * boundary the new reads must not breach.
  *
  * Fixture (one parent PA, one linked child CH1, board P):
- *   SubjA / ChapA:  st_a c5/p5 (green) · st_b c3/p4 (yellow) · st_c cNULL/p3 (yellow,
- *                   one-axis-null D-PDASH-1) · st_d c4/p4 (green) · st_e NO row (gray)
- *   SubjB / ChapB:  st_f c5/p5 (green) · st_g c2/p2 (yellow) · st_h c4/p4 (green)
+ *   SubjA / ChapA:  st_a c5/p5 (green) · st_b c3/p4 (green — D-PDASH-7, an axis
+ *                   at 3 is enough) · st_c cNULL/p3 (yellow: one-axis-null,
+ *                   D-PDASH-1 AND D-PDASH-7's both-assessed clause — a 3 cannot
+ *                   carry a row nobody rated the other half of) · st_d c4/p4
+ *                   (green) · st_e NO row (gray)
+ *   SubjB / ChapB:  st_f c5/p5 (green) · st_g c2/p2 (yellow — both assessed,
+ *                   neither reaches 3) · st_h c4/p4 (green)
  *   snapshot (prior month): covered 5, solid 2  → "was 2 / was 5"
  *   sessions: st_a retention/self · st_b first_teach/self · st_f climb/tutor · st_g retention/tutor
  *   attempts: 12 answered (clears the calibration floor) + 2 skipped
@@ -251,21 +255,25 @@ async function main() {
   const chA = sciA.chapters[0]!;
   const stateOf = (id: string) => chA.cells.find((x) => x.subTopicId === id)?.state;
   check("map: st_a green (both ≥4)", stateOf(fx.a) === "green");
-  check("map: st_b yellow (observed, not solid)", stateOf(fx.b) === "yellow");
-  check("map: st_c yellow (one axis null → in-progress, D-PDASH-1)", stateOf(fx.c) === "yellow");
+  check("map: st_b green (c3 — ONE axis at 3 is enough, D-PDASH-7)", stateOf(fx.b) === "green");
+  check("map: st_g yellow (c2/p2 — both assessed, neither reaches 3)", matB.chapters[0]!.cells.find((x) => x.subTopicId === fx.g)?.state === "yellow");
+  check("map: st_c yellow (one axis null → in-progress, D-PDASH-1; and D-PDASH-7 will not let p3 carry it)", stateOf(fx.c) === "yellow");
   check("map: st_e gray (no mastery row)", stateOf(fx.e) === "gray");
   check("map: ChapA cells in ordinal order (a,b,c,d,e)", chA.cells.map((x) => x.subTopicId).join(",") === [fx.a, fx.b, fx.c, fx.d, fx.e].join(","));
-  check("map: ChapA n/total = 2 of 5", chA.solid === 2 && chA.total === 5);
+  check("map: ChapA n/total = 3 of 5", chA.solid === 3 && chA.total === 5);
   check("map: ChapB n/total = 2 of 3", matB.chapters[0]!.solid === 2 && matB.chapters[0]!.total === 3);
 
-  // §4 meters — count-aggregated over COVERED topics (D-PDASH-2).
-  check("meters SubjA conceptual 2/4", sciA.meters.conceptual.green === 2 && sciA.meters.conceptual.covered === 4);
-  check("meters SubjA procedural 3/4", sciA.meters.procedural.green === 3 && sciA.meters.procedural.covered === 4);
+  // §4 meters — count-aggregated over COVERED topics (D-PDASH-2), per-axis via
+  // isAxisGreen: a SINGLE-axis claim, so st_c's null conceptual does not stop
+  // its p3 from counting on the procedural meter (unlike the map, which is the
+  // joint claim). That asymmetry is deliberate — see mastery.ts.
+  check("meters SubjA conceptual 3/4", sciA.meters.conceptual.green === 3 && sciA.meters.conceptual.covered === 4);
+  check("meters SubjA procedural 4/4", sciA.meters.procedural.green === 4 && sciA.meters.procedural.covered === 4);
   check("meters SubjB conceptual 2/3", matB.meters.conceptual.green === 2 && matB.meters.conceptual.covered === 3);
   check("meters SubjB procedural 2/3", matB.meters.procedural.green === 2 && matB.meters.procedural.covered === 3);
 
   // §3 headline totals vs the CLOCK-2 snapshot.
-  check("totals: solidNow 4, coveredNow 7, totalNow 8", dash.totals.solidNow === 4 && dash.totals.coveredNow === 7 && dash.totals.totalNow === 8);
+  check("totals: solidNow 5, coveredNow 7, totalNow 8", dash.totals.solidNow === 5 && dash.totals.coveredNow === 7 && dash.totals.totalNow === 8);
   check("totals: snapshot delta — solidPrior 2, coveredPrior 5", dash.totals.solidPrior === 2 && dash.totals.coveredPrior === 5);
   check("totals: priorPeriod = last month", dash.totals.priorPeriod === priorPeriod);
   check("totals: per-chapter solids sum to solidNow", sciA.chapters.reduce((n, r) => n + r.solid, 0) + matB.chapters.reduce((n, r) => n + r.solid, 0) === dash.totals.solidNow);

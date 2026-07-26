@@ -19,19 +19,44 @@ const SOLID = "#3f9d63";
 const PRACTISING = "#d9a521";
 const INK = "#15162b";
 const MUTED = "#6b6f80";
+// The un-taught remainder. Deliberately the same neutral as the heatmap's empty
+// cell — "nothing here yet" should read identically wherever it appears.
+const REMAINING = "#e9ebf0";
 
 export type ChartTrendPoint = {
   period: string;
   label: string;
   covered: number;
   solid: number;
+  /** The same month split by subject — what the subject chips filter on. */
+  perSubject?: Array<{
+    subjectId: string;
+    subjectName: string;
+    covered: number;
+    solid: number;
+  }>;
   live: boolean;
+};
+
+/** One chip: a subject and what it is worth. `null` id = the All chip. */
+export type TrendScope = {
+  subjectId: string | null;
+  subjectName: string;
+  budget: number;
 };
 export type ChartActivityDay = { date: string; count: number };
 
-// ── Progress trend — stacked bars, solid (secured) + practising (covered but
-// not yet solid) = total taught that month. Shows both coverage AND mastery
-// growing. The current month is the live point (brighter, ● now). ──
+// ── Progress trend — HORIZONTAL stacked bars, one row per month (S169).
+//
+// It was vertical, and its bar length meant "topics taught": the tallest month
+// filled the plot whatever the number was, so a parent could read four rising
+// bars without ever learning how much of the syllabus that represented. Now the
+// track is the BUDGET — the whole subject scope — and each row splits into
+// solid / practising / not-yet-taught. The growth story survives (rows still
+// climb) and gains the thing it was missing: what is still ahead.
+//
+// Horizontal because the rows are a time series read top-to-bottom and the
+// month labels are words, not ticks — they belong at the start of their own row.
 function TrendTip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload as {
@@ -39,6 +64,8 @@ function TrendTip({ active, payload }: any) {
     solid: number;
     practising: number;
     covered: number;
+    remaining: number;
+    budget: number;
     live: boolean;
   };
   return (
@@ -55,41 +82,142 @@ function TrendTip({ active, payload }: any) {
         <span className="pdash-charttip-dot" style={{ background: PRACTISING }} />
         {d.practising} practising
       </div>
-      <div className="pdash-charttip-total">{d.covered} taught in total</div>
+      <div className="pdash-charttip-row">
+        <span className="pdash-charttip-dot" style={{ background: REMAINING }} />
+        {d.remaining} not yet taught
+      </div>
+      <div className="pdash-charttip-total">
+        {d.covered} of {d.budget} topics
+      </div>
     </div>
   );
 }
 
-export function ProgressTrend({ trend }: { trend: ChartTrendPoint[] }) {
+/** "86 / 122" at the end of each track — the number the row is actually about. */
+function TotalLabel(props: any) {
+  const { x, y, width, height, value } = props;
+  if (typeof x !== "number" || typeof y !== "number") return null;
+  return (
+    <text
+      x={x + (width ?? 0) + 8}
+      y={y + (height ?? 0) / 2}
+      fill={INK}
+      fontSize={12}
+      fontWeight={700}
+      dominantBaseline="middle"
+    >
+      {value}
+    </text>
+  );
+}
+
+export function ProgressTrend({
+  trend,
+  budget,
+  scopes = [],
+}: {
+  trend: ChartTrendPoint[];
+  /** Total topics in scope — `totals.totalNow`, which honours chapter_budget. */
+  budget: number;
+  /** Subject chips. Fewer than two subjects ⇒ no chips (nothing to compare). */
+  scopes?: TrendScope[];
+}) {
+  // ALL by default: the headline story is the whole syllabus, and a parent who
+  // wants one subject asks for it. Chips only appear when there is a choice.
+  const [scope, setScope] = useState<string | null>(null);
+  const showChips = scopes.length > 1;
+  const active = scopes.find((s) => s.subjectId === scope) ?? null;
+
+  // Filtering re-reads each month from its own perSubject split rather than
+  // scaling the total — the split is what the snapshot actually froze, so a
+  // subject row is the real number for that month, not a share of it.
+  const scoped: ChartTrendPoint[] = scope
+    ? trend.map((t) => {
+        const hit = t.perSubject?.find((p) => p.subjectId === scope);
+        return { ...t, covered: hit?.covered ?? 0, solid: hit?.solid ?? 0 };
+      })
+    : trend;
+  const scopedBudget = active ? active.budget : budget;
+  return (
+    <ProgressTrendChart
+      trend={scoped}
+      budget={scopedBudget}
+      scopes={showChips ? scopes : []}
+      scope={scope}
+      onScope={setScope}
+    />
+  );
+}
+
+function ProgressTrendChart({
+  trend,
+  budget,
+  scopes,
+  scope,
+  onScope,
+}: {
+  trend: ChartTrendPoint[];
+  budget: number;
+  scopes: TrendScope[];
+  scope: string | null;
+  onScope: (id: string | null) => void;
+}) {
+  // A budget under the best month would clip that bar out of its own track, so
+  // fall back to the largest covered figure. Belt and braces: the read path
+  // already guarantees budget >= covered.
+  const peak = trend.reduce((n, t) => Math.max(n, t.covered), 0);
+  const track = Math.max(budget, peak, 1);
+
   const data = trend.map((t) => ({
     label: t.label,
     solid: t.solid,
     practising: Math.max(0, t.covered - t.solid),
+    remaining: Math.max(0, track - t.covered),
     covered: t.covered,
+    budget: track,
+    total: `${t.covered} / ${track}`,
     live: t.live,
   }));
 
   return (
     <div className="pdash-chart">
-      <ResponsiveContainer width="100%" height={216}>
+      {scopes.length > 0 && (
+        <div className="pdash-trend-chips">
+          <button
+            className={`pdash-trend-chip${scope === null ? " is-on" : ""}`}
+            onClick={() => onScope(null)}
+          >
+            All
+          </button>
+          {scopes.map((s) => (
+            <button
+              key={s.subjectId}
+              className={`pdash-trend-chip${scope === s.subjectId ? " is-on" : ""}`}
+              onClick={() => onScope(s.subjectId)}
+            >
+              {s.subjectName}
+            </button>
+          ))}
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={Math.max(168, data.length * 46 + 34)}>
         <BarChart
+          layout="vertical"
           data={data}
-          margin={{ top: 26, right: 6, bottom: 2, left: 6 }}
-          barCategoryGap="30%"
+          margin={{ top: 6, right: 62, bottom: 6, left: 6 }}
+          barCategoryGap="26%"
         >
-          <XAxis
+          <XAxis type="number" hide domain={[0, track]} />
+          <YAxis
+            type="category"
             dataKey="label"
             tickLine={false}
             axisLine={false}
             tick={{ fontSize: 12, fill: MUTED }}
-            dy={2}
+            width={44}
           />
-          <YAxis hide domain={[0, "dataMax + 2"]} />
-          <Tooltip
-            content={<TrendTip />}
-            cursor={{ fill: "rgba(20,22,43,0.05)" }}
-          />
-          <Bar dataKey="solid" stackId="a" fill={SOLID} radius={[0, 0, 3, 3]}>
+          <Tooltip content={<TrendTip />} cursor={{ fill: "rgba(20,22,43,0.05)" }} />
+          <Bar dataKey="solid" stackId="a" fill={SOLID} radius={[3, 0, 0, 3]}>
             {data.map((d, i) => (
               <Cell key={i} fillOpacity={d.live ? 1 : 0.86} />
             ))}
@@ -102,17 +230,14 @@ export function ProgressTrend({ trend }: { trend: ChartTrendPoint[] }) {
               formatter={(v: unknown) => (Number(v) > 0 ? String(v) : "")}
             />
           </Bar>
-          <Bar dataKey="practising" stackId="a" fill={PRACTISING} radius={[3, 3, 0, 0]}>
+          <Bar dataKey="practising" stackId="a" fill={PRACTISING}>
             {data.map((d, i) => (
               <Cell key={i} fillOpacity={d.live ? 1 : 0.86} />
             ))}
-            <LabelList
-              dataKey="covered"
-              position="top"
-              fill={INK}
-              fontSize={12}
-              fontWeight={700}
-            />
+          </Bar>
+          {/* The remainder is the point of the redesign: it is drawn, not implied. */}
+          <Bar dataKey="remaining" stackId="a" fill={REMAINING} radius={[0, 3, 3, 0]}>
+            <LabelList dataKey="total" content={<TotalLabel />} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -122,13 +247,16 @@ export function ProgressTrend({ trend }: { trend: ChartTrendPoint[] }) {
           solid
         </span>
         <span className="pdash-legend-item">
-          <span
-            className="pdash-legend-swatch"
-            style={{ background: PRACTISING }}
-          />
+          <span className="pdash-legend-swatch" style={{ background: PRACTISING }} />
           practising
         </span>
-        <span className="pdash-legend-note">bar height = topics taught</span>
+        <span className="pdash-legend-item">
+          <span className="pdash-legend-swatch" style={{ background: REMAINING }} />
+          not yet taught
+        </span>
+        <span className="pdash-legend-note">
+          track length = the full syllabus ({track} topics)
+        </span>
       </div>
     </div>
   );

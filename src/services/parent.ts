@@ -46,6 +46,9 @@ import {
   topic,
 } from "@b2c/kernel/schema";
 import { horizontalLabel, resolveParentCopy } from "@b2c/kernel/parent-copy";
+import { isAxisGreen, isSolid } from "@b2c/kernel/mastery";
+import { readParentCopyOverrides } from "./parent_copy";
+import { readSubjectChapterBudgets } from "./chapter_budget";
 import { getPlan } from "./pace";
 
 type Tx = PgTransaction<any, any, any>;
@@ -328,11 +331,18 @@ export type ChapterRow = {
   chapterName: string;
   cells: MapCell[];
   solid: number; // green cells
-  total: number; // all cells (incl. gray) — sums to the headline denominator
+  total: number; // all cells (incl. gray) — what is CARVED
+  /**
+   * What this chapter is WORTH (S169): the authored `chapter_budget` when one is
+   * set, else `total`. `budget > total` means the syllabus has more in it than
+   * the spine has carved, so the difference is real work with no cell to render
+   * yet — the map still draws `total` cells, but the headline counts `budget`.
+   */
+  budget: number;
 };
 
 export type AxisMeter = {
-  green: number; // covered topics green on this axis (level >= 4)
+  green: number; // covered topics green on this axis (isAxisGreen, D-PDASH-7)
   covered: number; // denominator — topics with a mastery row (D-PDASH-2)
 };
 
@@ -453,14 +463,28 @@ export type ChildDashboard = {
   trend: TrendPoint[]; // monthly progress, oldest-first, live point last
   activity: DashboardActivity; // effort — daily heatmap + monthly bars
   pace: DashboardPaceSubject[]; // intended-vs-actual, per subject with a plan
+  /**
+   * S168 — this board's parent-copy OVERRIDES (D-PDASH-3's DB half), key→string.
+   * Only keys the board has actually overridden appear; everything else falls
+   * back to the code default. It ships in the PAYLOAD because the portfolio
+   * resolves most of its copy CLIENT-side (`copy()` in ParentPage.tsx reads the
+   * kernel map directly), so the browser needs the same overrides the server
+   * used — otherwise the two halves of one page would speak in two voices.
+   */
+  copyOverrides: Record<string, string>;
 };
 
-// D-PDASH-1 — a topic's map colour from its two axes. GREEN both ≥4; GRAY when no
-// axis is observed (no row, OR a row with both axes null); YELLOW everything else
-// observed (incl. one-axis-null-one-observed — "in progress", never a gap).
+// D-PDASH-1 (colours) + D-PDASH-7 (the green rule, S168) — a topic's map colour
+// from its two axes. GREEN per `isSolid` (either axis ≥3, both assessed); GRAY
+// when no axis is observed (no row, OR a row with both axes null); YELLOW
+// everything else observed (incl. one-axis-null-one-observed — "in progress",
+// never a gap; note such a row can no longer be green, by D-PDASH-7's design).
+//
+// The threshold lives in @b2c/kernel/mastery so the LIVE total row and the
+// FROZEN month rows (snapshot.ts) cannot drift apart. Do not re-inline it.
 function cellState(c: number | null, p: number | null): MapCellState {
   if (c == null && p == null) return "gray";
-  if ((c ?? 0) >= 4 && (p ?? 0) >= 4) return "green";
+  if (isSolid(c, p)) return "green";
   return "yellow";
 }
 
@@ -581,10 +605,17 @@ export async function computeChildDashboard(
     .limit(1);
 
   // Effort metrics + calibration + story + weakness reads don't depend on scope.
+  // D-PDASH-3 (S168): the copy overrides, shipped to the FE so the
+  // client-resolved half of the page speaks in the same voice as the server one.
+  // Read FIRST because readWeaknesses embeds a resolved string in its payload.
+  // D-PDASH-8 (S169): resolved for THIS CHILD — board rows, then the child's own
+  // layered on top. A parent with three children reads three different voices,
+  // so this must key on `childId` and never on the parent.
+  const copyOverrides = await readParentCopyOverrides(tx, childId);
   const metrics = await readMetrics(tx, childId);
   const calibration = await readCalibration(tx, childId);
   const story = await readStory(tx, childId);
-  const weaknesses = await readWeaknesses(tx, childId);
+  const weaknesses = await readWeaknesses(tx, childId, copyOverrides);
   const activity = await readActivity(tx, childId);
   const snapshotRows = await readSnapshots(tx, childId); // ASC, all months
 
@@ -608,6 +639,7 @@ export async function computeChildDashboard(
       trend: buildTrend(snapshotRows, { covered: 0, solid: 0, perSubject: [] }),
       activity,
       pace: [],
+      copyOverrides,
     };
   }
 
@@ -649,6 +681,7 @@ export async function computeChildDashboard(
   // cells + per-chapter/per-subject/global counts + the count-aggregated meters.
   const bySubject = new Map<string, SubjectPanel>();
   const chapterRows = new Map<string, ChapterRow>(); // chapterId → row
+  const chapterOrdinal = new Map<string, number>(); // chapterId → syllabus order
   let solidNow = 0;
   let coveredNow = 0;
 
@@ -668,8 +701,10 @@ export async function computeChildDashboard(
 
     let row = chapterRows.get(r.chapterId);
     if (!row) {
-      row = { chapterId: r.chapterId, chapterName: r.chapterName, cells: [], solid: 0, total: 0 };
+      // `budget` is filled after the loop, once the overrides are read in one go.
+      row = { chapterId: r.chapterId, chapterName: r.chapterName, cells: [], solid: 0, total: 0, budget: 0 };
       chapterRows.set(r.chapterId, row);
+      chapterOrdinal.set(r.chapterId, Number(r.chapterOrdinal));
       panel.chapters.push(row);
     }
 
@@ -686,8 +721,8 @@ export async function computeChildDashboard(
       coveredNow += 1;
       panel.meters.conceptual.covered += 1;
       panel.meters.procedural.covered += 1;
-      if ((r.conceptualLevel ?? 0) >= 4) panel.meters.conceptual.green += 1;
-      if ((r.proceduralLevel ?? 0) >= 4) panel.meters.procedural.green += 1;
+      if (isAxisGreen(r.conceptualLevel)) panel.meters.conceptual.green += 1;
+      if (isAxisGreen(r.proceduralLevel)) panel.meters.procedural.green += 1;
 
       // Certified detail card (the per-topic expand). Only covered topics get one.
       const prior = priorBySubTopic.get(r.subTopicId);
@@ -736,7 +771,51 @@ export async function computeChildDashboard(
     });
   }
 
-  const totalNow = spine.length;
+  // S169 — the headline denominator honours the authored per-chapter budget
+  // where one exists, and otherwise stays exactly what it was (the carved
+  // count). With no overrides set anywhere, `totalNow === spine.length` still,
+  // which is why shipping this changes nothing until someone sets a number.
+  //
+  // S170 — read the budgets off the SUBJECTS, not off `chapterRows`. A chapter
+  // with zero carved sub-topics never enters the loop above (the spine query
+  // INNER JOINs `sub_topic`), so asking only about chapters already in the map
+  // discarded every budget set on an uncarved chapter — the 8 of 19 CBSE
+  // chapters that make the difference between a 127 denominator and the real
+  // 194. Those chapters now join the map as budget-only rows: no cells to draw,
+  // but their weight counted and their name visible as not-yet-started.
+  const budgeted = await readSubjectChapterBudgets(tx, subjectIds);
+  const budgetById = new Map(budgeted.map((b) => [b.chapterId, b.budget]));
+  for (const row of chapterRows.values()) {
+    row.budget = budgetById.get(row.chapterId) ?? row.total;
+  }
+  for (const b of budgeted) {
+    if (chapterRows.has(b.chapterId)) continue;
+    // A budget of 0 is only storable on a chapter with nothing carved, and it
+    // means "deliberately out of scope" (probe §4d). Drawing it as a chapter
+    // the child has yet to start would claim the opposite.
+    if (b.budget === 0) continue;
+    const panel = bySubject.get(b.subjectId);
+    if (!panel) continue; // a budget on a subject this child isn't studying
+    const row: ChapterRow = {
+      chapterId: b.chapterId,
+      chapterName: b.chapterName,
+      cells: [],
+      solid: 0,
+      total: 0,
+      budget: b.budget,
+    };
+    chapterRows.set(b.chapterId, row);
+    chapterOrdinal.set(b.chapterId, b.ordinal);
+    panel.chapters.push(row);
+  }
+  // The spine arrived ordinal-sorted; the budget-only rows were appended after
+  // it, so restore syllabus order or Real Numbers lands behind Statistics.
+  for (const panel of bySubject.values()) {
+    panel.chapters.sort(
+      (a, b) => (chapterOrdinal.get(a.chapterId) ?? 0) - (chapterOrdinal.get(b.chapterId) ?? 0),
+    );
+  }
+  const totalNow = [...chapterRows.values()].reduce((n, row) => n + row.budget, 0);
 
   const pace = await readPace(tx, child, subjectIds);
 
@@ -770,6 +849,7 @@ export async function computeChildDashboard(
     }),
     activity,
     pace,
+    copyOverrides,
   };
 }
 
@@ -990,7 +1070,11 @@ async function readStory(tx: Tx, childId: string): Promise<StorySlots> {
 }
 
 /** §6 weaknesses — cross_concept_flags + CLOCK-3 plan (generated default when null). */
-async function readWeaknesses(tx: Tx, childId: string): Promise<DashboardWeakness[]> {
+async function readWeaknesses(
+  tx: Tx,
+  childId: string,
+  copyOverrides: Record<string, string> = {},
+): Promise<DashboardWeakness[]> {
   const rows = await tx
     .select({
       note: crossConceptFlag.note,
@@ -1006,7 +1090,12 @@ async function readWeaknesses(tx: Tx, childId: string): Promise<DashboardWeaknes
     fromSubTopicName: r.fromSubTopicName ?? null,
     note: r.note,
     planAuthored: r.plan != null,
-    planText: r.plan ?? resolveParentCopy("plan.generated_default"),
+    // The ONE string the server resolves into the payload rather than leaving to
+    // the client — so it takes the board's override too, or a retuned worklist
+    // line would appear everywhere on the page EXCEPT here.
+    planText:
+      r.plan ??
+      (copyOverrides["plan.generated_default"] ?? resolveParentCopy("plan.generated_default")),
     planUpdatedAt: r.planUpdatedAt ?? null,
   }));
 }

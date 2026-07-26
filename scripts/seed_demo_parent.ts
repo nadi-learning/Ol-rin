@@ -66,6 +66,7 @@ import {
   subject,
   topic,
 } from "@b2c/kernel/schema";
+import { isSolid } from "@b2c/kernel/mastery";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { ensureProfile, grantRole } from "../src/services/membership";
@@ -136,7 +137,7 @@ const SUBTOPICS: StSpec[] = [
 // chapters above (Motion, Algebra — the narrative sections hang off those sub_topic
 // slugs); every other chapter is generated. Each chapter's `states` array spreads
 // the heat across the atlas so no territory is one flat colour:
-//   G = solid (both ≥4) · Y = practising (covered, not solid) · R = low ·
+//   G = solid (isSolid, D-PDASH-7) · Y = practising (covered, not solid) · R = low ·
 //   N = not-started (NO mastery row → a gray "not yet started" province).
 type ChSt = "G" | "Y" | "R" | "N";
 type ChapDef = { chap: string; chapName: string; top: string; topName: string; states: ChSt[] };
@@ -425,7 +426,11 @@ async function main() {
     // Live counts drive the curve so it scales with however many subjects exist —
     // the four months rise toward (but stay under) the live now-point, no cliff.
     const liveCoveredNow = COVERED.length;
-    const liveSolidNow = COVERED.filter((s) => (s.c ?? 0) >= 4 && (s.p ?? 0) >= 4).length;
+    // Was a local `(c ?? 0) >= 4 && (p ?? 0) >= 4` — its own copy of the green
+    // rule, which D-PDASH-7 moved. A seeder that computes "solid" differently
+    // from the read path writes month bars that disagree with the live row it is
+    // meant to climb toward. One predicate, imported (mastery.ts).
+    const liveSolidNow = COVERED.filter((s) => isSolid(s.c, s.p)).length;
     const SNAP_F = [0.36, 0.57, 0.76, 0.9]; // back 4 → back 1 (the "was N" month)
     const SNAPS = [4, 3, 2, 1].map((back, i) => ({
       back,
