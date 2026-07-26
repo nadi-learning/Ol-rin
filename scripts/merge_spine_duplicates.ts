@@ -31,6 +31,7 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { board, chapter, masterySnapshot, subTopic, subject, topic } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
+import { assertTarget } from "./prod_guard";
 
 const argv = process.argv.slice(2);
 const EXECUTE = argv.includes("--execute");
@@ -38,13 +39,7 @@ const MERGE_TOPICS = argv.includes("--topics");
 const boardArg = argv[argv.indexOf("--board") + 1];
 const BOARD = argv.includes("--board") && boardArg ? boardArg : "cbse";
 
-function assertLocal() {
-  const url = process.env.DATABASE_URL ?? "";
-  if (!/@(localhost|127\.0\.0\.1)[:/]/.test(url)) {
-    console.error("REFUSING: DATABASE_URL does not point at localhost.");
-    process.exit(1);
-  }
-}
+// Targeting prod is opt-in and must be typed out — see `prod_guard.ts`.
 
 /**
  * Subject names that mean the SAME subject. Normalising punctuation is not
@@ -119,7 +114,11 @@ async function evidenceWeight(tx: any, subjectId: string): Promise<number> {
 }
 
 async function main() {
-  assertLocal();
+  await assertTarget({
+    argv,
+    what: `merge duplicate subjects/chapters on board '${BOARD}' (survivor keeps its id; jsonb snapshot ids repaired)`,
+    affects: [`every subject, chapter${MERGE_TOPICS ? " and topic" : ""} on board '${BOARD}'`],
+  });
   console.log(`merge_spine_duplicates ${EXECUTE ? "(EXECUTE)" : "(dry run)"} — board ${BOARD}\n`);
 
   const [b] = await db.select().from(board).where(eq(board.slug, BOARD));

@@ -49,6 +49,7 @@ import {
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { readFileSync } from "node:fs";
+import { assertTarget } from "./prod_guard";
 import { homedir } from "node:os";
 
 // ───────────────────────────── args + guard ─────────────────────────────
@@ -65,18 +66,7 @@ const FILE = (argv.includes("--file") && fileArg ? fileArg : "~/Downloads/dashbo
  * something a dry-run flag protects you from, so the connection string is
  * checked rather than trusted.
  */
-function assertLocal() {
-  const url = process.env.DATABASE_URL ?? "";
-  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
-  if (!local) {
-    console.error(
-      `REFUSING: DATABASE_URL does not point at localhost.\n` +
-        `  This script writes to the content spine. Run it against local only.\n` +
-        `  (got host: ${url.replace(/\/\/[^@]*@/, "//***@") || "<unset>"})`,
-    );
-    process.exit(1);
-  }
-}
+// Targeting prod is opt-in and must be typed out — see `prod_guard.ts`.
 
 // ───────────────────────────── the file ─────────────────────────────
 
@@ -181,8 +171,12 @@ async function readSpine(boardId: string): Promise<SpineRow[]> {
 // ───────────────────────────── main ─────────────────────────────
 
 async function main() {
-  assertLocal();
   const raw = JSON.parse(readFileSync(FILE, "utf8")) as HandOff;
+  await assertTarget({
+    argv,
+    what: "add the hand-off's missing sub-topics (and empty chapter shells) to the CBSE content spine",
+    affects: ["board 'cbse' — subject / chapter / topic / sub_topic rows"],
+  });
   console.log(`hand-off: ${FILE}`);
   console.log(
     `  ${Object.keys(raw.subTopicIndex).length} indexed sub-topics · ${raw.students.length} students\n`,

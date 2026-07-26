@@ -79,6 +79,7 @@ import { ensureProfile, grantRole } from "../src/services/membership";
 // Hand-off email → the address that already exists in our DB. Shared with the
 // probe (which matches children back to the file by address) — see the module.
 import { resolveEmail } from "./backfill_aliases";
+import { assertTarget } from "./prod_guard";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -101,21 +102,11 @@ const FILE = (argv.includes("--file") && fileArg ? fileArg : "~/Downloads/dashbo
   .replace(/^~/, homedir());
 
 /**
- * The contract this file implements was written to target PROD. This script is
- * the local half; the guard is here so that intent cannot be executed by accident
- * from a shell whose .env happens to point elsewhere. Real children's names and
- * five months of their work are in this payload.
+ * Targeting production is opt-in and must be typed out — see `prod_guard.ts`.
+ * `--replace` is refused there outright: it is the pre-S169 wipe, and the only
+ * database it is ever correct on is one being rebuilt from scratch.
  */
-function assertLocal() {
-  const url = process.env.DATABASE_URL ?? "";
-  if (!/@(localhost|127\.0\.0\.1)[:/]/.test(url)) {
-    console.error(
-      `REFUSING: DATABASE_URL does not point at localhost.\n` +
-        `  This script writes real student data. Run it against local only.`,
-    );
-    process.exit(1);
-  }
-}
+const TARGET_PROD = argv.includes("--target-prod");
 
 // ───────────────────────────── the hand-off shape ─────────────────────────────
 
@@ -247,8 +238,24 @@ type Resolved = {
 // ───────────────────────────── main ─────────────────────────────
 
 async function main() {
-  assertLocal();
   const raw = JSON.parse(readFileSync(FILE, "utf8")) as HandOff;
+
+  if (TARGET_PROD && !KEEP_LIVE) {
+    console.error(
+      `REFUSING: --replace against production.\n` +
+        `  --replace is the pre-S169 wipe: it deletes every attempt, session,\n` +
+        `  observation and certified mastery row the student has. On prod that is\n` +
+        `  live work and a tutor's sign-off. It is only ever correct on a local\n` +
+        `  database being rebuilt from scratch.`,
+    );
+    process.exit(1);
+  }
+  await assertTarget({
+    argv,
+    what: "load old-b2c history onto these students' dashboards (KEEP_LIVE — existing evidence is preserved)",
+    affects: raw.students.map((s) => `${s.name} <${resolveEmail(s.email)}>`),
+  });
+
   console.log(`hand-off: ${FILE}\n`);
 
   const [cbse] = await db.select().from(board).where(eq(board.slug, "cbse"));
@@ -422,30 +429,62 @@ async function loadStudent(
 
   // ───────────────────────────── write ─────────────────────────────
   const b = boardRow;
-  const { studentUserId, tutorUserId, parentUserId } = await withBoard(b.id, async (tx) => {
+  // Only the STUDENT identity is resolved up front. The demo tutor and demo
+  // parent are created lazily on the insert branch below — see B6 in the
+  // prod-seed runbook: resolving them here minted `tutor@example.com` and
+  // `parent@example.com` as real profiles on whatever database this ran against,
+  // whether or not anything ended up pointing at them.
+  const studentUserId = await withBoard(b.id, async (tx) => {
     const stu = await grantRole(tx, { email, name: s.name, board: b, role: "student" });
-    const tut = await grantRole(tx, { email: TUTOR_EMAIL, name: "Demo Tutor", board: b, role: "tutor" });
-    const par = await ensureProfile(tx, { email: PARENT_EMAIL, name: "Demo Parent", userType: "parent" });
-    return { studentUserId: stu.user.id, tutorUserId: tut.user.id, parentUserId: par.id };
+    return stu.user.id;
   });
 
   await withBoard(b.id, async (tx) => {
-    const existing = await tx
-      .select({ userId: student.userId })
+    const [existing] = await tx
+      .select({ userId: student.userId, tutorId: student.tutorId, parentId: student.parentId })
       .from(student)
       .where(eq(student.userId, studentUserId));
+    // Facts about the child that the hand-off legitimately owns.
     const values = {
       class: s.class,
       pronoun: s.pronoun ?? "they",
-      tutorId: tutorUserId,
-      parentId: parentUserId,
-      status: "active",
+      status: "active" as const,
       onboardingAt: s.onboardingCompleted === false ? null : new Date(),
     };
-    if (existing.length) {
+
+    if (existing) {
+      // 🔴 tutorId / parentId are NOT in `values` and must never be (B6). This
+      // script imports HISTORY; who teaches a child and who their parent is are
+      // RELATIONSHIPS the live system owns. Setting them here repointed both
+      // real students from their actual tutor to "Demo Tutor" — the human whose
+      // sign-off is the only certified mastery on this system. KEEP_LIVE already
+      // says the past must not overwrite the present for evidence; identity is
+      // the same rule one level up.
       await tx.update(student).set(values).where(eq(student.userId, studentUserId));
+      console.log(
+        `  identity PRESERVED — tutor ${existing.tutorId ?? "(none)"}, parent ${existing.parentId ?? "(none)"}`,
+      );
     } else {
-      await tx.insert(student).values({ userId: studentUserId, boardId: b.id, ...values });
+      // A student this database has never seen. The pace slide needs a tutor, so
+      // local seeding attaches the demo pair. On prod that would be inventing
+      // both a teacher and a parent for a real child — refuse and let a human
+      // create the student properly first.
+      if (TARGET_PROD) {
+        throw new Error(
+          `${email} does not exist on this database. Refusing to create a student ` +
+            `and attach a demo tutor/parent to them on production — create the ` +
+            `student and their tutor link first, then re-run.`,
+        );
+      }
+      const tut = await grantRole(tx, { email: TUTOR_EMAIL, name: "Demo Tutor", board: b, role: "tutor" });
+      const par = await ensureProfile(tx, { email: PARENT_EMAIL, name: "Demo Parent", userType: "parent" });
+      await tx.insert(student).values({
+        userId: studentUserId,
+        boardId: b.id,
+        ...values,
+        tutorId: tut.user.id,
+        parentId: par.id,
+      });
     }
     // The app gates on a completed onboarding row, not just student.onboarding_at.
     const ob = await tx.select().from(onboarding).where(eq(onboarding.userId, studentUserId));

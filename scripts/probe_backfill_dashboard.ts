@@ -64,6 +64,8 @@ type HandOff = {
     attempts: Array<{ subTopicRef: string; answered: boolean; confidence: number | null; timeMs: number | null; at: string }>;
     observations: Array<{ subTopicRef: string; axis: string; calibrationFlag: string | null; at?: string }>;
     pace: Array<{ subjectRef: string; chapters: unknown[] }>;
+    /** Authored cross-subject skills (contract §8). Absent on older hand-offs. */
+    horizontals?: Array<{ subjectRef: string; slug: string; level: number | null; prose: string }>;
   }>;
 };
 
