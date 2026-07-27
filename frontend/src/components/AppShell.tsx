@@ -15,7 +15,22 @@ export type AppView =
   | "practice"
   | "insights"
   | "pace"
-  | "profile";
+  | "profile"
+  | "explore";
+
+/**
+ * Slice MOBILE-1 — the four surfaces that get a bottom-tab slot on a phone.
+ * Everything else (Insights, Pace plan, Journal, Crew) is reachable one tap
+ * deeper, through Explore. The rail is untouched above the breakpoint: on a
+ * desktop there is room for all eight, and burying anything there would be a
+ * cost with no benefit.
+ */
+const MOBILE_TABS: { view: AppView; label: string; icon: ReactNode }[] = [
+  { view: "dashboard", label: "Home", icon: <HomeIcon /> },
+  { view: "practice", label: "Practice", icon: <PencilIcon /> },
+  { view: "revision", label: "Revision", icon: <BookIcon /> },
+  { view: "explore", label: "Explore", icon: <ExploreIcon /> },
+];
 
 type Props = {
   children: ReactNode;
@@ -156,6 +171,33 @@ export function AppShell({
         </div>
       </nav>
 
+      {/* ── MOBILE ONLY (≤720px) — the rail is display:none there ──────────────
+          The rail was unconditional, so a phone got a vertical strip of eight
+          icons eating the left edge of every screen. Below the breakpoint it is
+          replaced by two pieces: this top bar and the bottom tabs.
+
+          The logo lives here because it lived at the TOP OF THE RAIL — with the
+          rail gone it would have vanished from the phone entirely, which is the
+          quiet kind of regression a nav rewrite causes and nobody files.
+
+          Profile is top-right on EVERY mobile view, not just Explore (founder,
+          S172) — a fifth tab for it would have crowded the bar, and a profile
+          entry that moves depending on which screen you're on is worse than one
+          that is always in the same corner. */}
+      <header className="mob-top">
+        <div className="mob-top-logo" aria-hidden>
+          <Logo />
+        </div>
+        <button
+          className={`mob-avatar${view === "profile" ? " is-active" : ""}`}
+          aria-label={`${userName} - profile`}
+          aria-current={view === "profile" ? "page" : undefined}
+          onClick={() => onNavigate("profile")}
+        >
+          {initials}
+        </button>
+      </header>
+
       <main className="canvas graph-paper">
         <div className="canvas-accent canvas-accent--tl" />
         <div className="canvas-accent canvas-accent--br" />
@@ -187,6 +229,31 @@ export function AppShell({
           {children}
         </div>
       </main>
+
+      {/* The bottom tabs stay up on EVERY mobile view, Revision included.
+          The original plan was to hide them on Revision because it runs
+          full-bleed — but `wide` is true for Revision's LANDING (the chapter
+          grid) as well as its slide reader, and hiding the tabs on a browsing
+          screen would strand a phone user with no way to reach Practice or
+          Home. So instead the canvas reserves room for the bar (see
+          `app-shell.css`) and nothing is ever occluded.
+          ⚠️ Revision's SLIDE layout — a fixed content-index sidebar beside the
+          deck — still needs its own mobile pass; that is a bigger job than nav
+          placement and is deliberately not in this slice. */}
+      <nav className="mob-tabs" aria-label="Main">
+        {MOBILE_TABS.map((t) => (
+          <button
+            key={t.view}
+            className={`mob-tab${view === t.view ? " is-active" : ""}`}
+            aria-label={t.label}
+            aria-current={view === t.view ? "page" : undefined}
+            onClick={() => onNavigate(t.view)}
+          >
+            {t.icon}
+            <span className="mob-tab-label">{t.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
@@ -393,6 +460,17 @@ function CalendarIcon() {
     <svg {...ic} aria-hidden>
       <rect x="4" y="5" width="16" height="15" rx="2" />
       <path d="M4 9h16M8 3v4M16 3v4" />
+    </svg>
+  );
+}
+/** Mobile-only. Four panes — the card grid the Explore screen actually is. */
+function ExploreIcon() {
+  return (
+    <svg {...ic} aria-hidden>
+      <rect x="4" y="4" width="7" height="7" rx="1.6" />
+      <rect x="13" y="4" width="7" height="7" rx="1.6" />
+      <rect x="4" y="13" width="7" height="7" rx="1.6" />
+      <rect x="13" y="13" width="7" height="7" rx="1.6" />
     </svg>
   );
 }

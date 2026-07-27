@@ -1059,18 +1059,124 @@ function UploadPanel({
   }
 
   return (
-    <div className="prac-qr">
-      <div className="prac-qr-code">
-        <QRCodeSVG value={mint.uploadUrl} size={172} />
+    <>
+      <div className="prac-qr">
+        <div className="prac-qr-code">
+          <QRCodeSVG value={mint.uploadUrl} size={172} />
+        </div>
+        <div className="prac-qr-side">
+          <p className="prac-qr-title">Scan to upload your answer</p>
+          <p className="prac-muted">
+            Point your phone camera at the code, then take a photo of your written
+            answer. It&apos;ll appear here automatically.
+          </p>
+          <p className="prac-qr-status">Waiting for your photo…</p>
+        </div>
       </div>
-      <div className="prac-qr-side">
-        <p className="prac-qr-title">Scan to upload your answer</p>
-        <p className="prac-muted">
-          Point your phone camera at the code, then take a photo of your written
-          answer. It&apos;ll appear here automatically.
+
+      {/* Founder, S172 — a DIRECT upload beside the QR, not instead of it. The
+          two answer different questions: the QR is for "my answer is on paper
+          and the camera is in my pocket", this is for "the file is already on
+          the machine I'm sitting at". Sending someone to their phone to fetch a
+          photo that is already on their desktop is the kind of detour people
+          just don't complete.
+
+          It reuses the SAME single-use token the QR carries — no second
+          endpoint, no new schema, no auth path of its own. On success it fires
+          the identical callback the poll would have fired, so everything
+          downstream (preview, confidence, submit) is unchanged. */}
+      <DirectUpload
+        token={mint.token}
+        onDone={() => {
+          if (firedRef.current) return;
+          firedRef.current = true;
+          setReceived(true); // stops the poll, swaps QR → preview
+          cbRef.current(mint.token);
+        }}
+      />
+    </>
+  );
+}
+
+/**
+ * Slice MOBILE-1 — upload answer photos straight from THIS machine.
+ *
+ * Posts to the same unauth `/upload/:token` route the phone page uses, with the
+ * token already minted by `UploadPanel`. Deliberately a two-step (pick, then
+ * send) rather than uploading on pick: the token is SINGLE-USE server-side
+ * (`upload.ts:237` — the second POST gets ALREADY_UPLOADED), so a mis-picked
+ * file would otherwise burn the slot with no way back. The confirm step is the
+ * whole reason this doesn't need the token to become multi-use.
+ */
+function DirectUpload({ token, onDone }: { token: string; onDone: () => void }) {
+  const MAX_PHOTOS = 10; // mirrors src/services/upload.ts:30
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function send() {
+    if (files.length === 0) return;
+    setBusy(true);
+    setErr(null);
+    const fd = new FormData();
+    for (const f of files) fd.append("answer_image", f, f.name);
+    try {
+      // No explicit content-type — the browser sets the multipart boundary (M7).
+      const r = await fetch(`/upload/${token}`, { method: "POST", body: fd });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        setErr(
+          body?.error === "TOO_MANY_FILES"
+            ? `Too many photos — ${MAX_PHOTOS} max.`
+            : body?.error === "NOT_AN_IMAGE"
+              ? "One of those files isn’t an image."
+              : "Upload failed. Try again.",
+        );
+        setBusy(false);
+        return;
+      }
+      onDone();
+    } catch {
+      setErr("Network error — check your connection and try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="prac-direct">
+      <div className="prac-direct-or">
+        <span>or</span>
+      </div>
+      <div className="prac-direct-row">
+        <label className="prac-direct-pick">
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            disabled={busy}
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []).slice(0, MAX_PHOTOS);
+              setErr(null);
+              setFiles(picked);
+              e.target.value = ""; // re-picking the same file must re-fire
+            }}
+          />
+          <span className="prac-direct-face">
+            📎 {files.length === 0 ? "Upload from this device" : "Choose different photos"}
+          </span>
+        </label>
+        {files.length > 0 && (
+          <button className="prac-btn prac-btn-primary" onClick={send} disabled={busy}>
+            {busy ? "Uploading…" : `Send ${files.length} photo${files.length === 1 ? "" : "s"}`}
+          </button>
+        )}
+      </div>
+      {files.length > 0 && (
+        <p className="prac-muted prac-direct-list">
+          {files.map((f) => f.name).join(" · ")}
         </p>
-        <p className="prac-qr-status">Waiting for your photo…</p>
-      </div>
+      )}
+      {err && <p className="prac-error">{err}</p>}
     </div>
   );
 }

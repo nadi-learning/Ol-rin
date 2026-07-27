@@ -1,0 +1,96 @@
+/* Explore — the mobile-only card grid (see ExplorePage.tsx).
+   Structure follows the founder's reference (2-column grid, mixed heights,
+   eyebrow → big value → sub); the finish is TAITOR's own tokens. */
+
+.exp {
+  padding-bottom: 4px;
+}
+
+.exp-title {
+  margin: 0 0 18px;
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.exp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.exp-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 104px;
+  padding: 15px 14px;
+  overflow: hidden;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: transform 120ms ease-out;
+}
+.exp-card:active {
+  transform: scale(0.985);
+}
+/* The two cards with real data get the height — that is the whole reason the
+   grid has mixed heights rather than a uniform 2x2: size follows substance. */
+.exp-card--tall {
+  min-height: 168px;
+}
+
+.exp-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.exp-value {
+  font-family: var(--font-display);
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--ink);
+  /* Chapter names are long and unpredictable — clamp rather than let one card
+     grow a third line and knock its row-mate out of alignment. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.exp-sub {
+  margin-top: 1px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink-muted);
+}
+
+/* Art sits bottom-right, behind the text, tinted well back — present as
+   texture, never competing with the number it decorates. */
+.exp-art {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  color: var(--primary);
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+/* Explore has no desktop entry point, but a resize (or a deep link) can still
+   land here above the breakpoint — so it stays readable rather than stretching
+   two cards across a 920px column. */
+@media (min-width: 721px) {
+  .exp-grid {
+    max-width: 560px;
+  }
+}

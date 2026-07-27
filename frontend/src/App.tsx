@@ -3,6 +3,7 @@ import { useSession, signOut } from "./lib/auth";
 import { trpc, clearBoard, setBoard, getPersona, setPersona } from "./trpc";
 import { isAdminEmail, isSelfAssignableRole } from "@b2c/kernel/contracts";
 import { AppShell, type AppView } from "./components/AppShell";
+import { ExplorePage } from "./components/ExplorePage";
 import { LandingPage } from "./components/LandingPage";
 import { AdminGate } from "./components/AdminGate";
 import { DashboardPage } from "./components/DashboardPage";
@@ -511,6 +512,11 @@ export function App() {
         <CrewPage hero={hero} pet={pet} />
       ) : view === "insights" ? (
         <InsightsPage onOpenLesson={openLesson} />
+      ) : view === "explore" ? (
+        // Slice MOBILE-1 — reachable only from the mobile bottom bar; the
+        // desktop rail lists all eight surfaces directly, so there is nothing
+        // for an Explore screen to do up there.
+        <ExplorePage onNavigate={navigate} />
       ) : view === "pace" ? (
         <PacePlanPage />
       ) : view === "profile" ? (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MathText } from "./MathText";
 import "./upload.css";
 
@@ -28,6 +28,17 @@ const TERMINAL = new Set([
   "ALREADY_UPLOADED",
 ]);
 
+/**
+ * One picked photo + its display preview. `url` is "" when a HEIC thumbnail
+ * failed to render — the ORIGINAL file still uploads fine, so a failed preview
+ * must never drop the file (that was the old shape's temptation: two parallel
+ * arrays, `files` and `previews`, that could drift out of alignment).
+ */
+type Pick = { file: File; url: string };
+
+/** Matches the server's MAX_PHOTOS (`src/services/upload.ts:30`). */
+const MAX_PHOTOS = 10;
+
 const FALLBACK = "Something went wrong. Try again.";
 const COPY: Record<string, string> = {
   TOKEN_NOT_FOUND: "This upload link is invalid.",
@@ -46,8 +57,7 @@ export function MobileUploadPage({ token }: { token: string }) {
   const [view, setView] = useState<PhoneView | null>(null);
   const [errCode, setErrCode] = useState<string | null>(null);
   const [inlineErr, setInlineErr] = useState<string | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
+  const [items, setItems] = useState<Pick[]>([]);
 
   // Validate the token + fetch the question stem on load.
   useEffect(() => {
@@ -85,18 +95,42 @@ export function MobileUploadPage({ token }: { token: string }) {
     };
   }, [token]);
 
-  // Revoke preview object URLs on unmount.
-  useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews]);
+  // Revoke preview object URLs on UNMOUNT ONLY. A `[previews]`-keyed cleanup
+  // (the old shape) fires on every change, so appending would revoke the URLs
+  // of the photos already on screen and blank their thumbnails. The ref keeps
+  // the latest list reachable from an unmount-only effect.
+  const itemsRef = useRef<Pick[]>([]);
+  itemsRef.current = items;
+  useEffect(
+    () => () => itemsRef.current.forEach((it) => it.url && URL.revokeObjectURL(it.url)),
+    [],
+  );
 
+  /**
+   * Picking APPENDS. It used to replace the whole list, which is why the button
+   * labelled "add more" silently discarded the photos already taken — a
+   * multi-page written answer could never be uploaded. Each camera round-trip
+   * hands back one file, so append is what makes "photograph page 2" work at
+   * all.
+   */
   async function onPick(list: FileList | null) {
     setInlineErr(null);
-    previews.forEach((u) => u && URL.revokeObjectURL(u));
-    const picked = list ? Array.from(list).slice(0, 10) : [];
-    setFiles(picked);
-    // Build display previews. HEIC → JPEG for the thumbnail ONLY; the file we
-    // upload is the untouched original (Gemini reads HEIC).
-    const urls: string[] = [];
-    for (const f of picked) {
+    const picked = list ? Array.from(list) : [];
+    if (picked.length === 0) return;
+
+    const room = MAX_PHOTOS - items.length;
+    if (room <= 0) {
+      setInlineErr(copy("TOO_MANY_FILES"));
+      return;
+    }
+    const taking = picked.slice(0, room);
+    if (taking.length < picked.length) setInlineErr(copy("TOO_MANY_FILES"));
+
+    // Build display previews for the NEW files only. HEIC → JPEG for the
+    // thumbnail ONLY; the file we upload is the untouched original (Gemini
+    // reads HEIC).
+    const fresh: Pick[] = [];
+    for (const f of taking) {
       const isHeic = /heic|heif/i.test(f.type) || /\.hei[cf]$/i.test(f.name);
       if (isHeic) {
         try {
@@ -104,26 +138,39 @@ export function MobileUploadPage({ token }: { token: string }) {
             o: { blob: Blob; toType?: string; quality?: number },
           ) => Promise<Blob | Blob[]>;
           const jpg = await heic2any({ blob: f, toType: "image/jpeg", quality: 0.7 });
-          urls.push(URL.createObjectURL(Array.isArray(jpg) ? jpg[0]! : jpg));
+          fresh.push({ file: f, url: URL.createObjectURL(Array.isArray(jpg) ? jpg[0]! : jpg) });
         } catch {
-          urls.push(""); // preview failed — the original still uploads fine
+          fresh.push({ file: f, url: "" }); // preview failed — original still uploads
         }
       } else {
-        urls.push(URL.createObjectURL(f));
+        fresh.push({ file: f, url: URL.createObjectURL(f) });
       }
     }
-    setPreviews(urls);
+    setItems((prev) => [...prev, ...fresh]);
+  }
+
+  /** Drop one bad shot without starting the whole batch over. */
+  function removeAt(i: number) {
+    setInlineErr(null);
+    setItems((prev) => {
+      const gone = prev[i];
+      if (gone?.url) URL.revokeObjectURL(gone.url);
+      return prev.filter((_, n) => n !== i);
+    });
   }
 
   async function upload() {
-    if (files.length === 0) {
+    if (items.length === 0) {
       setInlineErr(copy("NO_FILES"));
       return;
     }
     setPhase("uploading");
     setInlineErr(null);
+    // ONE batch, all photos. The token is single-use server-side
+    // (`upload.ts:237` — a second POST gets ALREADY_UPLOADED), so everything
+    // the student wants attached to this answer has to go up together.
     const fd = new FormData();
-    for (const f of files) fd.append("answer_image", f, f.name); // original bytes
+    for (const { file } of items) fd.append("answer_image", file, file.name); // original bytes
     try {
       // No explicit content-type — the browser sets multipart boundary (M7).
       const r = await fetch(`/upload/${token}`, { method: "POST", body: fd });
@@ -163,7 +210,9 @@ export function MobileUploadPage({ token }: { token: string }) {
         {phase === "done" && (
           <div className="up-state">
             <div className="up-emoji up-ok">✓</div>
-            <p className="up-state-msg">Photo uploaded.</p>
+            <p className="up-state-msg">
+              {items.length > 1 ? `${items.length} photos uploaded.` : "Photo uploaded."}
+            </p>
             <p className="up-muted">Return to your computer - it’ll pick this up automatically.</p>
           </div>
         )}
@@ -175,32 +224,57 @@ export function MobileUploadPage({ token }: { token: string }) {
               <MathText text={view.stem} />
             </p>
 
+            {/* 🔑 NO `capture` attribute. It used to be `capture="environment"`,
+                which tells the phone to open the CAMERA directly — and a camera
+                hands back exactly one frame, so `multiple` was dead on the only
+                device this page runs on. Without it, iOS/Android show the picker
+                ("Photo Library" — multi-select — / "Take Photo"), which is what
+                actually lets a student attach three pages of working. Taking one
+                shot at a time still works: each pick appends. */}
             <label className="up-pick">
               <input
                 type="file"
                 accept="image/*"
-                capture="environment"
                 multiple
-                disabled={phase === "uploading"}
-                onChange={(e) => onPick(e.target.files)}
+                disabled={phase === "uploading" || items.length >= MAX_PHOTOS}
+                onChange={(e) => {
+                  onPick(e.target.files);
+                  e.target.value = ""; // re-picking the same file must re-fire
+                }}
               />
               <span className="up-pick-face">
-                📷 {files.length === 0 ? "Take / choose photo" : "Retake / add more"}
+                📷 {items.length === 0 ? "Take / choose photos" : "Add another photo"}
               </span>
             </label>
 
-            {previews.length > 0 && (
-              <div className="up-thumbs">
-                {previews.map((u, i) =>
-                  u ? (
-                    <img key={i} className="up-thumb" src={u} alt={`Answer photo ${i + 1}`} />
-                  ) : (
-                    <div key={i} className="up-thumb up-thumb-fallback">
-                      📄
+            {items.length > 0 && (
+              <>
+                <div className="up-thumbs">
+                  {items.map((it, i) => (
+                    <div key={`${it.file.name}-${i}`} className="up-thumb-wrap">
+                      {it.url ? (
+                        <img className="up-thumb" src={it.url} alt={`Answer photo ${i + 1}`} />
+                      ) : (
+                        <div className="up-thumb up-thumb-fallback">📄</div>
+                      )}
+                      <span className="up-thumb-n">{i + 1}</span>
+                      <button
+                        type="button"
+                        className="up-thumb-x"
+                        aria-label={`Remove photo ${i + 1}`}
+                        disabled={phase === "uploading"}
+                        onClick={() => removeAt(i)}
+                      >
+                        ×
+                      </button>
                     </div>
-                  ),
-                )}
-              </div>
+                  ))}
+                </div>
+                <p className="up-muted up-count">
+                  {items.length} of {MAX_PHOTOS} · they upload together, so add every page
+                  before you send.
+                </p>
+              </>
             )}
 
             {inlineErr && <p className="up-err">{inlineErr}</p>}
@@ -208,11 +282,11 @@ export function MobileUploadPage({ token }: { token: string }) {
             <button
               className="up-btn"
               onClick={upload}
-              disabled={phase === "uploading" || files.length === 0}
+              disabled={phase === "uploading" || items.length === 0}
             >
               {phase === "uploading"
                 ? "Uploading…"
-                : `Upload ${files.length || ""} photo${files.length === 1 ? "" : "s"}`}
+                : `Upload ${items.length || ""} photo${items.length === 1 ? "" : "s"}`}
             </button>
           </>
         )}

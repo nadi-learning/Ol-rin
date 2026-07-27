@@ -798,6 +798,59 @@
   color: var(--sage);
 }
 
+/* Direct upload — the alternative to the QR, not a replacement (see
+   DirectUpload in PracticePage.tsx). The "or" rule is what makes them read as
+   two routes to one place rather than two unrelated controls stacked up. */
+.prac-direct {
+  margin: 10px 0 2px;
+}
+.prac-direct-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+.prac-direct-or::before,
+.prac-direct-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.prac-direct-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.prac-direct-pick input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.prac-direct-face {
+  display: inline-block;
+  padding: 11px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.prac-direct-pick:hover .prac-direct-face {
+  border-color: var(--ink-muted);
+}
+.prac-direct-list {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 560px) {
   .prac-qr {
     flex-direction: column;

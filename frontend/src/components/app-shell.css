@@ -8,6 +8,15 @@
   background: var(--page-bg);
 }
 
+/* The two mobile-only pieces are OFF by default and switched on in the ≤720px
+   block at the foot of this file. Default-off is deliberate: desktop is the
+   layout every existing screen was designed against, so the phone layout has to
+   opt in rather than desktop having to opt out. */
+.mob-top,
+.mob-tabs {
+  display: none;
+}
+
 /* --- left nav rail --- */
 /* positioned + lifted so the hover tooltips, which fly out over the canvas,
    win the paint order against `.canvas` (also positioned, and later in DOM). */
@@ -384,4 +393,108 @@
    the full canvas width. The dashboard keeps the readable default. */
 .canvas-inner--wide {
   max-width: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE (≤720px) — rail out, top bar + bottom tabs in.
+   720 matches the breakpoint `dashboard.css` already uses, so the app changes
+   layout at ONE width rather than at two slightly different ones.
+
+   🔑 The tabs are a FLEX CHILD of `.app-shell`, not `position: fixed`. That is
+   what makes them structurally incapable of covering content: the canvas is the
+   flex item that scrolls (`flex: 1; overflow: auto`) and it simply ends where
+   the bar begins. A fixed bar would have needed a padding-bottom on every
+   scrolling surface in the app and would still have occluded anything that
+   forgot it — which is exactly the trap the Revision slide would have fallen
+   into.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 720px) {
+  .app-shell {
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .nav-rail {
+    display: none;
+  }
+
+  .mob-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    padding: 2px 6px 0;
+  }
+  .mob-top-logo {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+  }
+  .mob-avatar {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    box-shadow: var(--shadow-card);
+    cursor: pointer;
+  }
+  .mob-avatar.is-active {
+    color: #fff;
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+
+  .canvas {
+    border-radius: 20px;
+  }
+  .canvas-inner {
+    padding: 26px 18px 34px;
+  }
+
+  .mob-tabs {
+    display: flex;
+    flex-shrink: 0;
+    align-items: stretch;
+    justify-content: space-around;
+    gap: 4px;
+    padding: 8px 6px;
+    /* Clears the iPhone home indicator without eating space on Android. */
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border-radius: 22px;
+    box-shadow: var(--shadow-rail);
+  }
+  .mob-tab {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    padding: 7px 2px;
+    color: var(--ink-muted);
+    background: none;
+    border: none;
+    border-radius: 14px;
+    cursor: pointer;
+  }
+  .mob-tab.is-active {
+    color: var(--primary);
+    background: var(--primary-soft);
+  }
+  .mob-tab-label {
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+  }
 }
