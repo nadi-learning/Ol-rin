@@ -156,9 +156,26 @@ type StudentIn = {
   sessions: Session[];
   attempts: Attempt[];
   observations: Observation[];
-  weaknesses: unknown[];
+  weaknesses: WeaknessIn[];
   horizontals: HorizontalIn[];
   pace: Pace[];
+};
+
+/**
+ * A TUTOR-AUTHORED weakness (S170) — the §6 "Where {name} is stuck — and what's
+ * being done" card, both halves, written by a human for a parent to read.
+ *
+ * Written as `origin: 'tutor_authored'`, which is the ONLY origin the parent
+ * dashboard renders. The machine kinds (`stage1_cross_concept`,
+ * `stage2_synthesis`) stay internal — S168 left this array empty on the
+ * principle that "a named weakness plus the tutor's plan about a real child is
+ * the one thing not to invent", and that still holds: nothing here is derived.
+ */
+type WeaknessIn = {
+  /** What the child is working through. Renders as the note. */
+  note: string;
+  /** What is being done about it. Renders as "The plan", dated. */
+  plan: string;
 };
 
 /**
@@ -439,11 +456,15 @@ async function loadStudent(
     return stu.user.id;
   });
 
+  // The student's REAL tutor, captured for `plan_by` on any authored weakness —
+  // attribution must name the human who wrote it, never the importer.
+  let tutorForWeakness: string | null = null;
   await withBoard(b.id, async (tx) => {
     const [existing] = await tx
       .select({ userId: student.userId, tutorId: student.tutorId, parentId: student.parentId })
       .from(student)
       .where(eq(student.userId, studentUserId));
+    tutorForWeakness = existing?.tutorId ?? null;
     // Facts about the child that the hand-off legitimately owns.
     const values = {
       class: s.class,
@@ -701,6 +722,27 @@ async function loadStudent(
       });
     }
   });
+
+  // WEAKNESSES — tutor-authored only. Nothing is derived here and nothing is
+  // inferred: if the file carries none, the section renders "Nothing flagged
+  // right now", which is TRUE, and stays that way until a human writes one.
+  const authoredW = Array.isArray(s.weaknesses) ? s.weaknesses : [];
+  if (authoredW.length) {
+    await withBoard(b.id, async (tx) => {
+      for (const w of authoredW) {
+        await tx.insert(crossConceptFlag).values({
+          boardId: b.id,
+          studentId: studentUserId,
+          origin: "tutor_authored",
+          note: w.note,
+          plan: w.plan,
+          planUpdatedAt: new Date(),
+          planBy: tutorForWeakness,
+        });
+      }
+      console.log(`  weaknesses: ${authoredW.length} AUTHORED`);
+    });
+  }
 
   // HORIZONTALS — AUTHORED when the file carries any, else the derived roll-up
   // (contract §8). Authored wins for the WHOLE student, never per-slug: mixing a

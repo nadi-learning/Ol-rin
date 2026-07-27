@@ -729,10 +729,15 @@ export const crossConceptFlag = pgTable(
     // A stage-1 flag without its source read would be an unfalsifiable claim; a
     // synthesis flag is not expected to have one. Encode that rather than trusting
     // the writers to be consistent.
+    // `tutor_authored` (S170) is the third kind: a human wrote it, for a parent
+    // to read, and it has no machine provenance to point at — the person IS the
+    // provenance (`plan_by`). It is also the ONLY origin the parent dashboard
+    // renders; the two machine kinds are written for staff and stay internal.
     check(
       "cross_concept_flag_origin_provenance",
       sql`(${t.origin} = 'stage1_cross_concept' and ${t.sourceObservationId} is not null and ${t.fromSubTopicId} is not null)
-       or (${t.origin} = 'stage2_synthesis' and ${t.sourceSessionId} is not null)`,
+       or (${t.origin} = 'stage2_synthesis' and ${t.sourceSessionId} is not null)
+       or (${t.origin} = 'tutor_authored' and ${t.sourceObservationId} is null and ${t.sourceSessionId} is null)`,
     ),
   ],
 );

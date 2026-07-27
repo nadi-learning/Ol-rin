@@ -1,0 +1,4 @@
+ALTER TABLE "cross_concept_flag" DROP CONSTRAINT "cross_concept_flag_origin_provenance";--> statement-breakpoint
+ALTER TABLE "cross_concept_flag" ADD CONSTRAINT "cross_concept_flag_origin_provenance" CHECK (("cross_concept_flag"."origin" = 'stage1_cross_concept' and "cross_concept_flag"."source_observation_id" is not null and "cross_concept_flag"."from_sub_topic_id" is not null)
+       or ("cross_concept_flag"."origin" = 'stage2_synthesis' and "cross_concept_flag"."source_session_id" is not null)
+       or ("cross_concept_flag"."origin" = 'tutor_authored' and "cross_concept_flag"."source_observation_id" is null and "cross_concept_flag"."source_session_id" is null));

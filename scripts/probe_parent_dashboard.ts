@@ -222,17 +222,39 @@ async function main() {
       boardId: P.id, studentId: userCH1, subTopicId: fx.b,
       axis: "procedural", observationLevel: 4, reasoning: OBS_SENTINEL, source: "stage1_scorer", createdAt: daysAgo(3),
     }).returning();
+    // The two VISIBLE weaknesses: tutor_authored, written for a parent to read.
     await tx.insert(crossConceptFlag).values({
-      boardId: P.id, studentId: userCH1, origin: "stage1_cross_concept",
-      fromSubTopicId: fx.b, sourceObservationId: srcObs!.id, note: "prerequisite slip in fractions",
+      boardId: P.id, studentId: userCH1, origin: "tutor_authored",
+      fromSubTopicId: fx.b, note: "prerequisite slip in fractions",
       plan: "tutor plan text", planUpdatedAt: daysAgo(2), createdAt: daysAgo(3),
     });
+    await tx.insert(crossConceptFlag).values({
+      boardId: P.id, studentId: userCH1, origin: "tutor_authored",
+      fromSubTopicId: fx.a, note: "sign errors when expanding brackets",
+      plan: null, createdAt: daysAgo(1),
+    });
+    // 🔴 THE TWO CONTROLS (S170) — both MACHINE origins, both written for staff,
+    // neither may ever reach a parent. On prod these were rendering verbatim
+    // under "Where {name} is stuck": 5 of Avani Purwar's 8 flags were imperative
+    // instructions to her tutor, and the other 3 called her "the student".
     const [sess] = await tx.insert(assessmentSession).values({
       boardId: P.id, studentId: userCH1, tutorId: userCH2, subTopicIds: [fx.a],
     }).returning();
     await tx.insert(crossConceptFlag).values({
       boardId: P.id, studentId: userCH1, origin: "stage2_synthesis",
-      fromSubTopicId: null, sourceSessionId: sess!.id, note: "recurring unit-conversion pattern", plan: null, createdAt: daysAgo(1),
+      fromSubTopicId: null, sourceSessionId: sess!.id,
+      note: "STAFF-ONLY: design a targeted exercise on unit conversion", plan: null, createdAt: daysAgo(1),
+    });
+    await tx.insert(crossConceptFlag).values({
+      boardId: P.id, studentId: userCH1, origin: "stage1_cross_concept",
+      // The provenance check REQUIRES a stage1 flag to name its source
+      // observation AND sub-topic; `source_observation_id` is UNIQUE, so this
+      // control needs its own observation rather than reusing srcObs.
+      fromSubTopicId: fx.a, sourceObservationId: (await tx.insert(observation).values({
+        boardId: P.id, studentId: userCH1, subTopicId: fx.a,
+        axis: "conceptual", observationLevel: 3, reasoning: OBS_SENTINEL, source: "stage1_scorer", createdAt: daysAgo(2),
+      }).returning())[0]!.id,
+      note: "STAFF-ONLY: the student made a classic modeling error", plan: null, createdAt: daysAgo(1),
     });
   });
 
@@ -293,11 +315,15 @@ async function main() {
   check("calibration: located at 3 sub_topics (ST A/B/F)", dash.calibration.locations.length === 3 && dash.calibration.locations.includes("ST A") && dash.calibration.locations.includes("ST F"));
 
   // §6 weakness + plan (CLOCK-3, generated default).
-  check("weaknesses → 2", dash.weaknesses.length === 2);
+  check("weaknesses → 2 (the tutor-authored pair only)", dash.weaknesses.length === 2);
+  check(
+    "🔴 NO machine-origin flag reaches a parent — stage1 and stage2 are staff text",
+    !dash.weaknesses.some((w) => w.note.includes("STAFF-ONLY")),
+  );
   const authored = dash.weaknesses.find((w) => w.planAuthored);
   const generated = dash.weaknesses.find((w) => !w.planAuthored);
   check("weakness authored: plan text + date + fromSubTopic 'ST B'", !!authored && authored.planText === "tutor plan text" && authored.planUpdatedAt != null && authored.fromSubTopicName === "ST B");
-  check("weakness unauthored: generated default, undated, no sub_topic", !!generated && generated.planText === resolveParentCopy("plan.generated_default") && generated.planUpdatedAt === null && generated.fromSubTopicName === null);
+  check("weakness unauthored: generated default, undated, names its sub_topic 'ST A'", !!generated && generated.planText === resolveParentCopy("plan.generated_default") && generated.planUpdatedAt === null && generated.fromSubTopicName === "ST A");
 
   // §7 horizontals — parent-facing labels (D-PDASH-5 placeholder copy).
   const cr = sciA.horizontals.find((x) => x.slug === "causal_reasoning");

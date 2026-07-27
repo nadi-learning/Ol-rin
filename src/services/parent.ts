@@ -1069,7 +1069,40 @@ async function readStory(tx: Tx, childId: string): Promise<StorySlots> {
   return { topicsPracticed: topics.size, retentionTopics: retention, selfDirectedCount: selfDirected };
 }
 
-/** §6 weaknesses — cross_concept_flags + CLOCK-3 plan (generated default when null). */
+/**
+ * §6 weaknesses — cross_concept_flags + CLOCK-3 plan (generated default when null).
+ *
+ * ── ONLY observation-origin flags reach a parent (S170) ──────────────────────
+ * `cross_concept_flag` carries two different kinds of row under one table, told
+ * apart by `origin`:
+ *
+ *   `stage1_cross_concept` — an OBSERVATION of the child. "In part (b), the
+ *     student wrote 'Substituting x=4' instead of 'z=4'." Describes what
+ *     happened. This is the "where she is stuck" half, and it is the only half
+ *     this section is entitled to show.
+ *
+ *   `stage2_synthesis` — a RECOMMENDATION TO THE TUTOR. "Design a targeted
+ *     exercise to contrast the zero-product property…", "Prompt the student to
+ *     double-check variable names…". Imperative, addressed to staff. It is the
+ *     tutor's worklist item — conceptually the *plan*, not the weakness.
+ *
+ *   `tutor_authored` — a human wrote it FOR A PARENT. Both halves: what the
+ *     child is working through, and what is being done about it.
+ *
+ * Rendering the machine kinds under "Where {name} is stuck" put internal
+ * work-queue text on a customer-facing page: on prod, 5 of Avani Purwar's 8 flags
+ * read as instructions to her tutor, shown to her mother, and the other 3 called
+ * her "the student".
+ *
+ * 🔴 So a parent sees a weakness ONLY when a human wrote one. That is the same
+ * rule the rest of this system already runs on — mastery moves when a tutor
+ * acts — applied to the most sensitive claim on the page. The honest empty state
+ * ("Nothing flagged right now") is correct until someone has something to say.
+ * Filtering here rather than at the render keeps the boundary at the projection
+ * edge, beside the M11 rules it belongs with.
+ */
+const PARENT_VISIBLE_FLAG_ORIGINS = ["tutor_authored"];
+
 async function readWeaknesses(
   tx: Tx,
   childId: string,
@@ -1084,7 +1117,12 @@ async function readWeaknesses(
     })
     .from(crossConceptFlag)
     .leftJoin(subTopic, eq(subTopic.id, crossConceptFlag.fromSubTopicId))
-    .where(eq(crossConceptFlag.studentId, childId))
+    .where(
+      and(
+        eq(crossConceptFlag.studentId, childId),
+        inArray(crossConceptFlag.origin, PARENT_VISIBLE_FLAG_ORIGINS),
+      ),
+    )
     .orderBy(desc(crossConceptFlag.createdAt));
   return rows.map((r) => ({
     fromSubTopicName: r.fromSubTopicName ?? null,
