@@ -60,6 +60,21 @@ type Tx = PgTransaction<any, any, any>;
 const WORKER_ENDPOINT = "authoring.worker";
 const WORKER_TIMEOUT_SEC = 600;
 
+/**
+ * The Claude model question authoring runs on — PINNED, not the `opus` alias.
+ *
+ * The vendor's fallback is the bare alias `opus`, which the CLI resolves to
+ * "the latest Opus" and therefore drifts under us on every Claude Code upgrade.
+ * Authoring is the one path whose output quality we tune prompts against, so it
+ * names its model explicitly and moves only when we decide to move it. Scoped to
+ * question authoring: the authoring CHAT and assessment chat still take the
+ * vendor default (claude_cli_vendor.ts:51).
+ *
+ * ⚠️ Requires a Claude Code on the box new enough to know this id — the alias
+ * was version-portable, a pinned id is not (deploy-olorin.md:49).
+ */
+const AUTHORING_CLAUDE_MODEL = "claude-opus-5";
+
 // Authoring's Gemini bounds. Authoring still rides the HTTP request, so these
 // are only safe UNDER nginx's proxy timeout — they are not independent numbers.
 //
@@ -556,7 +571,7 @@ OUTPUT FORMAT (STRICT): respond with ONLY a single JSON object, no prose, no mar
         systemPrompt: claudeSystem,
         userMessage: opts.prompt,
         endpoint: PLAN_ENDPOINT,
-        model: "", // vendor default (opus)
+        model: AUTHORING_CLAUDE_MODEL,
         timeoutSec: WORKER_TIMEOUT_SEC,
         vendorId: "claude_cli",
         slotId: PLAN_ENDPOINT,
@@ -743,7 +758,10 @@ Author the set now. Apply the bar and the palette, and self-score each on the ru
           userMessage: batchPrompt,
           endpoint: WORKER_ENDPOINT,
           slotId: WORKER_ENDPOINT,
-          model: "",
+          // Not hashed today (computeSessionFingerprint keys on systemPrompt +
+          // slot only) — kept in sync with the real call so the two can't drift
+          // apart if the fingerprint ever starts including the model.
+          model: AUTHORING_CLAUDE_MODEL,
         })
       : null;
   const draftedTurn: WorkerTurn = {
@@ -873,7 +891,7 @@ Apply the bar and the palette, and self-score on the rubric (honest low on at le
     userMessage: opts.batchPrompt,
     endpoint: WORKER_ENDPOINT,
     slotId: WORKER_ENDPOINT,
-    model: "",
+    model: AUTHORING_CLAUDE_MODEL, // not hashed — see the sibling call above
   });
   const resumeSessionId = await resumableWorkerSession(
     tx,
@@ -895,7 +913,7 @@ Apply the bar and the palette, and self-score on the rubric (honest low on at le
         systemPrompt: claudeSystem,
         userMessage: opts.batchPrompt,
         endpoint: WORKER_ENDPOINT,
-        model: "", // vendor default (opus)
+        model: AUTHORING_CLAUDE_MODEL,
         timeoutSec: WORKER_TIMEOUT_SEC,
         vendorId: "claude_cli",
         slotId: WORKER_ENDPOINT,
