@@ -323,6 +323,46 @@
   max-height: 92vh;
   object-fit: contain;
   border-radius: 8px;
+  transition: transform 0.18s ease;
+}
+/* ROTATE-1: at 90/270 the image's effective width and height swap, but the CSS
+   transform leaves the layout box alone — so the caps swap with it. Without
+   this a rotated portrait page runs off both edges of the viewport. */
+.tut-recall-lightbox img.is-quarter {
+  max-width: 92vh;
+  max-height: 92vw;
+}
+.tut-recall-lightbox-tools {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: rgba(20, 22, 40, 0.72);
+  border-radius: 999px;
+  cursor: default;
+}
+.tut-recall-lightbox-tools button {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  line-height: 1;
+  color: #14161f;
+  background: rgba(255, 255, 255, 0.92);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tut-recall-lightbox-tools button:hover { background: #fff; }
+.tut-recall-lightbox-tools .tut-recall-reset {
+  font-size: 12.5px;
+  font-weight: 600;
 }
 .tut-recall-lightbox-close {
   position: absolute;
@@ -3218,3 +3258,206 @@
 .tut-syn-block { padding-top: 2px; }
 .tut-syn-list { margin: 0; padding-left: 18px; font-size: 13px; color: #33364a; line-height: 1.6; }
 .tut-syn-note { margin: 0; font-size: 12.5px; color: var(--muted, #6b6f80); }
+
+/* ── Slice ASG-READ: clickable assignment card + read-only work panel ─────── */
+
+/* The card was inert (no cursor, no hover) while looking exactly like a
+   clickable row — the founder clicked it and nothing happened. */
+.tut-asg-card.is-openable {
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.tut-asg-card.is-openable:hover {
+  border-color: var(--ink-muted, #6b6f80);
+  box-shadow: 0 1px 6px rgba(20, 22, 40, 0.08);
+}
+.tut-asg-card.is-openable:focus-visible {
+  outline: 2px solid #3b5bdb;
+  outline-offset: 2px;
+}
+
+/* z-index 900: ABOVE every page-chrome layer (max 60) but BELOW the answer-photo
+   lightbox at 1000, so a tapped photo still opens on top of this panel rather
+   than behind it. */
+.tut-work {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  background: var(--page, #eef0f3);
+}
+.tut-work-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: var(--surface, #fff);
+  border-bottom: 1px solid var(--border, #dfe1e8);
+}
+.tut-work-bar-id {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+.tut-work-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink, #14161f);
+}
+.tut-work-sub {
+  font-size: 13px;
+  color: var(--muted, #6b6f80);
+}
+.tut-work-close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  color: var(--ink, #14161f);
+  background: transparent;
+  border: 1px solid var(--border, #dfe1e8);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tut-work-close:hover { border-color: var(--ink-muted, #6b6f80); }
+
+/* The ONLY scrolling region — the bar stays put. */
+.tut-work-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 40px;
+}
+
+.tut-work-st { margin-bottom: 26px; }
+.tut-work-st-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.tut-work-st-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink, #14161f);
+}
+.tut-work-st-status {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eceef3;
+  color: #6b6f80;
+}
+.tut-work-st-status.is-active { background: #e7edff; color: #3b5bdb; }
+.tut-work-st-status.is-completed { background: #e6f4ea; color: #2f7a45; }
+.tut-work-st-count { font-size: 12.5px; color: var(--muted, #6b6f80); }
+.tut-work-empty { margin: 0; }
+
+.tut-work-qs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tut-work-q {
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #dfe1e8);
+  border-radius: var(--r-md, 10px);
+}
+/* A not-reached question is context, not a failure — recede it. */
+.tut-work-q.is-not_reached { opacity: 0.55; }
+.tut-work-q-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.tut-work-q-n {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b6f80;
+  background: #eceef3;
+  border-radius: 50%;
+}
+.tut-work-q-state {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #6b6f80;
+}
+.tut-work-q-state.is-answered { color: #2f7a45; }
+.tut-work-q-state.is-skipped { color: #b06a1b; }
+.tut-work-q-axis {
+  font-size: 11.5px;
+  color: #6b6f80;
+  padding: 1px 7px;
+  border: 1px solid var(--border, #dfe1e8);
+  border-radius: 999px;
+}
+.tut-work-q-marks {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink, #14161f);
+}
+.tut-work-q-level {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #3b5bdb;
+}
+/* A tutor-corrected level must never be mistaken for the machine's. */
+.tut-work-q-level.is-tutor { background: #e6f4ea; color: #2f7a45; }
+.tut-work-q-stem {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink, #14161f);
+}
+.tut-work-a {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border, #dfe1e8);
+}
+.tut-work-a-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #33364a;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tut-work-a-meta {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted, #6b6f80);
+}
+.tut-work-unassessed { font-style: italic; }
+
+@media (max-width: 720px) {
+  .tut-work-bar { padding: 12px 14px; }
+  .tut-work-body { padding: 14px 14px 32px; }
+}

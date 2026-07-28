@@ -27,7 +27,10 @@ import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
   assignment,
+  attempt,
+  attemptImage,
   chapter,
+  observation,
   practiceSession,
   question,
   subTopic,
@@ -299,9 +302,23 @@ export async function assignApprovedQuestions(
   return views;
 }
 
-type SessionProgress = { status: "active" | "completed"; currentIndex: number };
+type SessionProgress = {
+  sessionId: string;
+  status: "active" | "completed";
+  currentIndex: number;
+  /** The frozen ordered question ids the student was actually served. */
+  questionIds: string[];
+};
 
-/** Per-sub_topic session status + progress for one assignment + one student. */
+/**
+ * Per-sub_topic session status + progress for one assignment + one student.
+ *
+ * Returns the REPRESENTATIVE session per sub_topic (a sub_topic can carry more
+ * than one). `sessionId` + `questionIds` ride along so the read-only work view
+ * (getAssignmentWorkForTutor) resolves the SAME session this picks — one
+ * selection rule, so the card's "0 / 1 done" and the panel's question list can
+ * never describe different sittings.
+ */
 async function sessionStatusFor(
   tx: Tx,
   assignmentId: string,
@@ -309,9 +326,11 @@ async function sessionStatusFor(
 ): Promise<Map<string, SessionProgress>> {
   const sessions = await tx
     .select({
+      id: practiceSession.id,
       subTopicId: practiceSession.subTopicId,
       status: practiceSession.status,
       currentIndex: practiceSession.currentIndex,
+      questionIds: practiceSession.questionIds,
     })
     .from(practiceSession)
     .where(
@@ -324,16 +343,22 @@ async function sessionStatusFor(
   for (const s of sessions) {
     const st = s.status as "active" | "completed";
     const prev = m.get(s.subTopicId);
+    const row: SessionProgress = {
+      sessionId: s.id,
+      status: st,
+      currentIndex: s.currentIndex,
+      questionIds: s.questionIds,
+    };
     // a completed session wins over an active one for the same sub_topic.
     if (prev?.status === "completed") continue;
     if (st === "completed") {
-      m.set(s.subTopicId, { status: "completed", currentIndex: s.currentIndex });
+      m.set(s.subTopicId, row);
       continue;
     }
     // among active sessions, keep the one with the most progress (that's what
     // 'continue' would resume) so the label reflects real work, not a stray idx=0.
     if (!prev || s.currentIndex > prev.currentIndex) {
-      m.set(s.subTopicId, { status: "active", currentIndex: s.currentIndex });
+      m.set(s.subTopicId, row);
     }
   }
   return m;
@@ -411,6 +436,258 @@ export async function listAssignmentsForTutor(
     )
     .orderBy(asc(assignment.createdAt));
   return buildViews(tx, rows);
+}
+
+// ── Slice ASG-READ: the tutor's READ-ONLY view of one assignment ───────────
+//
+// The card in "Assigned work" answers "how many sub_topics are done". This
+// answers "what did the student actually DO" — the frozen question order, their
+// answer to each (text or photos), the marks they saw, and the Stage-1 read
+// where one exists. Strictly inert: no marking, no override, no mutation. The
+// tutor MARKS in the Assess tab; they READ here.
+//
+// Nothing new is stored — `practice_session.question_ids` already freezes the
+// served order, so this is pure assembly over rows that exist. No migration.
+
+/** Mirrors the local const in assessment.ts / tutor.ts — Stage-1's writer tag. */
+const STAGE1_SOURCE = "stage1_scorer";
+
+/** One Stage-1 read of one answer, on one axis. `level` is the EFFECTIVE level
+ *  (`tutorLevel ?? observationLevel`) so a tutor correction is what shows. */
+export type AssignmentWorkMark = {
+  axis: string;
+  level: number;
+  /** 'tutor' when a human overrode the machine's read, else 'ai'. */
+  source: "tutor" | "ai";
+};
+
+export type AssignmentWorkQuestion = {
+  questionId: string;
+  /** 1-based position in the frozen served order. */
+  ordinal: number;
+  /** null when the question row is gone (deleted since the session froze it). */
+  stem: string | null;
+  axis: string | null;
+  /** 'not_reached' = the student never got this far — NOT a failure. */
+  state: "answered" | "skipped" | "not_reached";
+  answerText: string | null;
+  answerConfidence: number | null;
+  answerPhotoIds: string[];
+  skipReason: string | null;
+  submittedAt: Date | null;
+  /** The marks the student saw at practice time (attempt.feedback). */
+  marksAwarded: number | null;
+  marksMax: number | null;
+  /** Empty when Stage-1 hasn't read this answer yet — an honest "not assessed
+   *  yet", never a fabricated zero. */
+  marks: AssignmentWorkMark[];
+};
+
+export type AssignmentWorkSubTopic = {
+  subTopicId: string;
+  subTopicName: string;
+  chapterName: string;
+  sessionStatus: "not_started" | "active" | "completed";
+  currentIndex: number;
+  /** Frozen question count. 0 when never started — there is no session, so
+   *  there is no served set to show (we do NOT substitute the canonical bank:
+   *  what the student *would* get is not what they *did* get). */
+  total: number;
+  answeredCount: number;
+  skippedCount: number;
+  questions: AssignmentWorkQuestion[];
+};
+
+export type AssignmentWorkView = {
+  id: string;
+  mode: AssignmentMode;
+  subjectName: string | null;
+  chapterName: string | null;
+  createdAt: Date;
+  subTopics: AssignmentWorkSubTopic[];
+};
+
+/**
+ * Read-only: everything one student has done inside one assignment.
+ *
+ * Ownership is doubly gated — `assertTutorsStudent` (the tutor tutors this
+ * student) AND the assignment row must be this tutor's AND this student's, else
+ * ASSIGNMENT_NOT_FOUND with no detail (a foreign id must not be distinguishable
+ * from a missing one). RLS scopes the board on top.
+ */
+export async function getAssignmentWorkForTutor(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string; assignmentId: string },
+): Promise<AssignmentWorkView> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+
+  const [row] = await tx
+    .select()
+    .from(assignment)
+    .where(eq(assignment.id, args.assignmentId))
+    .limit(1);
+  if (
+    !row ||
+    row.tutorId !== args.tutorUserId ||
+    row.studentId !== args.studentId
+  ) {
+    throw new AssignmentNotFoundError(args.assignmentId);
+  }
+
+  const resolved = await resolveSubTopics(tx, row.subTopicIds);
+  const byId = new Map(resolved.map((r) => [r.subTopicId, r]));
+  const ids = row.subTopicIds.filter((id) => byId.has(id));
+  const sessions = await sessionStatusFor(tx, row.id, row.studentId);
+
+  // One pass for every attempt across every session in this assignment.
+  const sessionIds = ids
+    .map((id) => sessions.get(id)?.sessionId)
+    .filter((x): x is string => !!x);
+  const attemptRows = sessionIds.length
+    ? await tx
+        .select({
+          id: attempt.id,
+          practiceSessionId: attempt.practiceSessionId,
+          questionId: attempt.questionId,
+          answerText: attempt.answerText,
+          confidence: attempt.confidence,
+          skipReason: attempt.skipReason,
+          feedback: attempt.feedback,
+          submittedAt: attempt.submittedAt,
+        })
+        .from(attempt)
+        .where(inArray(attempt.practiceSessionId, sessionIds))
+        .orderBy(asc(attempt.submittedAt))
+    : [];
+
+  // Keyed session+question, LAST write wins: a re-answered question shows the
+  // answer that stands, matching what the student would see on review.
+  const attemptByKey = new Map<string, (typeof attemptRows)[number]>();
+  for (const a of attemptRows) {
+    attemptByKey.set(`${a.practiceSessionId}:${a.questionId}`, a);
+  }
+
+  const attemptIds = [...attemptByKey.values()].map((a) => a.id);
+  const [imgRows, obsRows] = await Promise.all([
+    attemptIds.length
+      ? tx
+          .select({ id: attemptImage.id, attemptId: attemptImage.attemptId })
+          .from(attemptImage)
+          .where(inArray(attemptImage.attemptId, attemptIds))
+          .orderBy(asc(attemptImage.ordinal))
+      : Promise.resolve([] as { id: string; attemptId: string }[]),
+    attemptIds.length
+      ? tx
+          .select({
+            attemptId: observation.attemptId,
+            axis: observation.axis,
+            observationLevel: observation.observationLevel,
+            tutorLevel: observation.tutorLevel,
+          })
+          .from(observation)
+          .where(
+            and(
+              inArray(observation.attemptId, attemptIds),
+              eq(observation.source, STAGE1_SOURCE),
+            ),
+          )
+          .orderBy(asc(observation.axis))
+      : Promise.resolve(
+          [] as {
+            attemptId: string | null;
+            axis: string;
+            observationLevel: number;
+            tutorLevel: number | null;
+          }[],
+        ),
+  ]);
+
+  const photosByAttempt = new Map<string, string[]>();
+  for (const im of imgRows) {
+    const list = photosByAttempt.get(im.attemptId) ?? [];
+    list.push(im.id);
+    photosByAttempt.set(im.attemptId, list);
+  }
+  const marksByAttempt = new Map<string, AssignmentWorkMark[]>();
+  for (const o of obsRows) {
+    if (!o.attemptId) continue;
+    const list = marksByAttempt.get(o.attemptId) ?? [];
+    list.push({
+      axis: o.axis,
+      level: o.tutorLevel ?? o.observationLevel,
+      source: o.tutorLevel != null ? "tutor" : "ai",
+    });
+    marksByAttempt.set(o.attemptId, list);
+  }
+
+  // Question text for every frozen id across every session, in one pass.
+  const allQuestionIds = [
+    ...new Set(ids.flatMap((id) => sessions.get(id)?.questionIds ?? [])),
+  ];
+  const qRows = allQuestionIds.length
+    ? await tx
+        .select({ id: question.id, stem: question.stem, axis: question.axis })
+        .from(question)
+        .where(inArray(question.id, allQuestionIds))
+    : [];
+  const qById = new Map(qRows.map((q) => [q.id, q]));
+
+  const subTopics: AssignmentWorkSubTopic[] = ids.map((stId) => {
+    const meta = byId.get(stId)!;
+    const s = sessions.get(stId);
+    const frozen = s?.questionIds ?? [];
+    const questions: AssignmentWorkQuestion[] = frozen.map((qid, i) => {
+      const q = qById.get(qid);
+      const a = s ? attemptByKey.get(`${s.sessionId}:${qid}`) : undefined;
+      const state: AssignmentWorkQuestion["state"] = !a
+        ? "not_reached"
+        : a.skipReason != null
+          ? "skipped"
+          : "answered";
+      const fb = a?.feedback as
+        | { marksAwarded?: unknown; marksMax?: unknown }
+        | null
+        | undefined;
+      return {
+        questionId: qid,
+        ordinal: i + 1,
+        stem: q?.stem ?? null,
+        axis: q?.axis ?? null,
+        state,
+        answerText: a?.answerText ?? null,
+        answerConfidence: a?.confidence ?? null,
+        answerPhotoIds: a ? photosByAttempt.get(a.id) ?? [] : [],
+        skipReason: a?.skipReason ?? null,
+        submittedAt: a?.submittedAt ?? null,
+        // Read defensively — feedback is nullable and legacy caches carry no
+        // marks, so anything non-numeric collapses to null rather than throwing.
+        marksAwarded: typeof fb?.marksAwarded === "number" ? fb.marksAwarded : null,
+        marksMax: typeof fb?.marksMax === "number" ? fb.marksMax : null,
+        marks: a ? marksByAttempt.get(a.id) ?? [] : [],
+      };
+    });
+    return {
+      subTopicId: stId,
+      subTopicName: meta.subTopicName,
+      chapterName: meta.chapterName,
+      sessionStatus: s?.status ?? "not_started",
+      currentIndex: s?.currentIndex ?? 0,
+      total: frozen.length,
+      answeredCount: questions.filter((q) => q.state === "answered").length,
+      skippedCount: questions.filter((q) => q.state === "skipped").length,
+      questions,
+    };
+  });
+
+  const first = byId.get(ids[0]!);
+  return {
+    id: row.id,
+    mode: row.mode as AssignmentMode,
+    subjectName: row.subjectId ? first?.subjectName ?? null : null,
+    chapterName: row.chapterId ? first?.chapterName ?? null : null,
+    createdAt: row.createdAt,
+    subTopics,
+  };
 }
 
 /** Student side: the work assigned to me (D-ASG-1 — reverses D-L-2 self-serve-

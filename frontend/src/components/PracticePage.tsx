@@ -1114,6 +1114,32 @@ function DirectUpload({ token, onDone }: { token: string; onDone: () => void }) 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  /**
+   * Picking APPENDS, matching `MobileUploadPage.onPick`. Replacing was the same
+   * defect that page shipped with: a phone camera hands back exactly ONE frame
+   * per round-trip, so "photograph page 2" is only possible if pick n+1 keeps
+   * pick n. The per-file remove below is what makes append safe — without it a
+   * bad shot could only be undone by reloading and re-minting the token.
+   */
+  function onPick(list: FileList | null) {
+    const picked = list ? Array.from(list) : [];
+    if (picked.length === 0) return;
+    setErr(null);
+    const room = MAX_PHOTOS - files.length;
+    if (room <= 0) {
+      setErr(`Too many photos — ${MAX_PHOTOS} max.`);
+      return;
+    }
+    if (picked.length > room) setErr(`Too many photos — ${MAX_PHOTOS} max.`);
+    setFiles((prev) => [...prev, ...picked.slice(0, room)]);
+  }
+
+  /** Drop one bad shot without starting the whole batch over. */
+  function removeAt(i: number) {
+    setErr(null);
+    setFiles((prev) => prev.filter((_, n) => n !== i));
+  }
+
   async function send() {
     if (files.length === 0) return;
     setBusy(true);
@@ -1153,16 +1179,14 @@ function DirectUpload({ token, onDone }: { token: string; onDone: () => void }) 
             type="file"
             accept="image/*"
             multiple
-            disabled={busy}
+            disabled={busy || files.length >= MAX_PHOTOS}
             onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []).slice(0, MAX_PHOTOS);
-              setErr(null);
-              setFiles(picked);
+              onPick(e.target.files);
               e.target.value = ""; // re-picking the same file must re-fire
             }}
           />
           <span className="prac-direct-face">
-            📎 {files.length === 0 ? "Upload from this device" : "Choose different photos"}
+            📎 {files.length === 0 ? "Upload from this device" : "Add another photo"}
           </span>
         </label>
         {files.length > 0 && (
@@ -1172,9 +1196,32 @@ function DirectUpload({ token, onDone }: { token: string; onDone: () => void }) 
         )}
       </div>
       {files.length > 0 && (
-        <p className="prac-muted prac-direct-list">
-          {files.map((f) => f.name).join(" · ")}
-        </p>
+        <>
+          {/* Numbered, not just named: a phone camera hands back "image.jpg"
+              every time, so the ordinal is the only thing telling page 2 from
+              page 3. */}
+          <ul className="prac-direct-list">
+            {files.map((f, i) => (
+              <li key={`${f.name}-${f.lastModified}-${i}`} className="prac-direct-item">
+                <span className="prac-direct-n">{i + 1}</span>
+                <span className="prac-direct-name">{f.name}</span>
+                <button
+                  type="button"
+                  className="prac-direct-x"
+                  aria-label={`Remove photo ${i + 1}`}
+                  disabled={busy}
+                  onClick={() => removeAt(i)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="prac-muted prac-direct-count">
+            {files.length} of {MAX_PHOTOS} · they upload together, so add every page before
+            you send.
+          </p>
+        </>
       )}
       {err && <p className="prac-error">{err}</p>}
     </div>

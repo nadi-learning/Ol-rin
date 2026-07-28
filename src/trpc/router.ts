@@ -189,6 +189,7 @@ import {
   AssignmentNotFoundError,
   assignApprovedQuestions,
   createAssignment,
+  getAssignmentWorkForTutor,
   InvalidAssignmentError,
   listAssignmentsForStudent,
   listAssignmentsForTutor,
@@ -1444,6 +1445,36 @@ export const appRouter = router({
           });
         } catch (e) {
           if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Slice ASG-READ: the READ-ONLY drill-in behind an "Assigned work" card —
+    // the frozen question order, the student's answer to each, the marks they
+    // saw, and the Stage-1 read where one exists. A query, never a mutation:
+    // the tutor MARKS in the Assess tab and READS here. A foreign or unknown
+    // assignment is ASSIGNMENT_NOT_FOUND either way (no existence leak).
+    getAssignmentWork: tutorProcedure
+      .input(
+        z.object({
+          studentId: z.string().uuid(),
+          assignmentId: z.string().uuid(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getAssignmentWorkForTutor(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+            assignmentId: input.assignmentId,
+          });
+        } catch (e) {
+          if (
+            e instanceof StudentNotFoundError ||
+            e instanceof AssignmentNotFoundError
+          ) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;

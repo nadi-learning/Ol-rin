@@ -234,6 +234,8 @@ function StudentDetail({
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TutorTab>("assess");
+  // Slice ASG-READ: which assignment's read-only work panel is open (null = none).
+  const [openWork, setOpenWork] = useState<AssignmentView | null>(null);
 
   // Keep the active board pinned to THIS student for the whole time their detail
   // (assess / author / etc.) is open — every read here is student-scoped and RLS
@@ -343,9 +345,18 @@ function StudentDetail({
 
           <section className="tut-section">
             <h3 className="tut-section-title">Assigned work</h3>
-            <AssignmentList assignments={assignments} />
+            <AssignmentList assignments={assignments} onOpen={setOpenWork} />
           </section>
         </>
+      )}
+
+      {openWork && (
+        <AssignmentWorkPanel
+          studentId={student.studentId}
+          studentName={student.name}
+          assignment={openWork}
+          onClose={() => setOpenWork(null)}
+        />
       )}
 
       {tab === "pace" && (
@@ -1233,8 +1244,10 @@ function BlockedComposer({
 // (completedCount / total derived from the linked practice_sessions, D-ASG-3).
 function AssignmentList({
   assignments,
+  onOpen,
 }: {
   assignments: AssignmentView[] | null;
+  onOpen: (a: AssignmentView) => void;
 }) {
   if (assignments === null) return <p className="tut-muted">Loading…</p>;
   if (assignments.length === 0)
@@ -1242,7 +1255,22 @@ function AssignmentList({
   return (
     <div className="tut-asg-list">
       {assignments.map((a) => (
-        <div key={a.id} className="tut-asg-card">
+        // role=button (not <button>): the card's content is block-level, which
+        // a real <button> may not legally contain. Keyboard parity is explicit.
+        <div
+          key={a.id}
+          className="tut-asg-card is-openable"
+          role="button"
+          tabIndex={0}
+          aria-label={`Open assigned work: ${a.subjectName ?? a.chapterName ?? "assignment"}`}
+          onClick={() => onOpen(a)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onOpen(a);
+            }
+          }}
+        >
           <div className="tut-asg-card-head">
             <span className={`tut-asg-mode tut-asg-mode--${a.mode}`}>
               {a.mode}
@@ -1269,6 +1297,199 @@ function AssignmentList({
         </div>
       ))}
     </div>
+  );
+}
+
+// ── Slice ASG-READ: the read-only assignment work panel ────────────────────
+// Full-screen over the tutor page. Strictly inert — this is where the tutor
+// READS what the student did; marking still happens in the Assess tab. Every
+// number is backend-derived (tutor.getAssignmentWork); nothing here is computed
+// from a guess about what the student "probably" saw.
+
+type AssignmentWork = Awaited<
+  ReturnType<typeof trpc.tutor.getAssignmentWork.query>
+>;
+type WorkSubTopic = AssignmentWork["subTopics"][number];
+type WorkQuestion = WorkSubTopic["questions"][number];
+
+const WORK_STATE_LABEL: Record<WorkQuestion["state"], string> = {
+  answered: "Answered",
+  skipped: "Skipped",
+  not_reached: "Not reached",
+};
+
+function AssignmentWorkPanel({
+  studentId,
+  studentName,
+  assignment,
+  onClose,
+}: {
+  studentId: string;
+  studentName: string | null;
+  assignment: AssignmentView;
+  onClose: () => void;
+}) {
+  const [work, setWork] = useState<AssignmentWork | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    trpc.tutor.getAssignmentWork
+      .query({ studentId, assignmentId: assignment.id })
+      .then((w) => alive && setWork(w))
+      .catch((e) => alive && setError(e?.message ?? "Could not load this work."));
+    return () => {
+      alive = false;
+    };
+  }, [studentId, assignment.id]);
+
+  // Esc closes — matches the authoring fullscreen's exit affordance.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const scope = assignment.subjectName ?? assignment.chapterName ?? "Assignment";
+
+  return (
+    <div
+      className="tut-work"
+      role="dialog"
+      aria-modal="true"
+      aria-label={studentName ? `${studentName}'s assigned work` : "Assigned work"}
+    >
+      <header className="tut-work-bar">
+        <div className="tut-work-bar-id">
+          <span className={`tut-asg-mode tut-asg-mode--${assignment.mode}`}>
+            {assignment.mode}
+          </span>
+          <h3 className="tut-work-title">{scope}</h3>
+          <span className="tut-work-sub">
+            {studentName ? `${studentName} · ` : ""}read-only
+          </span>
+        </div>
+        <button className="tut-work-close" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </header>
+
+      <div className="tut-work-body">
+        {error && <p className="tut-error">{error}</p>}
+        {!work && !error && <p className="tut-muted">Loading…</p>}
+        {work?.subTopics.map((st) => (
+          <WorkSubTopicBlock key={st.subTopicId} st={st} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkSubTopicBlock({ st }: { st: WorkSubTopic }) {
+  return (
+    <section className="tut-work-st">
+      <div className="tut-work-st-head">
+        <h4 className="tut-work-st-name">{st.subTopicName}</h4>
+        <span className={`tut-work-st-status is-${st.sessionStatus}`}>
+          {st.sessionStatus === "not_started"
+            ? "Not started"
+            : st.sessionStatus === "completed"
+              ? "Completed"
+              : "In progress"}
+        </span>
+        {st.total > 0 && (
+          <span className="tut-work-st-count">
+            {st.answeredCount} answered
+            {st.skippedCount > 0 ? ` · ${st.skippedCount} skipped` : ""} · {st.total} set
+          </span>
+        )}
+      </div>
+      {/* A never-started sub_topic has NO session, so there is no served set to
+          show. We say so rather than substituting the canonical bank — what the
+          student WOULD get is not what they DID get. */}
+      {st.total === 0 ? (
+        <p className="tut-muted tut-work-empty">
+          Not started — the student hasn’t opened this yet, so there’s nothing to show.
+        </p>
+      ) : (
+        <ol className="tut-work-qs">
+          {st.questions.map((q) => (
+            <WorkQuestionRow key={q.questionId} q={q} />
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function WorkQuestionRow({ q }: { q: WorkQuestion }) {
+  return (
+    <li className={`tut-work-q is-${q.state}`}>
+      <div className="tut-work-q-head">
+        <span className="tut-work-q-n">{q.ordinal}</span>
+        <span className={`tut-work-q-state is-${q.state}`}>
+          {WORK_STATE_LABEL[q.state]}
+        </span>
+        {q.axis && <span className="tut-work-q-axis">{q.axis}</span>}
+        {q.marksAwarded != null && q.marksMax != null && (
+          <span className="tut-work-q-marks">
+            {q.marksAwarded}/{q.marksMax}
+          </span>
+        )}
+        {q.marks.map((m) => (
+          <span
+            key={m.axis}
+            className={`tut-work-q-level is-${m.source}`}
+            title={
+              m.source === "tutor"
+                ? "Tutor-corrected level"
+                : "Stage-1 (AI) level"
+            }
+          >
+            {m.axis.slice(0, 1).toUpperCase()}
+            {m.level}
+            {m.source === "tutor" ? " ✎" : ""}
+          </span>
+        ))}
+      </div>
+
+      <p className="tut-work-q-stem">
+        {q.stem ? <MathText text={q.stem} /> : <em>Question no longer available.</em>}
+      </p>
+
+      {q.state === "answered" && (
+        <div className="tut-work-a">
+          {q.answerText ? (
+            <p className="tut-work-a-text">
+              <MathText text={q.answerText} />
+            </p>
+          ) : q.answerPhotoIds.length > 0 ? (
+            <div className="tut-recall-photos">
+              {q.answerPhotoIds.map((id) => (
+                <TutorPhotoThumb key={id} imageId={id} />
+              ))}
+            </div>
+          ) : (
+            <p className="tut-work-a-text tut-muted">
+              Answered with no written text (teach-back or blank).
+            </p>
+          )}
+          <p className="tut-work-a-meta">
+            {q.answerConfidence != null && `confidence ${q.answerConfidence}/5`}
+            {/* Absence of a Stage-1 read is stated, never shown as a zero. */}
+            {q.marks.length === 0 && (
+              <span className="tut-work-unassessed"> · not assessed yet</span>
+            )}
+          </p>
+        </div>
+      )}
+
+      {q.state === "skipped" && (
+        <p className="tut-work-a-text tut-muted">
+          Skipped{q.skipReason ? ` — ${q.skipReason}` : ""}.
+        </p>
+      )}
+    </li>
   );
 }
 
@@ -2138,7 +2359,19 @@ function ObsRecall({ o }: { o: ObservationView }) {
 // full-screen lightbox on click — mirrors the student-side PhotoThumb.
 function TutorPhotoThumb({ imageId }: { imageId: string }) {
   const [open, setOpen] = useState(false);
+  // Slice ROTATE-1 (view-only): students photograph exercise books sideways, so
+  // the tutor otherwise reads a 90°-turned page. Deliberately NOT persisted —
+  // this is a viewing aid, it does not alter the stored image. It also does NOT
+  // change what the model read: Stage-1 (assessment.ts) and the student-facing
+  // feedback (answer_feedback.ts) already read these bytes at their original
+  // orientation, so straightening here helps the human, not the machine.
+  //
+  // Kept on the component rather than reset on close, so re-opening the same
+  // photo during one sitting doesn't make the tutor re-straighten it.
+  const [deg, setDeg] = useState(0);
   const src = `/practice/tutor-answer-photo/${imageId}?board=${getBoard() ?? ""}`;
+  const turn = (by: number) => setDeg((d) => (d + by + 360) % 360);
+  const quarter = deg === 90 || deg === 270;
   return (
     <>
       <button
@@ -2156,7 +2389,34 @@ function TutorPhotoThumb({ imageId }: { imageId: string }) {
           role="dialog"
           aria-label="Student's uploaded answer"
         >
-          <img src={src} alt="Student's uploaded answer" />
+          <img
+            src={src}
+            alt="Student's uploaded answer"
+            // A quarter turn swaps the image's effective width and height, but
+            // the transform does NOT change its layout box — so the vw/vh caps
+            // must swap too or a rotated portrait page overflows the viewport.
+            className={quarter ? "is-quarter" : undefined}
+            style={{ transform: `rotate(${deg}deg)` }}
+          />
+          {/* Every click in here must stopPropagation: the backdrop closes the
+              lightbox, so an un-stopped rotate click would rotate and instantly
+              close. */}
+          <div
+            className="tut-recall-lightbox-tools"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button onClick={() => turn(-90)} title="Rotate left" aria-label="Rotate left">
+              ↺
+            </button>
+            <button onClick={() => turn(90)} title="Rotate right" aria-label="Rotate right">
+              ↻
+            </button>
+            {deg !== 0 && (
+              <button onClick={() => setDeg(0)} className="tut-recall-reset" title="Reset rotation">
+                Reset
+              </button>
+            )}
+          </div>
           <button
             className="tut-recall-lightbox-close"
             onClick={() => setOpen(false)}

@@ -39,6 +39,7 @@ import {
   attempt,
   board,
   chapter,
+  observation,
   practiceSession,
   question,
   student,
@@ -52,6 +53,7 @@ import { grantRole } from "../src/services/membership";
 import {
   AssignmentNotFoundError,
   createAssignment,
+  getAssignmentWorkForTutor,
   InvalidAssignmentError,
   listAssignmentsForStudent,
   listAssignmentsForTutor,
@@ -302,8 +304,107 @@ async function main() {
     console.log("  ~ HTTP tutor.listAssignments skipped (server not running)");
   }
 
+  // ── Slice ASG-READ: the tutor's read-only work panel (legs 18-25) ────────
+  // Real evidence, not fixtures-of-fixtures: an ANSWERED attempt (with marks),
+  // a SKIPPED one, and a sub_topic the student never reached — the three states
+  // the panel has to tell apart. `sess` is P1's assigned session from leg 11.
+  const [p1Row] = await withBoard(P.id, (tx) =>
+    tx.select().from(practiceSession).where(eq(practiceSession.id, sess.sessionId)).limit(1));
+  const frozen = p1Row!.questionIds;
+
+  const [ansAttempt] = await withBoard(P.id, (tx) =>
+    tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: sess.sessionId, questionId: frozen[0]!,
+      appUserId: studentId, answerText: "because the discriminant is negative",
+      confidence: 4, timeMs: 30_000, feedback: { marksAwarded: 2, marksMax: 3 },
+    }).returning());
+  await withBoard(P.id, (tx) =>
+    tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: sess.sessionId, questionId: frozen[1]!,
+      appUserId: studentId, skipReason: "not_taught_yet",
+    }));
+  // Two Stage-1 reads on the answered attempt: one raw (AI), one tutor-corrected.
+  await withBoard(P.id, (tx) =>
+    tx.insert(observation).values([
+      {
+        boardId: P.id, studentId, subTopicId: fx.P1, questionId: frozen[0]!,
+        attemptId: ansAttempt!.id, axis: "conceptual", observationLevel: 2,
+        reasoning: "probe", source: "stage1_scorer",
+      },
+      {
+        boardId: P.id, studentId, subTopicId: fx.P1, questionId: frozen[0]!,
+        attemptId: ansAttempt!.id, axis: "procedural", observationLevel: 1,
+        tutorLevel: 3, overrideReason: "probe override", reasoning: "probe",
+        source: "stage1_scorer",
+      },
+    ]));
+
+  const work = await withBoard(P.id, (tx) =>
+    getAssignmentWorkForTutor(tx, { tutorUserId, studentId, assignmentId: inter.id }));
+  const wP1 = work.subTopics.find((s) => s.subTopicId === fx.P1);
+  const wP3 = work.subTopics.find((s) => s.subTopicId === fx.P3);
+
+  check("18. getAssignmentWork → both sub_topics, frozen composition order",
+    work.subTopics.length === 2 && work.subTopics[0]!.subTopicId === fx.P1);
+  check("19. counts: P1 total 2, 1 answered, 1 skipped",
+    wP1?.total === 2 && wP1?.answeredCount === 1 && wP1?.skippedCount === 1);
+
+  const q1 = wP1?.questions.find((q) => q.questionId === frozen[0]);
+  const q2 = wP1?.questions.find((q) => q.questionId === frozen[1]);
+  check("20. answered question carries text + confidence + the marks the student saw",
+    q1?.state === "answered" && q1?.answerText?.startsWith("because") === true &&
+    q1?.answerConfidence === 4 && q1?.marksAwarded === 2 && q1?.marksMax === 3 &&
+    q1?.ordinal === 1 && q1?.stem !== null);
+  check("21. skipped question → state 'skipped' + reason, no answer text",
+    q2?.state === "skipped" && q2?.skipReason === "not_taught_yet" && q2?.answerText === null);
+
+  // The EFFECTIVE level is what shows: a tutor correction wins and is labelled
+  // as the tutor's, so a human call can never be mistaken for the machine's.
+  const mConc = q1?.marks.find((m) => m.axis === "conceptual");
+  const mProc = q1?.marks.find((m) => m.axis === "procedural");
+  check("22. marks: AI level as-is; tutor override wins and is tagged 'tutor'",
+    mConc?.level === 2 && mConc?.source === "ai" &&
+    mProc?.level === 3 && mProc?.source === "tutor");
+
+  check("23. a sub_topic the student never reached → every question 'not_reached'",
+    wP3?.total === 2 && wP3?.answeredCount === 0 &&
+    wP3?.questions.every((q) => q.state === "not_reached") === true &&
+    wP3?.questions.every((q) => q.marks.length === 0) === true);
+
+  // A never-opened assignment has NO session, so there is no served set. total 0
+  // is the honest answer — the canonical bank is NOT substituted.
+  const blkWork = await withBoard(P.id, (tx) =>
+    getAssignmentWorkForTutor(tx, { tutorUserId, studentId, assignmentId: blocked.id }));
+  check("24. never-started assignment → sessionStatus 'not_started', total 0, no invented questions",
+    blkWork.subTopics.length === 2 &&
+    blkWork.subTopics.every((s) => s.sessionStatus === "not_started" && s.total === 0 && s.questions.length === 0));
+
+  check("25a. ownership: an unlinked student → StudentNotFoundError (guard fires first)",
+    await expectThrow(
+      () => withBoard(P.id, (tx) => getAssignmentWorkForTutor(tx, {
+        tutorUserId, studentId: student2Id, assignmentId: inter.id,
+      })),
+      StudentNotFoundError,
+    ));
+  check("25b. unknown assignmentId → AssignmentNotFoundError",
+    await expectThrow(
+      () => withBoard(P.id, (tx) => getAssignmentWorkForTutor(tx, {
+        tutorUserId, studentId, assignmentId: P.id, // a real uuid, not an assignment
+      })),
+      AssignmentNotFoundError,
+    ));
+  check("25c. RLS: getAssignmentWork under board Q → not found",
+    await expectThrow(
+      () => withBoard(Q.id, (tx) => getAssignmentWorkForTutor(tx, {
+        tutorUserId, studentId, assignmentId: inter.id,
+      })),
+      StudentNotFoundError,
+    ));
+
   // ── cleanup (FK-safe order) ──
   await withBoard(P.id, async (tx: Tx) => {
+    // observation → attempt is an FK, so observations go first.
+    await tx.delete(observation).where(eq(observation.boardId, P.id));
     await tx.delete(attempt).where(eq(attempt.boardId, P.id));
     await tx.delete(practiceSession).where(eq(practiceSession.boardId, P.id));
     await tx.delete(assignment).where(eq(assignment.boardId, P.id));
