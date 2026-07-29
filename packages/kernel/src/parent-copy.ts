@@ -217,6 +217,10 @@ export const HORIZONTAL_COPY: Record<string, { label: string; gloss: string }> =
     label: "Precision of language",
     gloss: "Says exactly what is wrong, not only that something is wrong.",
   },
+  clear_thinking: {
+    label: "Clear thinking",
+    gloss: "Knows what is being asked and what they are working towards, and can say it out loud.",
+  },
   fixed_vs_varying: {
     label: "Separating what's fixed from what varies",
     gloss: "Keeps what is given apart from what is being asked for.",

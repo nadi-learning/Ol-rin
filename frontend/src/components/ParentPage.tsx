@@ -2057,20 +2057,25 @@ function WeaknessSection({
                 )}
                 {w.note}
               </div>
-              <div
-                className={`pdash-plan${w.planAuthored ? " is-authored" : ""}`}
-              >
-                <div className="pdash-plan-label">
-                  {w.planAuthored ? "The plan" : "On the worklist"}
+              {/* The plan block renders ONLY when a human wrote one (founder,
+                  S174). It used to fall back to "On the worklist" + a generated
+                  default, which tells a parent their child is flagged and that
+                  nobody has decided anything yet — an internal queue state, on a
+                  customer-facing page. The same reasoning as S171's B8 rule:
+                  a parent sees a weakness only when a human wrote one, and the
+                  "what's being done" half is held to the same bar. */}
+              {w.planAuthored && (
+                <div className="pdash-plan is-authored">
+                  <div className="pdash-plan-label">The plan</div>
+                  <p className="pdash-plan-text">{w.planText}</p>
+                  {w.planUpdatedAt && (
+                    <div className="pdash-plan-by">
+                      — Olórin, relaying the tutor's plan ·{" "}
+                      {new Date(w.planUpdatedAt).toLocaleDateString()}
+                    </div>
+                  )}
                 </div>
-                <p className="pdash-plan-text">{w.planText}</p>
-                {w.planAuthored && w.planUpdatedAt && (
-                  <div className="pdash-plan-by">
-                    — Olórin, relaying the tutor's plan ·{" "}
-                    {new Date(w.planUpdatedAt).toLocaleDateString()}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           ))}
         </div>

@@ -174,8 +174,14 @@ type StudentIn = {
 type WeaknessIn = {
   /** What the child is working through. Renders as the note. */
   note: string;
-  /** What is being done about it. Renders as "The plan", dated. */
-  plan: string;
+  /**
+   * What is being done about it. Renders as "The plan", dated.
+   *
+   * NULL when no human has written one yet (S174) — the card then shows the
+   * note alone and the plan block does not render at all. Deliberately NOT a
+   * placeholder string: a placeholder is a sentence a parent reads.
+   */
+  plan: string | null;
 };
 
 /**
@@ -729,6 +735,25 @@ async function loadStudent(
   const authoredW = Array.isArray(s.weaknesses) ? s.weaknesses : [];
   if (authoredW.length) {
     await withBoard(b.id, async (tx) => {
+      // Replace THIS importer's own rows first (S174). Under KEEP_LIVE — the
+      // only mode prod allows — the bulk wipe above is skipped, so without this
+      // a re-run APPENDS and the parent sees the same weakness twice. That is
+      // the exact double the KEEP_LIVE comment says must not happen; mastery was
+      // covered, weaknesses were not.
+      //
+      // Scoped to `tutor_authored` on purpose: the machine origins
+      // (`stage1_cross_concept`, `stage2_synthesis`) are staff's Stage-1/2
+      // output, never rendered to a parent, and not this script's to delete.
+      const removed = await tx
+        .delete(crossConceptFlag)
+        .where(
+          and(
+            eq(crossConceptFlag.studentId, studentUserId),
+            eq(crossConceptFlag.origin, "tutor_authored"),
+          ),
+        )
+        .returning({ id: crossConceptFlag.id });
+      if (removed.length) console.log(`  weaknesses: replaced ${removed.length} prior authored row(s)`);
       for (const w of authoredW) {
         await tx.insert(crossConceptFlag).values({
           boardId: b.id,

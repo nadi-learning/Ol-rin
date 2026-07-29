@@ -72,6 +72,7 @@
     "probe:budget": "bun scripts/probe_chapter_budget.ts",
     "budget:provisional": "bun scripts/set_provisional_budgets.ts",
     "subtopic:merge": "bun scripts/merge_subtopics.ts",
+    "spine:publish": "bun scripts/publish_spine_carve.ts",
     "spine:export": "bun scripts/copy_spine.ts --export",
     "spine:import": "bun scripts/copy_spine.ts --import",
     "probe:assignment": "bun scripts/probe_assignment.ts",
