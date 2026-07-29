@@ -1916,17 +1916,26 @@ export const appRouter = router({
         }
       }),
 
-    // QA3-e-2: propose an INTERLEAVED SET of sub_topics + per-sub_topic counts from
-    // the conversation (the master-side selection for the parallel fan-out). The
-    // tutor confirms, then authorSetFromChat fans out. Interleaved is an FE policy;
+    // QA3-e-2: propose a SET of sub_topics + per-sub_topic counts from the
+    // conversation (the master-side selection for the parallel fan-out). The
+    // tutor confirms, then authorSetFromChat fans out. Which set is an FE policy;
     // the service is general (works for any chat with sub-topics in scope).
+    // COVERAGE-1: `intent` picks the selection goal — "discriminate" is the
+    // original interleaved MIX (default, so any existing caller is unchanged),
+    // "cover" authors several sub-topics of ONE chapter in parallel.
     proposeAuthoringSet: tutorProcedure
-      .input(z.object({ chatId: z.string().uuid() }))
+      .input(
+        z.object({
+          chatId: z.string().uuid(),
+          intent: z.enum(["discriminate", "cover"]).default("discriminate"),
+        }),
+      )
       .mutation(async ({ ctx, input }) => {
         try {
           return await proposeTargetSet(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             chatId: input.chatId,
+            intent: input.intent,
           });
         } catch (e) {
           if (e instanceof AuthoringChatNotFoundError) {

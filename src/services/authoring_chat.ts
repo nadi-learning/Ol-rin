@@ -1957,6 +1957,87 @@ const CLAUDE_PROPOSE_SET_FORMAT = `${PROPOSE_SET_SYSTEM}
 
 OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"count":<1-4>}],"rationale":"..."}. No prose, no fences.`;
 
+// ───────────────────────── COVERAGE-1: the second set intent ─────────────────────────
+//
+// Where the proposer above picks a CONFUSABLE MIX to DISCRIMINATE between
+// (possibly spanning chapters), this picks several sub-topics of ONE chapter to
+// build practice ACROSS it in parallel — the founder's ask: "author multiple
+// sub-topics in parallel for a chapter in the same thread".
+//
+// Deliberately a SECOND prompt, never an edit of PROPOSE_SET_SYSTEM in place:
+// re-pointing that one would silently change what interleaved authoring selects
+// for. The MECHANICS are identical (numbered list, pick-by-index so a sub-topic
+// can never be invented — M15, returns {picks,rationale}), so the resolver below,
+// the consent card and authorSetFromChat consume this with zero other changes.
+// Only the selection INTENT and the per-sub-topic count range differ.
+export type ProposeSetIntent = "discriminate" | "cover";
+
+// Per-sub-topic counts. Interleaved sets are deliberately SHORT (a mix is for
+// contrast, not volume). A COVERAGE set takes blocked mode's own existing range
+// — PROPOSE_SYSTEM offers 1–8 default 3 — because coverage authoring IS blocked
+// authoring with several sub-topics at once: the same tutor, on the same chapter,
+// must not get a narrower range for asking for more of them in one go.
+const PROPOSE_SET_COUNT_MAX = 4;
+const PROPOSE_COVERAGE_COUNT_MAX = 8;
+// Logged distinctly so ai_call_log can tell the two intents apart (free-text col).
+const PROPOSE_COVERAGE_ENDPOINT = "authoring.proposeCoverageSet";
+
+/**
+ * The per-sub-topic count rule, as a pure function so it can be asserted WITHOUT
+ * an AI call. Both intents live here together on purpose: they are a pair, and a
+ * probe that can only observe whatever the model happened to propose passes
+ * vacuously whenever that number is small (it was 3 the first time this ran).
+ */
+export function clampSetCount(count: number, intent: ProposeSetIntent = "discriminate"): number {
+  const max = intent === "cover" ? PROPOSE_COVERAGE_COUNT_MAX : PROPOSE_SET_COUNT_MAX;
+  return Math.min(Math.max(count, 1), max);
+}
+
+// NOTE: the set-size cap is PROPOSE_SET_MAX (5) for BOTH intents — founder ruled
+// it unchanged (2026-07-29: "keep it 5 only then don't change it").
+const PROPOSE_COVERAGE_SYSTEM = `You help a tutor author questions for SEVERAL sub-topics of ONE chapter at once — a COVERAGE set, so the tutor can build practice across the chapter in parallel instead of one sub-topic at a time. This is NOT an interleaved/discrimination mix: the sub-topics do NOT need to be confusable, and you are working within a single chapter.
+
+You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics in the chosen chapter.
+
+Pick the sub-topics to author, in this order of preference:
+1. Any the tutor has NAMED or clearly pointed at in the conversation — honour those first.
+2. Where the tutor has not been specific, fill toward the genuine weaknesses and the least-covered sub-topics (thin or no observations, lower mastery).
+
+Pick 2–${PROPOSE_SET_MAX} sub-topics (never more than ${PROPOSE_SET_MAX}). For EACH, choose a question count (1–${PROPOSE_COVERAGE_COUNT_MAX}; 3 is a sensible default — the tutor can adjust before authoring). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,count}], rationale} where rationale is one sentence on why THESE sub-topics.`;
+
+const geminiProposeCoverageSchema = {
+  type: Type.OBJECT,
+  properties: {
+    picks: {
+      type: Type.ARRAY,
+      description: `2–${PROPOSE_SET_MAX} sub-topics of this chapter to author in parallel`,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          choice: {
+            type: Type.INTEGER,
+            description: "the 1-based number of the sub-topic, from the list",
+          },
+          count: {
+            type: Type.INTEGER,
+            description: `how many questions for this sub-topic (1–${PROPOSE_COVERAGE_COUNT_MAX}); 3 is a sensible default`,
+          },
+        },
+        required: ["choice", "count"],
+      },
+    },
+    rationale: {
+      type: Type.STRING,
+      description: "one sentence: why THESE sub-topics of the chapter",
+    },
+  },
+  required: ["picks", "rationale"],
+} as const;
+
+const CLAUDE_PROPOSE_COVERAGE_FORMAT = `${PROPOSE_COVERAGE_SYSTEM}
+
+OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"count":<1-${PROPOSE_COVERAGE_COUNT_MAX}>}],"rationale":"..."}. No prose, no fences.`;
+
 export type ProposeSetPick = {
   subTopicId: string;
   subTopicName: string;
@@ -1972,17 +2053,24 @@ export type ProposeSetResult = {
 };
 
 /**
- * Propose an interleaved SET of sub-topics + per-sub-topic counts from the
- * conversation + grounding (QA3-e-2). Like proposeTarget, the model picks BY
- * NUMBER from the chat's chapter allowlist (index, never a raw UUID — M15), so
- * every pick is a valid in-scope anchor. Dedups, clamps counts (1–4) and the set
- * size (≤${PROPOSE_SET_MAX}). Reads-only/re-runnable (fork 4 preserved). The tutor
+ * Propose a SET of sub-topics + per-sub-topic counts from the conversation +
+ * grounding (QA3-e-2). Like proposeTarget, the model picks BY NUMBER from the
+ * chat's chapter allowlist (index, never a raw UUID — M15), so every pick is a
+ * valid in-scope anchor. Dedups, clamps counts and the set size (≤PROPOSE_SET_MAX,
+ * 5 for both intents). Reads-only/re-runnable (fork 4 preserved). The tutor
  * confirms; authorSetFromChat then fans out.
+ *
+ * TWO INTENTS (COVERAGE-1), differing ONLY in selection goal + count range:
+ *   "discriminate" (default) — the interleaved MIX, counts 1–4. Unchanged.
+ *   "cover"                  — several sub-topics of ONE chapter, counts 1–8.
+ * The default keeps every existing caller on the original behaviour.
  */
 export async function proposeTargetSet(
   tx: Tx,
-  args: { tutorUserId: string; chatId: string },
+  args: { tutorUserId: string; chatId: string; intent?: ProposeSetIntent },
 ): Promise<ProposeSetResult> {
+  const intent: ProposeSetIntent = args.intent ?? "discriminate";
+  const cover = intent === "cover";
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
   const scopeChapterIds = chatChapterIds(row);
   if (scopeChapterIds.length === 0) {
@@ -2023,30 +2111,43 @@ export async function proposeTargetSet(
     )
     .join("\n");
 
+  // The prompt BODY carries the intent too — swapping only the system prompt
+  // would leave the model reading "author a coverage set" over "as an interleaved
+  // mix", i.e. two contradictory instructions in one call.
   const prompt = `${grounding}
 
 ===== CONVERSATION SO FAR =====
-${convo || "(no conversation yet — use the grounding to pick a confusable mix of the student's weakest areas)"}
+${
+  convo ||
+  (cover
+    ? "(no conversation yet — use the grounding to pick the chapter's least-covered sub-topics and the student's weakest areas within it)"
+    : "(no conversation yet — use the grounding to pick a confusable mix of the student's weakest areas)")
+}
 ===== END CONVERSATION =====
 
-SUB-TOPICS ACROSS THESE CHAPTERS (choose 2–${PROPOSE_SET_MAX} by their numbers, as an interleaved mix):
+${
+  cover
+    ? `SUB-TOPICS IN THIS CHAPTER (choose 2–${PROPOSE_SET_MAX} by their numbers, to author in parallel):`
+    : `SUB-TOPICS ACROSS THESE CHAPTERS (choose 2–${PROPOSE_SET_MAX} by their numbers, as an interleaved mix):`
+}
 ${list}
 
-Assemble the interleaved set now. Return {picks:[{choice,count}], rationale}.`;
+Assemble the ${cover ? "coverage" : "interleaved"} set now. Return {picks:[{choice,count}], rationale}.`;
 
   const parsed = await runVendoredJson<z.infer<typeof proposeSetResultSchema>>({
     vendor: row.vendor as VendorChoice,
-    geminiSystem: PROPOSE_SET_SYSTEM,
-    geminiResponseSchema: geminiProposeSetSchema,
-    claudeSystem: CLAUDE_PROPOSE_SET_FORMAT,
+    geminiSystem: cover ? PROPOSE_COVERAGE_SYSTEM : PROPOSE_SET_SYSTEM,
+    geminiResponseSchema: cover ? geminiProposeCoverageSchema : geminiProposeSetSchema,
+    claudeSystem: cover ? CLAUDE_PROPOSE_COVERAGE_FORMAT : CLAUDE_PROPOSE_SET_FORMAT,
     prompt,
     parse: (raw) => proposeSetResultSchema.parse(raw),
-    label: `propose-set:${args.chatId}`,
-    endpoint: PROPOSE_SET_ENDPOINT,
+    label: `${cover ? "propose-coverage" : "propose-set"}:${args.chatId}`,
+    endpoint: cover ? PROPOSE_COVERAGE_ENDPOINT : PROPOSE_SET_ENDPOINT,
   });
 
-  // Clamp each choice onto a real allowlist entry, clamp counts (1–4), DEDUP by
-  // sub_topic (a repeated number collapses), and cap the set size.
+  // Clamp each choice onto a real allowlist entry, clamp counts (intent-aware:
+  // 1–4 interleaved, 1–8 coverage), DEDUP by sub_topic (a repeated number
+  // collapses), and cap the set size.
   const seen = new Set<string>();
   const picks: ProposeSetPick[] = [];
   for (const p of parsed.picks) {
@@ -2059,7 +2160,7 @@ Assemble the interleaved set now. Return {picks:[{choice,count}], rationale}.`;
       subTopicName: chosen.subTopicName,
       topicName: chosen.topicName,
       chapterName: chosen.chapterName,
-      count: Math.min(Math.max(p.count, 1), 4),
+      count: clampSetCount(p.count, intent),
     });
     if (picks.length >= PROPOSE_SET_MAX) break;
   }
@@ -2072,7 +2173,7 @@ Assemble the interleaved set now. Return {picks:[{choice,count}], rationale}.`;
       subTopicName: first.subTopicName,
       topicName: first.topicName,
       chapterName: first.chapterName,
-      count: 2,
+      count: cover ? 3 : 2,
     });
   }
 

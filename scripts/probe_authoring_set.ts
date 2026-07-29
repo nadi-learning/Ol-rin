@@ -14,6 +14,16 @@
  *     fan-out authors drafts across MULTIPLE distinct sub_topics, one worker row
  *     each, all persisted status='draft' + private, failures empty, wall-time ~ a
  *     single worker (parallel, not summed).
+ *
+ * COVERAGE-1 extends it to the SECOND intent — several sub-topics of ONE chapter
+ * authored in parallel from a BLOCKED chat:
+ *   FIRM — the blocked chat's single-chapter scope guard rejects a target from
+ *     another chapter (the fan-out from blocked mode is a genuinely new path);
+ *     and the FE gate is off the toggle, not the chat mode (M43: a server-side
+ *     probe went green once while the client broke the very rule it proved).
+ *   SOFT — intent:"cover" proposes only sub-topics of the ONE chapter, with counts
+ *     in 1..8 (blocked mode's range) where intent:"discriminate" stays 1..4; the
+ *     fan-out from a BLOCKED chat authors across several of its sub-topics.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
@@ -35,6 +45,7 @@ import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
 import {
   authorSetFromChat,
+  clampSetCount,
   proposeTargetSet,
   startChat,
   SubTopicNotFoundError,
@@ -159,6 +170,99 @@ async function main() {
   check("RLS: authoring_worker visible under its own board (P)", rlsUnderP.length === 1);
   await rows(P.id, (tx) => tx.delete(authoringWorker).where(eq(authoringWorker.id, rlsWorker!.id))); // clear the manual row
 
+  // ── COVERAGE-1 · the BLOCKED chat (one chapter) that now also fans out ──
+  const blocked = await rows(P.id, (tx) =>
+    startChat(tx, {
+      boardId: P.id,
+      tutorUserId: tut.id,
+      studentId: stu.id,
+      vendor: "gemini_api",
+      mode: "blocked",
+      chapterIds: [fx.chA.chapterId],
+    }),
+  );
+  check(
+    "COVERAGE-1: blocked chat is scoped to exactly ONE chapter",
+    blocked.mode === "blocked" && blocked.chapterIds.length === 1,
+  );
+
+  // FIRM 3: the scope guard holds from BLOCKED mode too — chB is a real, valid
+  // sub_topic on this board, just not in THIS chat's chapter. Fail-fast, nothing
+  // authored. (The interleaved guard above proves the multi-chapter case; this is
+  // the one-chapter case the coverage flow actually runs in.)
+  let blockedGuardThrew = false;
+  try {
+    await rows(P.id, (tx) =>
+      authorSetFromChat(tx, {
+        boardId: P.id,
+        tutorUserId: tut.id,
+        chatId: blocked.chatId,
+        targets: [
+          { subTopicId: fx.chA.subIds[0]!, count: 1 },
+          { subTopicId: fx.chB.subIds[0]!, count: 1 }, // valid sub_topic, wrong chapter
+        ],
+      }),
+    );
+  } catch (e) {
+    blockedGuardThrew = e instanceof SubTopicNotFoundError;
+  }
+  check(
+    "COVERAGE-1: blocked scope guard rejects a target from another chapter",
+    blockedGuardThrew,
+  );
+  const afterBlockedGuard = await rows(P.id, (tx) =>
+    tx.select().from(authoringWorker).where(eq(authoringWorker.chatId, blocked.chatId)),
+  );
+  check(
+    "COVERAGE-1: blocked scope guard authored NOTHING on rejection",
+    afterBlockedGuard.length === 0,
+  );
+
+  // ── FIRM 4: the count rule, deterministically (no AI) ──────────────────────
+  // The soft legs below can only observe whatever the model proposed; when that
+  // is a small number they pass under EITHER rule. This asserts the rule itself,
+  // both halves together, so widening coverage cannot silently widen interleaved
+  // and a revert to the old flat clamp goes red here first.
+  check(
+    "COVERAGE-1: count rule — cover keeps 6, discriminate cuts 6→4",
+    clampSetCount(6, "cover") === 6 && clampSetCount(6, "discriminate") === 4,
+  );
+  check(
+    "COVERAGE-1: count rule — ceilings are 8 (cover) / 4 (discriminate), floor 1 for both",
+    clampSetCount(99, "cover") === 8 &&
+      clampSetCount(99, "discriminate") === 4 &&
+      clampSetCount(0, "cover") === 1 &&
+      clampSetCount(-3, "discriminate") === 1,
+  );
+  check(
+    "COVERAGE-1: count rule — the DEFAULT intent is the unchanged interleaved one",
+    clampSetCount(6) === 4,
+  );
+
+  // ── FIRM 5: the CLIENT gate (M43) ──────────────────────────────────────────
+  // The whole ask is that the set entry stops being interleaved-only. A service
+  // probe cannot see that: the gate lives in the FE. Assert the source directly —
+  // the old gate LINE is gone and the toggle gate is present. The old gate is
+  // matched as a full JSX line (`{chat.mode === "interleaved" && (`) so the mode
+  // ternaries that legitimately remain — button copy, card heading, the intent
+  // sent to the endpoint — can't hold this leg green (M79: a prefix match is not
+  // an existence proof).
+  const tutorPageSrc = await Bun.file(
+    new URL("../frontend/src/components/TutorPage.tsx", import.meta.url).pathname,
+  ).text();
+  check(
+    "COVERAGE-1 (FE): the set entry is NO LONGER gated on `chat.mode === \"interleaved\"`",
+    !tutorPageSrc.includes('{chat.mode === "interleaved" && ('),
+  );
+  check(
+    "COVERAGE-1 (FE): the set entry IS gated on the toggle (`{setModeOn && (`)",
+    tutorPageSrc.includes("{setModeOn && ("),
+  );
+  check(
+    "COVERAGE-1 (FE): a blocked chat sends intent 'cover' to the proposer",
+    /intent:\s*chat\.mode === "interleaved" \? "discriminate" : "cover"/.test(tutorPageSrc),
+  );
+
   const geminiConfigured = !!env.GEMINI_API_KEY;
   if (!geminiConfigured) console.log("  ~ real-Gemini legs SKIPPED (GEMINI_API_KEY unset)");
 
@@ -170,7 +274,10 @@ async function main() {
     check("proposeSet: ≥1 pick", proposed.picks.length >= 1);
     check("proposeSet: every pick is IN the interleaved allowlist", proposed.picks.every((p) => allIds.has(p.subTopicId)));
     check("proposeSet: no duplicate sub_topic in the set", new Set(proposed.picks.map((p) => p.subTopicId)).size === proposed.picks.length);
-    check("proposeSet: every count in 1..4", proposed.picks.every((p) => p.count >= 1 && p.count <= 4));
+    // Intent-specific (COVERAGE-1): the interleaved MIX stays deliberately short
+    // per sub-topic. Its coverage counterpart (1..8) is asserted further down —
+    // these two legs are a pair; changing one without the other is the bug.
+    check("proposeSet[discriminate]: every count in 1..4", proposed.picks.every((p) => p.count >= 1 && p.count <= 4));
     const chapters = new Set(proposed.picks.map((p) => p.chapterName));
     soft("proposeSet picks", { n: proposed.picks.length, chapters: [...chapters], counts: proposed.picks.map((p) => p.count) });
     check("proposeSet: set size respects the cap (≤5)", proposed.picks.length <= 5);
@@ -214,6 +321,87 @@ async function main() {
     check("fan-out: drafts private to the student", drafts.every((d) => d.targetStudentId === stu.id));
     check("fan-out: drafts span BOTH sub_topics (multi-target review)", new Set(drafts.map((d) => d.subTopicId)).size === targets.length);
     check("fan-out: NONE approved (no question reaches a student)", drafts.every((d) => d.status === "draft"));
+  }
+
+  // ── SOFT (real Gemini) · COVERAGE-1: intent:"cover" from the BLOCKED chat ──
+  if (geminiConfigured) {
+    const covered = await rows(P.id, (tx) =>
+      proposeTargetSet(tx, { tutorUserId: tut.id, chatId: blocked.chatId, intent: "cover" }),
+    );
+    const chAIds = new Set(fx.chA.subIds);
+    soft("coverage picks", {
+      n: covered.picks.length,
+      chapters: [...new Set(covered.picks.map((p) => p.chapterName))],
+      counts: covered.picks.map((p) => p.count),
+    });
+    check("proposeSet[cover]: ≥1 pick", covered.picks.length >= 1);
+    check(
+      "proposeSet[cover]: every pick is a sub-topic of the ONE chapter in scope",
+      covered.picks.every((p) => chAIds.has(p.subTopicId)),
+    );
+    check(
+      "proposeSet[cover]: no duplicate sub_topic",
+      new Set(covered.picks.map((p) => p.subTopicId)).size === covered.picks.length,
+    );
+    // The pair to the 1..4 leg above: coverage takes blocked mode's OWN range.
+    // A regression to the flat clamp shows up here as a count that can never
+    // exceed 4 — so this leg is only meaningful alongside a soft print of the
+    // actual counts (above), which is why both are here.
+    check(
+      "proposeSet[cover]: every count in 1..8 (blocked mode's range, not the interleaved 1..4)",
+      covered.picks.every((p) => p.count >= 1 && p.count <= 8),
+    );
+    check("proposeSet[cover]: set size respects the cap (≤5, unchanged)", covered.picks.length <= 5);
+  }
+
+  // ── SOFT (real Gemini) · COVERAGE-1: the fan-out FROM A BLOCKED CHAT ──
+  // The actual ask — several sub-topics of one chapter, authored in parallel, in
+  // the normal blocked flow. This path had never been exercised: every prior
+  // fan-out ran from an interleaved chat.
+  if (geminiConfigured) {
+    const covTargets = [
+      { subTopicId: fx.chA.subIds[0]!, count: 1 },
+      { subTopicId: fx.chA.subIds[1]!, count: 1 },
+    ];
+    const res = await rows(P.id, (tx) =>
+      authorSetFromChat(tx, {
+        boardId: P.id,
+        tutorUserId: tut.id,
+        chatId: blocked.chatId,
+        targets: covTargets,
+      }),
+    );
+    check("coverage fan-out: a group per target succeeded", res.groups.length === covTargets.length);
+    check("coverage fan-out: no failures on a clean run", res.failures.length === 0);
+    check(
+      "coverage fan-out: groups span BOTH sub_topics of the chapter",
+      new Set(res.groups.map((g) => g.subTopicId)).size === covTargets.length,
+    );
+    check(
+      "coverage fan-out: every group is in the SAME chapter",
+      new Set(res.groups.map((g) => g.chapterName)).size === 1,
+    );
+    check("coverage fan-out: every group returned ≥1 draft", res.groups.every((g) => g.drafts.length >= 1));
+
+    // chA.subIds[1] is touched by NO earlier leg — drafts there prove the blocked
+    // fan-out really persisted, rather than the assertion reading the interleaved
+    // run's rows.
+    const freshDrafts = await rows(P.id, (tx) =>
+      tx
+        .select()
+        .from(question)
+        .where(and(eq(question.boardId, P.id), eq(question.subTopicId, fx.chA.subIds[1]!), eq(question.status, "draft"))),
+    );
+    check("coverage fan-out: drafts persisted on a sub_topic no other leg authored", freshDrafts.length >= 1);
+    check("coverage fan-out: those drafts are private to the student", freshDrafts.every((d) => d.targetStudentId === stu.id));
+
+    const covWorkers = await rows(P.id, (tx) =>
+      tx.select().from(authoringWorker).where(eq(authoringWorker.chatId, blocked.chatId)),
+    );
+    check(
+      "coverage fan-out: one authoring_worker row per sub_topic, under the BLOCKED chat",
+      covWorkers.length === covTargets.length,
+    );
   }
 
   // ── HTTP: both new procedures require a session → 401 ──

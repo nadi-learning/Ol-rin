@@ -1478,11 +1478,15 @@
   font-style: italic;
 }
 
+/* COMPOSER-1: a two-ROW composer — the message on top, its controls beneath —
+   rather than one row of everything. Four controls beside the input had stopped
+   being readable once COVERAGE-1 added the fourth. */
 .tut-chat-inputbar {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 8px 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
@@ -1492,17 +1496,120 @@
   flex: none;
 }
 .tut-chat-input {
-  flex: 1;
+  width: 100%;
   border: none;
   outline: none;
   resize: none;
   background: transparent;
   font: inherit;
   font-size: 15px;
+  /* EXPLICIT — the auto-grow reads this back via getComputedStyle to size four
+     lines. `normal` would parse to NaN. The height CEILING is owned by that JS,
+     deliberately not duplicated here: two ceilings drift. */
   line-height: 1.5;
-  max-height: 140px;
   color: var(--ink);
   padding: 6px 4px;
+}
+.tut-chat-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tut-chat-spacer {
+  flex: 1;
+}
+
+/* COMPOSER-1: the options menu — the two suggest ACTIONS, then the plan-first
+   PREFERENCE under a divider. */
+.tut-chat-opts {
+  position: relative;
+  flex: none;
+}
+.tut-chat-opts-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.tut-chat-opts-trigger:hover:not(:disabled),
+.tut-chat-opts-trigger.is-open {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.tut-chat-opts-trigger:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.tut-chat-opts-caret {
+  font-size: 11px;
+  line-height: 1;
+}
+.tut-chat-opts-menu {
+  position: absolute;
+  right: 0;
+  /* Opens UPWARD: the composer sits at the bottom of the column, so a downward
+     menu would open off-screen. */
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  min-width: 300px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: 0 10px 30px rgba(20, 30, 60, 0.16);
+}
+.tut-chat-opts-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 9px 30px 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tut-chat-opts-item:hover:not(:disabled) {
+  background: var(--surface-sunk);
+}
+.tut-chat-opts-item:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.tut-chat-opts-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tut-chat-opts-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+.tut-chat-opts-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+.tut-chat-opts-divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
 }
 .tut-chat-send {
   flex: none;
@@ -1860,6 +1967,17 @@
 .tut-chat-planfirst:has(input:disabled) {
   opacity: 0.5;
   cursor: default;
+}
+
+/* COVERAGE-1: the one-vs-several toggle, in the input bar beside the trigger it
+   modifies. The launch modal's control, sized down for the bar — a size modifier,
+   not a new component. */
+.tut-chat-settoggle {
+  flex: none;
+}
+.tut-chat-settoggle .tut-chat-vendoropt {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 /* QA3-e-2: the interleaved SET consent card (a mix of sub-topics + per-sub-topic

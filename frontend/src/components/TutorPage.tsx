@@ -3152,6 +3152,64 @@ function AuthorChat({
     AuthorSetResult["failures"] | null
   >(null);
 
+  // COVERAGE-1: does this chat author ONE sub-topic at a time, or SEVERAL in
+  // parallel? A toggle, not conversational intent-detection (founder, 2026-07-29:
+  // "lets not make it complicate in chat give a toggle option") — the tutor says
+  // what they want with a control, not by phrasing.
+  //
+  // Derived from the chat on open/resume rather than persisted: interleaved has
+  // always offered a set, so it stays ON there (a tutor doesn't lose a button they
+  // have today); blocked starts on the single flow and the tutor turns it on. It's
+  // a choice for this sitting, not a property of the chat — and because it
+  // re-derives on every open, navigating away and back is not lossy.
+  const [setModeOn, setSetModeOn] = useState(false);
+  useEffect(() => {
+    setSetModeOn(chat?.mode === "interleaved");
+  }, [chat?.chatId, chat?.mode]);
+
+  // COMPOSER-1: the actions + the plan-first preference now live in a menu rather
+  // than side by side in the bar (founder, 2026-07-29) — four controls in one row
+  // had stopped being readable once COVERAGE-1 added the fourth.
+  const [optsOpen, setOptsOpen] = useState(false);
+  const optsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!optsOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (optsRef.current && !optsRef.current.contains(e.target as Node)) setOptsOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOptsOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [optsOpen]);
+
+  // COMPOSER-1: the input grows with the message up to FOUR lines, then holds that
+  // height and scrolls inside itself. Measured from the element's own computed
+  // line-height rather than a hardcoded row height, so it stays correct if the
+  // type scale changes; `height:auto` first, or scrollHeight reports the CURRENT
+  // height and the box can only ever grow.
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const cs = getComputedStyle(el);
+    // `line-height: normal` parses to NaN — the CSS sets an explicit one, and this
+    // falls back rather than collapsing the box to zero if that ever changes.
+    const lineHeight = parseFloat(cs.lineHeight) || 20;
+    const chrome =
+      parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) +
+      parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    const max = lineHeight * 4 + chrome;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+  }, [input]);
+
   // Drafts (the structured authoring output the tutor edits + saves).
   const [target, setTarget] = useState<Target | null>(null);
   const [authoring, setAuthoring] = useState(false);
@@ -3664,8 +3722,11 @@ function AuthorChat({
       .finally(() => setAuthoring(false));
   }
 
-  // QA3-e-2: ask the AI to propose an INTERLEAVED SET (a mix of sub-topics + counts)
-  // from the conversation + grounding. Interleaved mode only. The tutor confirms.
+  // QA3-e-2: ask the AI to propose a SET of sub-topics + counts from the
+  // conversation + grounding. The tutor confirms. COVERAGE-1: the chat's MODE
+  // picks the intent — interleaved asks for a confusable mix to discriminate
+  // between, blocked asks for coverage across the one chapter it's grounded in.
+  // The toggle decides one-vs-many; the mode decides which many.
   function proposeSet() {
     if (!chat || proposingSet) return;
     setError(null);
@@ -3673,7 +3734,10 @@ function AuthorChat({
     setProposingSet(true);
     pinBoard(); // BOARD-PIN
     trpc.tutor.proposeAuthoringSet
-      .mutate({ chatId: chat.chatId })
+      .mutate({
+        chatId: chat.chatId,
+        intent: chat.mode === "interleaved" ? "discriminate" : "cover",
+      })
       .then((p) => {
         setProposalSet(p);
         setSetCounts(
@@ -4464,12 +4528,17 @@ function AuthorChat({
           </div>
         )}
 
-        {/* Consent card — the AI proposes an interleaved SET (QA3-e-2); the tutor
-            edits per-sub-topic counts + confirms, then a parallel fan-out authors. */}
+        {/* Consent card — the AI proposes a SET (QA3-e-2); the tutor edits
+            per-sub-topic counts + confirms, then a parallel fan-out authors. Never
+            gated on mode: it renders off `proposalSet`, so COVERAGE-1 reuses it
+            in blocked chats with only its heading changed. */}
         {proposalSet && (
           <div className="tut-chat-consent tut-chat-consent--set">
             <div className="tut-chat-consent-head">
-              Suggested interleaved set ({proposalSet.picks.length} sub-topics)
+              {chat.mode === "interleaved"
+                ? "Suggested interleaved set"
+                : "Suggested sub-topics to author"}{" "}
+              ({proposalSet.picks.length} sub-topics)
             </div>
             <p className="tut-chat-consent-why">{proposalSet.rationale}</p>
             <div className="tut-chat-set-picks">
@@ -4678,6 +4747,7 @@ function AuthorChat({
           bubble can't hide behind it (D-AUTHUI-2). */}
       <div className="tut-chat-inputbar">
         <textarea
+          ref={inputRef}
           className="tut-chat-input"
           rows={1}
           placeholder="Type your message…"
@@ -4690,56 +4760,158 @@ function AuthorChat({
             }
           }}
         />
-        {/* TWOWAY-1 — the SKIP. Plan-first is the default: a go-ahead makes the
-            worker state its intent and wait. Unchecking it restores the pre-slice
-            behaviour (straight to drafting) for a tutor who just wants questions.
-            Deliberately sits next to the trigger it modifies, and resets to ON on a
-            refresh — a skip should be a decision each time, not a sticky mode. */}
-        <label
-          className="tut-chat-planfirst"
-          title="Plan first: the worker shows you what it intends to write, and waits for your go-ahead. Uncheck to draft straight away."
-        >
-          <input
-            type="checkbox"
-            checked={planFirst}
-            onChange={(e) => setPlanFirst(e.target.checked)}
-            disabled={planning || drafting || !!plan}
-          />
-          <span>Plan first</span>
-        </label>
-        <button
-          className="tut-chat-suggest"
-          onClick={propose}
-          disabled={proposing || authoring || drafting || planning || !!proposal || !!plan}
-          title="Ask the AI to propose a sub-topic + count to author for"
-        >
-          {proposing ? "Thinking…" : "Suggest what to work on"}
-        </button>
-        {/* QA3-e-2: the interleaved fan-out entry — only in interleaved mode (a set
-            spans the chat's chosen chapters). Blocked chats keep the single flow. */}
-        {chat.mode === "interleaved" && (
-          <button
-            className="tut-chat-suggest"
-            onClick={proposeSet}
-            disabled={proposingSet || authoringSet || !!proposalSet}
-            title="Ask the AI to propose an interleaved MIX of sub-topics to author across the chosen chapters"
+        {/* COMPOSER-1: the controls row, beneath the input rather than beside it.
+            LEFT — the one-vs-several segmented toggle, the only control kept in
+            plain sight because it changes what the other controls MEAN.
+            RIGHT — everything else, behind one menu. */}
+        <div className="tut-chat-controls">
+          {/* COVERAGE-1: one-at-a-time vs several-in-parallel. Reuses the existing
+              vendor-toggle markup — no new component kind (founder: "don't want to
+              introduce new component as check box an dall"). Locked while a set is
+              in flight so the label can't contradict what's actually running. */}
+          <div
+            className="tut-chat-vendortoggle tut-chat-settoggle"
+            role="tablist"
+            aria-label="How many sub-topics to author at once"
+            title={
+              chat.mode === "interleaved"
+                ? "One sub-topic at a time, or a mix of several authored in parallel."
+                : "One sub-topic at a time, or several sub-topics of this chapter authored in parallel."
+            }
           >
-            {proposingSet ? "Thinking…" : "Suggest an interleaved set"}
+            {(
+              [
+                [false, "One"],
+                [true, "Several"],
+              ] as const
+            ).map(([on, label]) => (
+              <button
+                key={label}
+                role="tab"
+                aria-selected={setModeOn === on}
+                className={`tut-chat-vendoropt${setModeOn === on ? " is-on" : ""}`}
+                onClick={() => setSetModeOn(on)}
+                disabled={proposingSet || authoringSet || !!proposalSet}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="tut-chat-spacer" />
+
+          {/* The options menu: the two suggest ACTIONS, then the plan-first
+              PREFERENCE below a divider. Grouped, not mixed — they answer
+              different questions ("do this now" vs "keep doing this"). */}
+          <div className="tut-chat-opts" ref={optsRef}>
+            <button
+              type="button"
+              className={`tut-chat-opts-trigger${optsOpen ? " is-open" : ""}`}
+              aria-expanded={optsOpen}
+              aria-haspopup="menu"
+              onClick={() => setOptsOpen((o) => !o)}
+              disabled={proposing || proposingSet}
+              title="Suggestions and authoring preferences"
+            >
+              <span>{proposing || proposingSet ? "Thinking…" : "Options"}</span>
+              <span className="tut-chat-opts-caret" aria-hidden>
+                ⌄
+              </span>
+            </button>
+            {optsOpen && (
+              <div className="tut-chat-opts-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="tut-chat-opts-item"
+                  onClick={() => {
+                    setOptsOpen(false);
+                    propose();
+                  }}
+                  disabled={
+                    proposing || authoring || drafting || planning || !!proposal || !!plan
+                  }
+                >
+                  <span className="tut-chat-opts-label">Suggest what to work on</span>
+                  <span className="tut-chat-opts-sub">
+                    One sub-topic + a count, picked from this student's grounding
+                  </span>
+                </button>
+                {/* QA3-e-2 → COVERAGE-1: the fan-out entry. Was gated on the chat's
+                    mode; now on the toggle, so a BLOCKED chat can author several
+                    sub-topics of its one chapter. The mode still decides WHICH set. */}
+                {setModeOn && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="tut-chat-opts-item"
+                    onClick={() => {
+                      setOptsOpen(false);
+                      proposeSet();
+                    }}
+                    disabled={proposingSet || authoringSet || !!proposalSet}
+                  >
+                    <span className="tut-chat-opts-label">
+                      {chat.mode === "interleaved"
+                        ? "Suggest an interleaved set"
+                        : "Suggest sub-topics to cover"}
+                    </span>
+                    <span className="tut-chat-opts-sub">
+                      {chat.mode === "interleaved"
+                        ? "A confusable MIX across the chosen chapters, authored in parallel"
+                        : "Several sub-topics of this chapter, authored in parallel"}
+                    </span>
+                  </button>
+                )}
+
+                <div className="tut-chat-opts-divider" role="separator" />
+
+                {/* TWOWAY-1 — the SKIP, now a menu row. Plan-first is the default:
+                    a go-ahead makes the worker state its intent and wait. Turning
+                    it off restores the pre-slice behaviour (straight to drafting).
+                    Resets to ON on a refresh — a skip should be a decision each
+                    time, not a sticky mode.
+                    DISABLED under "Several": the set fan-out has never had a plan
+                    gate, so a ✓ here would promise a gate that will not appear.
+                    Says so rather than hiding, or the row would just vanish. */}
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={planFirst && !setModeOn}
+                  className="tut-chat-opts-item"
+                  onClick={() => setPlanFirst(!planFirst)}
+                  disabled={planning || drafting || !!plan || setModeOn}
+                >
+                  <span className="tut-chat-opts-label">Plan first</span>
+                  <span className="tut-chat-opts-sub">
+                    {setModeOn
+                      ? "Not used when authoring several — a set drafts straight away"
+                      : "The worker states what it intends to write, and waits for your go-ahead"}
+                  </span>
+                  {planFirst && !setModeOn && (
+                    <span className="tut-chat-opts-check" aria-hidden>
+                      ✓
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            className="tut-chat-send"
+            onClick={send}
+            disabled={sending || !input.trim() || planning || drafting || !!plan}
+            aria-label="Send"
+            title={
+              plan
+                ? "Answer the plan above first — approve it, amend it, or dismiss it"
+                : "Send"
+            }
+          >
+            ➤
           </button>
-        )}
-        <button
-          className="tut-chat-send"
-          onClick={send}
-          disabled={sending || !input.trim() || planning || drafting || !!plan}
-          aria-label="Send"
-          title={
-            plan
-              ? "Answer the plan above first — approve it, amend it, or dismiss it"
-              : "Send"
-          }
-        >
-          ➤
-        </button>
+        </div>
       </div>
         </div>
       </div>
