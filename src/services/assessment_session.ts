@@ -43,6 +43,7 @@ import {
 import {
   type Stage2Draft,
   type Stage2DraftResult,
+  draftStage2,
   finalizeStage2,
   gatherStage2Input,
   normalizeDate,
@@ -80,6 +81,14 @@ export class NothingToAssessError extends Error {
   constructor() {
     super("no pending observations to assess");
     this.name = "NothingToAssessError";
+  }
+}
+
+export class SubTopicNotInSittingError extends Error {
+  readonly code = "SUBTOPIC_NOT_IN_SITTING";
+  constructor(subTopicId: string, sessionId: string) {
+    super(`sub_topic ${subTopicId} is not part of assessment_session ${sessionId}`);
+    this.name = "SubTopicNotInSittingError";
   }
 }
 
@@ -400,6 +409,79 @@ export async function openAssessmentSession(
       messages: [],
       status: "open",
     })
+    .returning();
+
+  return toView(row!);
+}
+
+/**
+ * Re-draft ONE sub-topic of an open sitting (Slice REDRAFT-1, walkthrough item 5).
+ *
+ * WHY THIS EXISTS. 2a runs once, at open, and freezes its drafts; `open` is
+ * idempotent, so re-opening returns the same row. But a tutor's correction of a
+ * Stage-1 read (Slice ASSESS-SEE made those corrections happen) changes the
+ * EFFECTIVE level `gatherStage2Input` counts — so after an override the frozen
+ * draft is stale, and the only way to refresh it was to hand-edit the numbers the
+ * model would now propose itself. This re-runs 2a for that one sub-topic against
+ * the current evidence and replaces its draft in place.
+ *
+ * ONE Gemini call. It goes through `draftStage2` → `runStage2Call`, so it inherits
+ * the CERT-RULE clamp exactly as `open` does — the guard sits at the convergence
+ * point precisely so a second drafting path cannot bypass it (the S176 M97 near-
+ * miss). It does NOT re-draft the whole sitting: one sub-topic, by the tutor's
+ * explicit press, never automatically (walkthrough §5).
+ *
+ * ⚠️ It replaces `drafts[subTopicId]` and NOTHING else — the other sub-topics'
+ * drafts, the 2b chat, and the sitting's identity are untouched. The tutor's
+ * in-flight EDITS for this sub-topic are FE-only state (they never reach the
+ * server until finalize), so this cannot clear them; the client clears them when
+ * it swaps in the new draft (walkthrough §5: "unsaved edits get clobbered").
+ */
+export async function redraftSubTopic(
+  tx: Tx,
+  args: {
+    boardId: string;
+    tutorUserId: string;
+    sessionId: string;
+    subTopicId: string;
+  },
+): Promise<AssessmentSessionView> {
+  // Ownership + existence, via the same read finalize uses (reports a foreign or
+  // missing sitting as ASSESSMENT_SESSION_NOT_FOUND).
+  const session = await getAssessmentSession(tx, {
+    tutorUserId: args.tutorUserId,
+    sessionId: args.sessionId,
+  });
+  // A finalized sitting is immutable — its drafts are the record of what was
+  // certified. Same guard finalize uses against a double-commit.
+  if (session.status === "finalized") {
+    throw new SessionAlreadyFinalizedError(args.sessionId);
+  }
+  // The sub-topic must belong to THIS sitting's frozen composition. Without this
+  // a caller could redraft an arbitrary sub-topic into the row's drafts map — one
+  // finalize never certifies (it iterates `subTopicIds`) but which would bill a
+  // Gemini call and mutate the sitting. Assert membership, don't trust the input.
+  if (!session.subTopicIds.includes(args.subTopicId)) {
+    throw new SubTopicNotInSittingError(args.subTopicId, args.sessionId);
+  }
+
+  // ONE Gemini call, the same unit `open` fans out — so the redrafted proposal is
+  // identical in shape and rule to a freshly-opened one (and carries CERT-RULE).
+  const fresh = await draftStage2(tx, {
+    tutorUserId: args.tutorUserId,
+    studentId: session.studentId,
+    subTopicId: args.subTopicId,
+  });
+
+  // Read-modify-write the jsonb: replace ONLY this key. `session.drafts` is the
+  // parsed current map, so spreading it preserves every other sub-topic's draft
+  // exactly as it stood.
+  const drafts: SessionDrafts = { ...session.drafts, [args.subTopicId]: fresh };
+
+  const [row] = await tx
+    .update(assessmentSession)
+    .set({ drafts })
+    .where(eq(assessmentSession.id, args.sessionId))
     .returning();
 
   return toView(row!);

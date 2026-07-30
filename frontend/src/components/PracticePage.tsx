@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { trpc, getBoard } from "../trpc";
+import { CONF_CHIPS } from "../lib/confidence";
 import { MathText } from "./MathText";
 import { loaderPetImg } from "./onboarding.copy";
 import "./practice.css";
@@ -869,12 +870,8 @@ function SoonBanner({
 // Slice UPLOAD-UX — the three-way confidence chips (Guessing / Partially sure /
 // Nailed it), matching live b2c's subjective scale. Stored as smallint 1/3/5 so
 // the assessor's confidence "/5" calibration signal keeps working (no migration).
-const CONF_CHIPS: [number, string][] = [
-  [1, "Guessing"],
-  [3, "Partially sure"],
-  [5, "Nailed it"],
-];
-
+// The list moved to lib/confidence.ts in Slice ASSESS-SEE so the tutor's assess
+// view can name the same choice the student made, from the same source.
 function ConfidenceChips({
   value,
   onChange,

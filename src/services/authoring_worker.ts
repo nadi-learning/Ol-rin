@@ -699,6 +699,12 @@ export async function spawnAuthoringWorker(
     brief: string;
     /** The episode this draft belongs to (Slice TWOWAY-1); absent = one-shot spawn. */
     workerRowId?: string;
+    /**
+     * SET-PLAN-GATE: an explicitly-supplied approved plan (the set fan-out has no
+     * episode row to read it from). When present it WINS over the episode-derived
+     * plan; absent falls back to the episode's last plan turn (single-mode).
+     */
+    approvedPlan?: WorkerPlan | null;
   },
 ): Promise<SpawnWorkerResult> {
   const world = await buildScopedWorld(tx, {
@@ -715,7 +721,9 @@ export async function spawnAuthoringWorker(
     ? await episodeTurns(tx, args.workerRowId)
     : [];
   const approvedPlan =
-    [...priorTurns].reverse().find((t) => t.kind === "plan")?.plan ?? null;
+    args.approvedPlan ??
+    [...priorTurns].reverse().find((t) => t.kind === "plan")?.plan ??
+    null;
   const planBlock = approvedPlan
     ? `\n\n===== THE PLAN THE TUTOR APPROVED (write THIS — it is not a suggestion) =====
 ${renderPlanText(approvedPlan)}

@@ -37,6 +37,7 @@ import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
 import {
+  assembleGrounding,
   authorFromChat,
   AuthoringChatNotFoundError,
   getChat,
@@ -143,6 +144,42 @@ async function main() {
     const [st] = await tx.insert(subTopic).values({ boardId: Q.id, topicId: tp!.id, slug: "accel", name: "Acceleration", ordinal: 1 }).returning();
     return { subTopicId: st!.id };
   });
+
+  // ─────────── Slice ASSESS-SEE — item 12 ───────────
+  // `assembleGrounding` builds the student picture the authoring AI writes the
+  // student's NEXT questions from. It read `observation.observationLevel` raw —
+  // the MACHINE's number — while Stage-2, synthesis, assignment and the assess
+  // chat all count `tutorLevel ?? observationLevel`. So a tutor could overrule
+  // the scorer, watch Stage-2 respect it, and have the surface generating the
+  // next questions still ground on the level they explicitly rejected.
+  //
+  // Deterministic — this drives the grounding assembler directly, with NO AI in
+  // the loop, so no model response can make it pass or fail (M101).
+  const groundFx = await withBoard(P.id, async (tx: Tx) => {
+    // A read the tutor OVERRULED: the scorer said 2, the tutor says 4.
+    const [ov] = await tx.insert(observation).values({
+      boardId: P.id, studentId: stuA.id, subTopicId: fx.subTopicId, axis: "conceptual",
+      observationLevel: 2, tutorLevel: 4,
+      reasoning: "GROUND_CORRECTED: dismissed as listing, but she does link the two ideas.",
+      source: "stage1_scorer",
+    }).returning();
+    return { ovId: ov!.id };
+  });
+  const grounding = await withBoard(P.id, (tx) =>
+    assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
+  );
+  const corrLine = grounding.split("\n").find((l) => l.includes("GROUND_CORRECTED")) ?? "";
+  const rawLine = grounding.split("\n").find((l) => l.includes("dropped the unit conversion")) ?? "";
+  // #1 is the scenario the feature exists for (M97).
+  check("ASSESS-SEE §12: authoring grounds on the TUTOR's level, not the machine's",
+    corrLine.includes("L4") && corrLine.includes("(tutor-corrected)"));
+  // The negative control — without it, relabelling every line "L4" would pass #1.
+  check("ASSESS-SEE §12: the overruled machine level (L2) is NOT what authoring reads",
+    corrLine !== "" && !corrLine.includes("L2"));
+  // …and an UNCORRECTED read must still show its machine level, unmarked.
+  check("ASSESS-SEE §12: an uncorrected observation still reads its machine level, no marker",
+    rawLine.includes("L2") && !rawLine.includes("(tutor-corrected)"));
+  await withBoard(P.id, (tx) => tx.delete(observation).where(eq(observation.id, groundFx.ovId)));
 
   // 2. ownership: startChat for an UNLINKED student → STUDENT_NOT_FOUND.
   let nf = false;

@@ -30,6 +30,12 @@
  *   7. taught GATE OFF (fresh sub-topic, final 1/1): NO taught event; taughtAt null.
  *   8. RLS: draft a P student under board Q → STUDENT_NOT_FOUND (link invisible).
  *   9. finalize ownership: unlinked student → STUDENT_NOT_FOUND.
+ *  10. Slice CERT-RULE — §3's counts+spacing ladder, now executed in CODE rather
+ *      than by the model. DETERMINISTIC, no AI in the loop (M101): the S97
+ *      demotion refused, each rung's own gap (and only its own), the ceiling, the
+ *      floor, degenerate inputs, and that the guard is reached from the call a
+ *      SITTING makes (runStage2Call) — not just from draftStage2, which only this
+ *      probe uses (M97).
  */
 import { and, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
@@ -54,10 +60,12 @@ import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import {
   draftStage2,
+  enforceCertificationRule,
   finalizeStage2,
   NoObservationsError,
   type Stage2Draft,
 } from "../src/services/assessment";
+import { applyCertificationRule, certifiableCeiling } from "@b2c/kernel/mastery";
 import {
   getCrossConceptFlags,
   overrideObservation,
@@ -448,6 +456,194 @@ async function main() {
     finOwn = e instanceof StudentNotFoundError;
   }
   check("finalize: unlinked student → STUDENT_NOT_FOUND (ownership)", finOwn);
+
+  // ══════════ 10. Slice CERT-RULE — the ladder, asserted WITHOUT the model ══════════
+  //
+  // 🔑 M101 (logged the session before this one): a leg that asserts a range over a
+  // value the model produced passes vacuously whenever that value is unremarkable.
+  // The rule is now a pure function, so it is asserted as a pure function — every
+  // leg below is deterministic and has an input that would redden it.
+  const D = (day: number) => new Date(Date.UTC(2026, 0, 1 + day));
+  const obs = (spec: Array<[level: number, day: number]>) =>
+    spec.map(([level, day]) => ({ level, at: D(day) }));
+
+  // ── 10a. THE S97 CASE — leg #1, because it is the case this slice exists for (M97).
+  // Student certified conceptual 3. Two observations at level 3, ONE DAY APART.
+  // L3 asks for 2 obs at >=3 and nothing else; the >=1-week gap belongs to L4. The
+  // model imported it and demoted 3 -> 2. Code must refuse that.
+  const s97 = applyCertificationRule({
+    proposed: 2, // <- exactly what Gemini returned in S97
+    current: 3,
+    observations: obs([[3, 0], [3, 1]]),
+    axis: "conceptual",
+  });
+  check(
+    "CERT-RULE §S97: certified 3, two conceptual obs at 3 one day apart, model says 2 → HELD AT 3",
+    s97.level === 3 && s97.adjusted,
+  );
+  check(
+    "CERT-RULE §S97: the correction states WHY, for the tutor's log",
+    typeof s97.reason === "string" && /no clear failure to demote on/.test(s97.reason),
+  );
+
+  // ── 10b. The ladder rungs. Asserted as PAIRS so a change to one axis cannot
+  // silently move the other (M101's corollary).
+  check(
+    "CERT-RULE ladder: conceptual L3 = 2 obs >=3 with NO gap requirement (1 day apart still certifies 3)",
+    certifiableCeiling(obs([[3, 0], [3, 1]]), "conceptual") === 3,
+  );
+  check(
+    "CERT-RULE ladder: conceptual L4 DOES need its 7d gap — 2 obs at 4 one day apart caps at 3",
+    certifiableCeiling(obs([[4, 0], [4, 1]]), "conceptual") === 3,
+  );
+  check(
+    "CERT-RULE ladder: conceptual L4 met — 2 obs at 4, 8 days apart → 4",
+    certifiableCeiling(obs([[4, 0], [4, 8]]), "conceptual") === 4,
+  );
+  check(
+    "CERT-RULE ladder: procedural L3 needs 3 obs AND a 1d gap — 3 obs same day caps at 2",
+    certifiableCeiling(obs([[3, 0], [3, 0], [3, 0]]), "procedural") === 2,
+  );
+  check(
+    "CERT-RULE ladder: procedural L3 met — 3 obs at 3 spanning 2 days → 3",
+    certifiableCeiling(obs([[3, 0], [3, 1], [3, 2]]), "procedural") === 3,
+  );
+  check(
+    "CERT-RULE ladder: the two axes DIFFER at L3 on the same evidence (conceptual 3 / procedural 2)",
+    certifiableCeiling(obs([[3, 0], [3, 1]]), "conceptual") === 3 &&
+      certifiableCeiling(obs([[3, 0], [3, 1]]), "procedural") === 2,
+  );
+  check(
+    "CERT-RULE ladder: a count is 'at level X OR HIGHER' — one obs at 5 satisfies L2's '1 obs >=2'",
+    certifiableCeiling(obs([[5, 0]]), "conceptual") === 2,
+  );
+  check("CERT-RULE ladder: no observations → null (never 1)", certifiableCeiling([], "conceptual") === null);
+
+  // ── 10c. The CEILING guard — the model may not certify above the evidence.
+  const overreach = applyCertificationRule({
+    proposed: 5,
+    current: null,
+    observations: obs([[3, 0]]),
+    axis: "conceptual",
+  });
+  // NOTE: the cap here is 2, not 3 — a single obs at level 3 clears L2's "1 obs >=2"
+  // but not L3's "2 obs >=3". The count and the threshold are separate conditions,
+  // and this leg reddened on the first run when it asserted 3 (a live negative
+  // control: the leg can fail, and did).
+  check(
+    "CERT-RULE ceiling: ONE obs at 3, model proposes 5 → capped to 2 (L3 needs TWO obs >=3)",
+    overreach.level === 2 && overreach.adjusted && /capped/.test(overreach.reason ?? ""),
+  );
+
+  // A standing already on the record is NEVER walked back by arithmetic — a tutor
+  // may have set it, and §6 says the tutor wins on the evidence.
+  const tutorSet = applyCertificationRule({
+    proposed: 5,
+    current: 5,
+    observations: obs([[3, 0], [3, 1]]),
+    axis: "conceptual",
+  });
+  check(
+    "CERT-RULE ceiling: a tutor-set 5 is NOT walked back to 3 by weak evidence",
+    tutorSet.level === 5 && !tutorSet.adjusted,
+  );
+
+  // ── 10d. The FLOOR guard — a demotion needs a failure to point at.
+  const realDrop = applyCertificationRule({
+    proposed: 2,
+    current: 3,
+    observations: obs([[3, 0], [3, 1], [1, 2]]), // a genuine below-level answer exists
+    axis: "conceptual",
+  });
+  check(
+    "CERT-RULE floor: a REAL failure (an obs below the certified level) lets the drop through — 3 → 2 stands",
+    realDrop.level === 2 && !realDrop.adjusted,
+  );
+
+  // ── 10e. Degenerate inputs.
+  const noEvidence = applyCertificationRule({
+    proposed: 4,
+    current: 2,
+    observations: [],
+    axis: "procedural",
+  });
+  check(
+    "CERT-RULE: no observations on the axis → HOLD the standing (model's 4 ignored)",
+    noEvidence.level === 2 && noEvidence.adjusted,
+  );
+  const nullWithEvidence = applyCertificationRule({
+    proposed: null,
+    current: null,
+    observations: obs([[3, 0], [3, 1]]),
+    axis: "conceptual",
+  });
+  check(
+    "CERT-RULE: model returns null on an axis that HAS evidence → set to what the evidence supports (3)",
+    nullWithEvidence.level === 3 && nullWithEvidence.adjusted,
+  );
+  const trulyUnobserved = applyCertificationRule({
+    proposed: null,
+    current: null,
+    observations: [],
+    axis: "procedural",
+  });
+  check(
+    "CERT-RULE: genuinely unobserved axis stays NULL — never becomes a 1",
+    trulyUnobserved.level === null && !trulyUnobserved.adjusted,
+  );
+
+  // ── 10f. WIRING. The legs above prove the rule; this proves the rule is REACHED
+  // on the path a tutor actually drives. `enforceCertificationRule` is what
+  // `runStage2Call` returns, and `runStage2Call` — NOT `draftStage2` — is what a
+  // sitting calls (assessment_session.ts). Driven with a hand-built draft, so no
+  // Gemini response can make it pass or fail.
+  const wired = enforceCertificationRule(
+    {
+      conceptualLevel: 2, // the S97 demotion
+      proceduralLevel: 5, // and an overreach, on the same draft
+      description: "d",
+      log: "model's own notes",
+      climbNextDue: null,
+      reasoning: "r",
+      flags: [],
+    },
+    {
+      subTopicName: "x",
+      conceptualLos: [],
+      proceduralLos: [],
+      current: {
+        conceptualLevel: 3,
+        proceduralLevel: 2,
+        description: "",
+        log: "",
+        updatedAt: D(0),
+      },
+      observations: [
+        { axis: "conceptual", level: 3, at: D(0) },
+        { axis: "conceptual", level: 3, at: D(1) },
+        { axis: "procedural", level: 3, at: D(0) },
+      ].map((o) => ({
+        ...o,
+        machineLevel: null,
+        overrideReason: null,
+        reasoning: "",
+        calibrationFlag: null,
+        nonSubtopicNote: null,
+        pedagogicalComment: null,
+      })),
+      completionAt: D(2),
+      subTopicId: "st",
+    },
+  );
+  check(
+    "CERT-RULE wiring: enforceCertificationRule corrects BOTH axes on one draft (2→3 floor, 5→2 ceiling)",
+    wired.conceptualLevel === 3 && wired.proceduralLevel === 2,
+  );
+  check(
+    "CERT-RULE wiring: the model's own log is PRESERVED and the correction appended under [RULE]",
+    wired.log.startsWith("model's own notes") && wired.log.includes("[RULE]"),
+  );
+  soft("CERT-RULE wiring: the appended log line", wired.log.split("[RULE]")[1]?.trim());
 
   // ── cleanup (FK-safe) ──
   await withBoard(P.id, async (tx: Tx) => {

@@ -3,6 +3,13 @@ import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { trpc, getBoard, setBoard } from "../trpc";
+import { confidenceLabel } from "../lib/confidence";
+import {
+  RUBRIC,
+  RUBRIC_GATES,
+  RUBRIC_NULL_NOTE,
+  type RubricAxis,
+} from "../lib/rubric";
 import { MathText } from "./MathText";
 import "./tutor.css";
 
@@ -1730,6 +1737,48 @@ function AssessmentSitting({
     description: string;
   }>>({});
   const [error, setError] = useState<string | null>(null);
+  // REDRAFT-1 (item 5) — which sub-topic is mid-redraft (disables its card), and a
+  // per-sub-topic nonce bumped on each redraft. The nonce is in the Stage2Panel's
+  // React key: the panel seeds its edit state from `result.draft` at MOUNT and
+  // never re-syncs, so swapping the draft in `session` alone would leave the old
+  // numbers on screen. Bumping the key remounts JUST that panel with the new draft.
+  const [redrafting, setRedrafting] = useState<string | null>(null);
+  const [redraftNonce, setRedraftNonce] = useState<Record<string, number>>({});
+
+  function redraft(stId: string, subTopicName: string) {
+    if (!session) return;
+    // The tutor's edits for THIS sub-topic were made against the OLD draft; a
+    // redraft replaces it, so those edits are about to be discarded. Warn only
+    // when there is actually something to lose (item 5: warn OR clear — we do
+    // both: confirm here, clear on success).
+    if (
+      edits[stId] &&
+      !window.confirm(
+        `Re-draft “${subTopicName}” from the current reads?\n\nThis asks the AI for a fresh proposal and will discard your unsaved edits to this sub-topic. Your other sub-topics are untouched.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setRedrafting(stId);
+    // BOARD-PIN — same drift guard as open/finalize (the shared x-board global can
+    // move under an open sitting); re-assert this student's board before the write.
+    setBoard(student.board);
+    trpc.tutor.redraftSubTopic
+      .mutate({ sessionId: session.id, subTopicId: stId })
+      .then((updated) => {
+        setSession(updated);
+        // Drop this sub-topic's stale edits, and remount its panel onto the new draft.
+        setEdits((prev) => {
+          const next = { ...prev };
+          delete next[stId];
+          return next;
+        });
+        setRedraftNonce((prev) => ({ ...prev, [stId]: (prev[stId] ?? 0) + 1 }));
+      })
+      .catch((e) => setError(String(e?.message ?? e)))
+      .finally(() => setRedrafting(null));
+  }
 
   function openSitting() {
     setError(null);
@@ -1885,8 +1934,12 @@ function AssessmentSitting({
             <h4 className="tut-sitting-st">{d.subTopicName}</h4>
             <Observations studentId={student.studentId} subTopicId={stId} />
             <Stage2Panel
+              // REDRAFT-1: the nonce remounts this panel onto the fresh draft.
+              key={`${stId}:${redraftNonce[stId] ?? 0}`}
               result={d}
-              disabled={saving}
+              disabled={saving || redrafting === stId}
+              redrafting={redrafting === stId}
+              onRedraft={() => redraft(stId, d.subTopicName)}
               onEdit={(final) =>
                 setEdits((prev) => ({ ...prev, [stId]: final }))
               }
@@ -2075,10 +2128,15 @@ function LevelSelect({
 function Stage2Panel({
   result,
   disabled,
+  redrafting,
+  onRedraft,
   onEdit,
 }: {
   result: Stage2DraftResult;
   disabled: boolean;
+  // REDRAFT-1 (item 5) — the sub-topic is re-drafting (its card is locked).
+  redrafting: boolean;
+  onRedraft: () => void;
   onEdit: (final: {
     conceptualLevel: number | null;
     proceduralLevel: number | null;
@@ -2136,6 +2194,25 @@ function Stage2Panel({
         )}
       </div>
 
+      {/* REDRAFT-1 (item 5) — refresh THIS proposal from the current reads. The
+          tutor presses it after correcting Stage-1 reads above, so the model
+          re-proposes against the effective levels rather than the tutor
+          hand-editing the numbers the model would now produce itself. One AI
+          call, this sub-topic only. */}
+      <div className="tut-s2-redraft">
+        <button
+          type="button"
+          className="tut-s2-redraft-btn"
+          onClick={onRedraft}
+          disabled={disabled}
+        >
+          {redrafting ? "Re-drafting…" : "↻ Re-draft from current reads"}
+        </button>
+        <span className="tut-s2-redraft-hint">
+          Re-asks the AI for this sub-topic after you&apos;ve corrected its reads.
+        </span>
+      </div>
+
       <div className="tut-s2-grid">
         <label className="tut-s2-field">
           <span className="tut-s2-label">
@@ -2148,6 +2225,7 @@ function Stage2Panel({
             onChange={(v) => edit({ conceptualLevel: v })}
             disabled={saving}
           />
+          <RubricNote axis="conceptual" nullSelectable />
         </label>
         <label className="tut-s2-field">
           <span className="tut-s2-label">
@@ -2160,6 +2238,7 @@ function Stage2Panel({
             onChange={(v) => edit({ proceduralLevel: v })}
             disabled={saving}
           />
+          <RubricNote axis="procedural" nullSelectable />
         </label>
       </div>
 
@@ -2286,8 +2365,168 @@ function UnassessedAttempts({ rows }: { rows: UnassessedAttemptView[] }) {
                   </span>
                 )
                 : null}
+          {/* Item 2 on the roster: Stage-1 declined to score these, so the
+              student-facing evaluation is the ONLY read of them that exists. */}
+          <EvaluationBlock
+            ev={r.evaluation}
+            marksAwarded={null}
+            marksMax={null}
+          />
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─────────────── Slice ASSESS-SEE — what the machine saw ───────────────
+// Four things were in the system and invisible on this screen: the rubric being
+// scored against (8), the evaluation the student read (2), the author's intent
+// (7), and the confidence label the student picked (1). The tutor was being asked
+// to check the machine's work without being shown the machine's inputs.
+
+// Item 8 — the ladder for ONE axis, next to the control that overrides it.
+// Collapsed by default: it must be available at the moment of the decision
+// without taking permanent space. `nullSelectable` is passed only where null is
+// an actual option (the Stage-2 card) — that is the only place the null≠1 trap
+// can be sprung, and elsewhere the warning would be noise.
+function RubricNote({
+  axis,
+  nullSelectable = false,
+}: {
+  axis: RubricAxis;
+  nullSelectable?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="tut-rubric">
+      <button
+        type="button"
+        className="tut-rubric-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? "▾" : "▸"} What the {axis} levels mean
+      </button>
+      {open && (
+        <div className="tut-rubric-body">
+          {nullSelectable && (
+            <p className="tut-rubric-warn">{RUBRIC_NULL_NOTE}</p>
+          )}
+          <ol className="tut-rubric-rungs">
+            {RUBRIC[axis].map((r) => (
+              <li key={r.level} className="tut-rubric-rung">
+                <span className="tut-rubric-num">{r.level}</span>
+                <span>
+                  <strong className="tut-rubric-title">{r.title}</strong> —{" "}
+                  {r.body}
+                  {r.aside && (
+                    <em className="tut-rubric-aside"> {r.aside}</em>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <ul className="tut-rubric-gates">
+            {RUBRIC_GATES[axis].map((g, i) => (
+              <li key={i}>{g}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Item 7 — the author's stated intent for the question. Already on the payload
+// (`getObservations` selects `pedagogical_comment`, copied onto the observation
+// at scoring time); the client simply dropped it. Same collapsed-expander shape
+// as the Assign tab's "Why this question".
+function PedagogyWhy({ note }: { note: string | null }) {
+  const [open, setOpen] = useState(false);
+  if (!note) return null;
+  return (
+    <div className="tut-obs-why">
+      <button
+        type="button"
+        className="tut-obs-why-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? "▾" : "▸"} Why this question was asked
+      </button>
+      {open && <p className="tut-obs-why-text">{note}</p>}
+    </div>
+  );
+}
+
+// Item 2 — the evaluation the STUDENT read, shown to the tutor unchanged.
+//
+// The axis reasoning answers "what does this say about mastery". This answers
+// "what did they actually get wrong" — and it was the only account of that in
+// the system the tutor could not see. Expanded by default (unlike the rubric and
+// the intent): it is evidence about THIS answer, not reference material, and the
+// tutor is here to weigh exactly this.
+//
+// Renders nothing when absent, which is the common case on migrated sittings —
+// the old-b2c backfill imported answers without the student-facing read.
+function EvaluationBlock({
+  ev,
+  marksAwarded,
+  marksMax,
+}: {
+  ev: {
+    verdict: string;
+    feedback: string;
+    strengths: string[];
+    improvements: string[];
+  } | null;
+  marksAwarded: number | null;
+  marksMax: number | null;
+}) {
+  if (!ev) return null;
+  return (
+    <div className="tut-recall-block tut-eval">
+      <p className="tut-recall-label">
+        What the student was shown
+        {marksAwarded != null && marksMax != null && (
+          <span className="tut-eval-marks">
+            {" "}
+            · {marksAwarded}/{marksMax} marks
+          </span>
+        )}
+        {ev.verdict && (
+          <span className={`tut-eval-verdict tut-eval-verdict--${ev.verdict}`}>
+            {ev.verdict.replace("_", " ")}
+          </span>
+        )}
+      </p>
+      <p className="tut-eval-prose">
+        <MathText text={ev.feedback} />
+      </p>
+      {ev.improvements.length > 0 && (
+        <div className="tut-eval-list tut-eval-list--gap">
+          <p className="tut-eval-list-head">Where it fell short</p>
+          <ul>
+            {ev.improvements.map((s, i) => (
+              <li key={i}>
+                <MathText text={s} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {ev.strengths.length > 0 && (
+        <div className="tut-eval-list">
+          <p className="tut-eval-list-head">What worked</p>
+          <ul>
+            {ev.strengths.map((s, i) => (
+              <li key={i}>
+                <MathText text={s} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -2301,7 +2540,10 @@ function UnassessedAttempts({ rows }: { rows: UnassessedAttemptView[] }) {
 function ObsRecall({ o }: { o: ObservationView }) {
   const [open, setOpen] = useState(false);
   const hasAnswer =
-    !!o.answerText || o.answerPhotoIds.length > 0 || o.answerConfidence != null;
+    !!o.answerText ||
+    o.answerPhotoIds.length > 0 ||
+    o.answerConfidence != null ||
+    !!o.evaluation;
   if (!o.questionStem && !hasAnswer) return null;
   return (
     <div className="tut-recall">
@@ -2329,7 +2571,17 @@ function ObsRecall({ o }: { o: ObservationView }) {
               {o.answerConfidence != null && (
                 <span className="tut-recall-conf">
                   {" "}
-                  · confidence {o.answerConfidence}/5
+                  ·{" "}
+                  {/* Item 1 — the label they picked, then the number. Both, always:
+                      the label is what the student saw, the number is what the
+                      calibration flag was computed from, and migrated attempts
+                      have no label at all (confidenceLabel → null). */}
+                  {confidenceLabel(o.answerConfidence) && (
+                    <span className="tut-recall-conf-label">
+                      {confidenceLabel(o.answerConfidence)}
+                    </span>
+                  )}{" "}
+                  confidence {o.answerConfidence}/5
                 </span>
               )}
             </p>
@@ -2349,6 +2601,11 @@ function ObsRecall({ o }: { o: ObservationView }) {
               </p>
             )}
           </div>
+          <EvaluationBlock
+            ev={o.evaluation}
+            marksAwarded={o.marksAwarded}
+            marksMax={o.marksMax}
+          />
         </div>
       )}
     </div>
@@ -2507,6 +2764,8 @@ function ObservationRow({
 
       <p className="tut-obs-reasoning">{o.reasoning}</p>
 
+      <PedagogyWhy note={o.pedagogicalComment} />
+
       <ObsRecall o={o} />
 
       {corrected && !editing && o.overrideReason && (
@@ -2531,6 +2790,10 @@ function ObservationRow({
               ))}
             </select>
           </label>
+          {/* Item 8 — the ladder for THIS observation's axis, at the control that
+              overrides it. No null option here (an override always names a
+              level), so the null≠1 warning is not shown. */}
+          <RubricNote axis={o.axis as RubricAxis} />
           <label className="tut-obs-editrow">
             <span className="tut-s2-label">Why the AI's read was wrong</span>
             <textarea
@@ -3145,7 +3408,6 @@ function AuthorChat({
   // `setFailures` surfaces any sub-topic whose worker failed in the fan-out (loud,
   // never silently dropped). Interleaved mode only.
   const [proposalSet, setProposalSet] = useState<ProposeSetResult | null>(null);
-  const [setCounts, setSetCounts] = useState<Record<string, number>>({});
   const [proposingSet, setProposingSet] = useState(false);
   const [authoringSet, setAuthoringSet] = useState(false);
   const [setFailures, setSetFailures] = useState<
@@ -3333,7 +3595,6 @@ function AuthorChat({
     setProposal(null);
     setProposing(false);
     setProposalSet(null);
-    setSetCounts({});
     setProposingSet(false);
     setSetFailures(null);
     setTarget(null);
@@ -3740,9 +4001,6 @@ function AuthorChat({
       })
       .then((p) => {
         setProposalSet(p);
-        setSetCounts(
-          Object.fromEntries(p.picks.map((pk) => [pk.subTopicId, pk.count])),
-        );
       })
       .catch((e) => {
         const msg = String(e?.message ?? e);
@@ -3768,9 +4026,16 @@ function AuthorChat({
     trpc.tutor.authorSetFromChat
       .mutate({
         chatId: chat.chatId,
+        // SET-PLAN-GATE: the count is now DERIVED from the approved blueprint (not
+        // tutor-editable — approving N items IS the gate). Hand the plan back so the
+        // drafter writes exactly it; a blueprint-less pick (degenerate fallback)
+        // sends no plan and self-derives.
         targets: picks.map((p) => ({
           subTopicId: p.subTopicId,
-          count: Math.max(1, Math.min(8, setCounts[p.subTopicId] ?? p.count)),
+          count: Math.max(1, Math.min(8, p.count)),
+          ...(p.items.length > 0
+            ? { plan: { read: "", items: p.items, questions: [] } }
+            : {}),
         })),
       })
       .then((r) => {
@@ -4528,10 +4793,14 @@ function AuthorChat({
           </div>
         )}
 
-        {/* Consent card — the AI proposes a SET (QA3-e-2); the tutor edits
-            per-sub-topic counts + confirms, then a parallel fan-out authors. Never
-            gated on mode: it renders off `proposalSet`, so COVERAGE-1 reuses it
-            in blocked chats with only its heading changed. */}
+        {/* Consent card — the AI proposes a SET (QA3-e-2); SET-PLAN-GATE enriches it
+            into the PLAN GATE for the fan-out: each pick now shows the exact items
+            the worker will write (axis · intent · difficulty), and approving the
+            proposal IS approving that blueprint (the drafter writes exactly it). The
+            count is DERIVED from the blueprint and no longer editable — changing
+            volume means re-proposing (mirrors single-mode's approve rule). Never
+            gated on mode: it renders off `proposalSet`, so COVERAGE-1 reuses it in
+            blocked chats with only its heading changed. */}
         {proposalSet && (
           <div className="tut-chat-consent tut-chat-consent--set">
             <div className="tut-chat-consent-head">
@@ -4544,25 +4813,31 @@ function AuthorChat({
             <div className="tut-chat-set-picks">
               {proposalSet.picks.map((pk) => (
                 <div key={pk.subTopicId} className="tut-chat-set-pick">
-                  <span className="tut-chat-set-pick-name">
-                    {pk.chapterName} › {pk.subTopicName}
-                  </span>
-                  <label className="tut-chat-consent-count">
-                    <span>×</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={8}
-                      value={setCounts[pk.subTopicId] ?? pk.count}
-                      onChange={(e) =>
-                        setSetCounts((m) => ({
-                          ...m,
-                          [pk.subTopicId]: Math.max(1, Math.min(8, Number(e.target.value) || 1)),
-                        }))
-                      }
-                      disabled={authoringSet}
-                    />
-                  </label>
+                  <div className="tut-chat-set-pick-head">
+                    <span className="tut-chat-set-pick-name">
+                      {pk.chapterName} › {pk.subTopicName}
+                    </span>
+                    <span className="tut-chat-set-pick-count">
+                      {pk.count} question{pk.count === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {pk.items.length > 0 ? (
+                    <ol className="tut-chat-set-pick-items">
+                      {pk.items.map((it) => (
+                        <li key={it.n} className="tut-chat-set-pick-item">
+                          <span className={`tut-axis tut-axis--${it.axis}`}>
+                            {it.axis}
+                          </span>
+                          <span className="tut-chat-item-intent">{it.intent}</span>
+                          <span className="tut-chat-item-diff">{it.difficulty}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="tut-chat-set-pick-noplan">
+                      The worker will plan this one as it drafts.
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -4574,7 +4849,7 @@ function AuthorChat({
               >
                 {authoringSet
                   ? "Authoring the set…"
-                  : `Author set (${proposalSet.picks.reduce((n, p) => n + (setCounts[p.subTopicId] ?? p.count), 0)} questions) →`}
+                  : `Author set (${proposalSet.picks.reduce((n, p) => n + p.count, 0)} questions) →`}
               </button>
               <button
                 className="tut-chat-consent-dismiss"

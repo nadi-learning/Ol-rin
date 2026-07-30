@@ -25,7 +25,7 @@
  *     in 1..8 (blocked mode's range) where intent:"discriminate" stays 1..4; the
  *     fan-out from a BLOCKED chat authors across several of its sub-topics.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
@@ -45,11 +45,13 @@ import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
 import {
   authorSetFromChat,
+  clampProposedItems,
   clampSetCount,
   proposeTargetSet,
   startChat,
   SubTopicNotFoundError,
 } from "../src/services/authoring_chat";
+import type { WorkerPlan } from "@b2c/kernel/contracts";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -239,6 +241,64 @@ async function main() {
     clampSetCount(6) === 4,
   );
 
+  // FE source, read once and shared by FIRM 6/7 and the client-gate legs below.
+  const tutorPageSrc = await Bun.file(
+    new URL("../frontend/src/components/TutorPage.tsx", import.meta.url).pathname,
+  ).text();
+
+  // ── FIRM 6: SET-PLAN-GATE — the blueprint→count derivation, deterministically ──
+  // The count is now DERIVED from the item blueprint (items.length), capped to the
+  // intent's range and renumbered 1..N. Assert the pure helper directly so the
+  // "count follows the plan, n is sequential" rule can't pass vacuously on whatever
+  // small blueprint the model happened to return (M52's vacuous-green trap).
+  const rawItems = Array.from({ length: 10 }, (_, i) => ({
+    axis: (i % 2 === 0 ? "conceptual" : "procedural") as
+      | "conceptual"
+      | "procedural"
+      | "both",
+    kind: `kind-${i}`,
+    intent: `intent-${i}`,
+    difficulty: "medium",
+  }));
+  const capDisc = clampProposedItems(rawItems, "discriminate");
+  const capCov = clampProposedItems(rawItems, "cover");
+  check(
+    "SET-PLAN-GATE: 10 items → capped to 4 (discriminate) / 8 (cover)",
+    capDisc.length === 4 && capCov.length === 8,
+  );
+  check(
+    "SET-PLAN-GATE: items renumbered 1..N sequentially regardless of input order",
+    capDisc.every((it, i) => it.n === i + 1) &&
+      capCov.every((it, i) => it.n === i + 1),
+  );
+  check(
+    "SET-PLAN-GATE: the item fields (axis/kind/intent) are preserved through the cap",
+    capDisc[0]!.axis === "conceptual" &&
+      capDisc[0]!.kind === "kind-0" &&
+      capDisc[0]!.intent === "intent-0",
+  );
+  check(
+    "SET-PLAN-GATE: an empty blueprint yields an empty plan (fallback self-derives)",
+    clampProposedItems([], "cover").length === 0,
+  );
+
+  // ── FIRM 7: SET-PLAN-GATE (FE) — the proposal card IS the plan gate now ────────
+  // Full-token asserts (M79: a prefix match is not an existence proof). The
+  // editable count is GONE (the count is derived, non-editable), the item blueprint
+  // is rendered, and the approved plan is threaded back on confirm.
+  check(
+    "SET-PLAN-GATE (FE): the editable per-sub-topic count is removed (no `setCounts`)",
+    !tutorPageSrc.includes("setCounts"),
+  );
+  check(
+    "SET-PLAN-GATE (FE): the item blueprint is rendered (`tut-chat-set-pick-items`)",
+    tutorPageSrc.includes("tut-chat-set-pick-items"),
+  );
+  check(
+    "SET-PLAN-GATE (FE): the approved plan is threaded back on confirm (`plan: { read: \"\"`)",
+    tutorPageSrc.includes('plan: { read: "", items: p.items'),
+  );
+
   // ── FIRM 5: the CLIENT gate (M43) ──────────────────────────────────────────
   // The whole ask is that the set entry stops being interleaved-only. A service
   // probe cannot see that: the gate lives in the FE. Assert the source directly —
@@ -246,10 +306,7 @@ async function main() {
   // matched as a full JSX line (`{chat.mode === "interleaved" && (`) so the mode
   // ternaries that legitimately remain — button copy, card heading, the intent
   // sent to the endpoint — can't hold this leg green (M79: a prefix match is not
-  // an existence proof).
-  const tutorPageSrc = await Bun.file(
-    new URL("../frontend/src/components/TutorPage.tsx", import.meta.url).pathname,
-  ).text();
+  // an existence proof). `tutorPageSrc` is read once above (FIRM 6).
   check(
     "COVERAGE-1 (FE): the set entry is NO LONGER gated on `chat.mode === \"interleaved\"`",
     !tutorPageSrc.includes('{chat.mode === "interleaved" && ('),
@@ -281,6 +338,36 @@ async function main() {
     const chapters = new Set(proposed.picks.map((p) => p.chapterName));
     soft("proposeSet picks", { n: proposed.picks.length, chapters: [...chapters], counts: proposed.picks.map((p) => p.count) });
     check("proposeSet: set size respects the cap (≤5)", proposed.picks.length <= 5);
+
+    // SET-PLAN-GATE (M52): the item blueprint is a NEW field parsed from the vendor
+    // response — unproven until a real call fills it. The model cannot decline it
+    // (items is required + min 1), so assert every pick carries a real blueprint
+    // with populated fields, and that the count is genuinely DERIVED from it.
+    soft("proposeSet first pick items", proposed.picks[0]?.items);
+    check(
+      "SET-PLAN-GATE: every pick carries ≥1 blueprint item (a real call FILLED the field)",
+      proposed.picks.every((p) => p.items.length >= 1),
+    );
+    check(
+      "SET-PLAN-GATE: count === items.length (derived, not a separate number)",
+      proposed.picks.every((p) => p.count === p.items.length),
+    );
+    check(
+      "SET-PLAN-GATE: every item has a valid axis + non-empty kind/intent/difficulty",
+      proposed.picks.every((p) =>
+        p.items.every(
+          (it) =>
+            ["conceptual", "procedural", "both"].includes(it.axis) &&
+            it.kind.trim().length > 0 &&
+            it.intent.trim().length > 0 &&
+            it.difficulty.trim().length > 0,
+        ),
+      ),
+    );
+    check(
+      "SET-PLAN-GATE: item `n` is 1..N within each pick",
+      proposed.picks.every((p) => p.items.every((it, i) => it.n === i + 1)),
+    );
   }
 
   // ── SOFT (real Gemini): authorSetFromChat fans out across MULTIPLE sub_topics ──
@@ -401,6 +488,81 @@ async function main() {
     check(
       "coverage fan-out: one authoring_worker row per sub_topic, under the BLOCKED chat",
       covWorkers.length === covTargets.length,
+    );
+  }
+
+  // ── SOFT (real Gemini) · SET-PLAN-GATE: the plan REACHES the drafter ──────────
+  // The slice's headline claim, and the case the feature exists for (M97): a
+  // per-target plan is not display-only — it is threaded into the fan-out so the
+  // drafter writes THAT blueprint. Proven end-to-end: author ONE fresh sub-topic
+  // WITH a plan carrying a UNIQUE sentinel intent, and assert the persisted drafter
+  // prompt (`brief`) contains the sentinel + the "approved plan" marker. The
+  // assertion is deterministic (string presence); real Gemini only makes the spawn
+  // run. If the wire were disconnected the sentinel would be absent → red (M101).
+  //
+  // The NEGATIVE CONTROL is the interleaved fan-out's chB[0] brief, authored earlier
+  // WITHOUT a plan — a real, already-persisted, guaranteed-non-empty brief. Reusing
+  // it (rather than a second live call) makes the control (a) impossible to pass
+  // vacuously on a Gemini failure that writes no row, and (b) one fewer flaky call.
+  // The two briefs differ by EXACTLY the plan block.
+  if (geminiConfigured) {
+    const SENTINEL = "PLAN-GATE-SENTINEL-STATIC-VS-KINETIC-FRICTION-7X2Q";
+    const MARKER = "THE PLAN THE TUTOR APPROVED";
+    const gatePlan: WorkerPlan = {
+      read: "",
+      items: [
+        {
+          n: 1,
+          axis: "conceptual",
+          kind: "misconception-probe",
+          intent: SENTINEL,
+          difficulty: "medium",
+        },
+      ],
+      questions: [],
+    };
+    const withPlanSt = fx.chB.subIds[1]!; // Friction — untouched by any earlier leg
+    const noPlanSt = fx.chB.subIds[0]!; // authored WITHOUT a plan in the interleaved fan-out
+    await rows(P.id, (tx) =>
+      authorSetFromChat(tx, {
+        boardId: P.id,
+        tutorUserId: tut.id,
+        chatId: chat.chatId,
+        targets: [{ subTopicId: withPlanSt, count: 1, plan: gatePlan }],
+      }),
+    );
+    const latestBrief = async (stId: string): Promise<string> => {
+      const [w] = await rows(P.id, (tx) =>
+        tx
+          .select({ brief: authoringWorker.brief })
+          .from(authoringWorker)
+          .where(
+            and(
+              eq(authoringWorker.chatId, chat.chatId),
+              eq(authoringWorker.subTopicId, stId),
+            ),
+          )
+          .orderBy(desc(authoringWorker.createdAt))
+          .limit(1),
+      );
+      return w?.brief ?? "";
+    };
+    const withBrief = await latestBrief(withPlanSt);
+    const noBrief = await latestBrief(noPlanSt);
+    soft("with-plan brief has sentinel", withBrief.includes(SENTINEL));
+    check(
+      "SET-PLAN-GATE: the approved item's intent reaches the drafter prompt (the GATE)",
+      withBrief.includes(SENTINEL),
+    );
+    check(
+      "SET-PLAN-GATE: the drafter prompt carries the 'approved plan' marker",
+      withBrief.includes(MARKER),
+    );
+    // Negative control: a REAL plan-less brief (non-empty, so this can't pass on a
+    // missing row — M101/M52) must carry NEITHER the sentinel NOR the marker.
+    check(
+      "SET-PLAN-GATE (neg control): the plan-LESS interleaved brief exists and has NO plan block",
+      noBrief.length > 0 && !noBrief.includes(SENTINEL) && !noBrief.includes(MARKER),
     );
   }
 

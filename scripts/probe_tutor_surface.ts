@@ -223,12 +223,31 @@ async function main() {
     const [ps] = await tx.insert(practiceSession).values({
       boardId: P.id, appUserId: userS1, subTopicId: fx.B, questionIds: [q!.id],
     }).returning();
-    // typed attempt
+    // typed attempt. Slice ASSESS-SEE (item 2): the feedback jsonb carries the
+    // WHOLE evaluation the student read, not just its score — the tutor must be
+    // able to see where the 2 lost marks went, which the axis reasoning does not
+    // say. Written the way answer_feedback.ts writes it, forensics fields and all,
+    // so the probe exercises the real stored shape.
     const [aTyped] = await tx.insert(attempt).values({
       boardId: P.id, practiceSessionId: ps!.id, questionId: q!.id, appUserId: userS1,
       answerText: "A mixture keeps each part RECALL_ANSWER", confidence: 4, timeMs: 30000,
-      // the student-facing marks this answer earned — the tutor must see the SAME score
-      feedback: { verdict: "partial", feedback: "good start", marksAwarded: 3, marksMax: 5 },
+      feedback: {
+        verdict: "partial",
+        feedback: "EVAL_PROSE: you named the parts but not what keeps them separable.",
+        strengths: ["EVAL_STRENGTH: identified both components"],
+        improvements: ["EVAL_GAP: no mention of the parts keeping their properties"],
+        marksAwarded: 3, marksMax: 5,
+        model: "gemini-3", generatedAt: "2026-07-30T00:00:00.000Z",
+      },
+    }).returning();
+    // A LEGACY cached feedback: marks, no prose. 749 of 810 local observations
+    // have no evaluation at all (the old-b2c backfill imported answers without
+    // the student-facing read), so the empty case is the COMMON one — it must
+    // degrade to null, never a half-rendered shell or a throw.
+    const [aLegacy] = await tx.insert(attempt).values({
+      boardId: P.id, practiceSessionId: ps!.id, questionId: q!.id, appUserId: userS1,
+      answerText: "LEGACY_ANSWER", confidence: 2, timeMs: 20000,
+      feedback: { verdict: "partial", marksAwarded: 2, marksMax: 5 },
     }).returning();
     // photo attempt (+ 2 images)
     const [aPhoto] = await tx.insert(attempt).values({
@@ -237,9 +256,13 @@ async function main() {
     }).returning();
     const [im0] = await tx.insert(attemptImage).values({ boardId: P.id, attemptId: aPhoto!.id, storageKey: `recall/${tag}/0.jpg`, mime: "image/jpeg", ordinal: 0 }).returning();
     const [im1] = await tx.insert(attemptImage).values({ boardId: P.id, attemptId: aPhoto!.id, storageKey: `recall/${tag}/1.jpg`, mime: "image/jpeg", ordinal: 1 }).returning();
-    // two observations: one on the typed attempt, one on the photo attempt
-    await tx.insert(observation).values({ boardId: P.id, studentId: userS1, subTopicId: fx.B, axis: "conceptual", observationLevel: 4, reasoning: "typed read", source: STAGE1, questionId: q!.id, attemptId: aTyped!.id, createdAt: at(9000) });
+    // three observations: typed, photo, legacy. The typed one carries the
+    // author's intent (ASSESS-SEE item 7) — copied onto the observation at
+    // scoring time by assessment.ts, and until this slice returned by
+    // getObservations and dropped unrendered by the client.
+    await tx.insert(observation).values({ boardId: P.id, studentId: userS1, subTopicId: fx.B, axis: "conceptual", observationLevel: 4, reasoning: "typed read", source: STAGE1, questionId: q!.id, attemptId: aTyped!.id, pedagogicalComment: "PEDA_INTENT: checks whether she separates 'mixed' from 'combined'", createdAt: at(9000) });
     await tx.insert(observation).values({ boardId: P.id, studentId: userS1, subTopicId: fx.B, axis: "procedural", observationLevel: 3, reasoning: "photo read", source: STAGE1, questionId: q!.id, attemptId: aPhoto!.id, createdAt: at(9001) });
+    await tx.insert(observation).values({ boardId: P.id, studentId: userS1, subTopicId: fx.B, axis: "conceptual", observationLevel: 2, reasoning: "legacy read", source: STAGE1, questionId: q!.id, attemptId: aLegacy!.id, createdAt: at(9002) });
     return { qId: q!.id, im0: im0!.id, im1: im1!.id };
   });
   const obsB = await withBoard(P.id, (tx) => getObservations(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.B }));
@@ -252,6 +275,47 @@ async function main() {
   check("marks: photo obs (no feedback) has null marks", photoObs?.marksAwarded === null && photoObs?.marksMax === null);
   check("recall: photo obs carries ordered image ids, null answerText", photoObs?.answerText === null && photoObs?.answerPhotoIds.length === 2 && photoObs?.answerPhotoIds[0] === recall.im0 && photoObs?.answerPhotoIds[1] === recall.im1);
   check("recall: reference answer NEVER surfaces in the recall payload", !/REF_SECRET/.test(JSON.stringify(obsB)));
+
+  // ─────────── Slice ASSESS-SEE — items 2 + 7 ───────────
+  // The tutor could see THAT marks were lost and never WHERE. The evaluation was
+  // selected from the DB and discarded by readMarks one line before reaching them.
+  const legacyObs = obsB.find((o) => o.reasoning === "legacy read");
+  // #1 is the scenario the feature exists for (M97): an answer that lost marks,
+  // whose account of the loss the tutor must now be able to read.
+  check("ASSESS-SEE §2: an answer that lost marks carries the evaluation the student read",
+    typedObs?.marksAwarded === 3 && typedObs?.marksMax === 5 &&
+    typedObs?.evaluation?.feedback === "EVAL_PROSE: you named the parts but not what keeps them separable.");
+  check("ASSESS-SEE §2: where the mark was LOST (improvements) reaches the tutor",
+    typedObs?.evaluation?.improvements.length === 1 &&
+    typedObs?.evaluation?.improvements[0] === "EVAL_GAP: no mention of the parts keeping their properties");
+  check("ASSESS-SEE §2: strengths + verdict ride along",
+    typedObs?.evaluation?.strengths[0] === "EVAL_STRENGTH: identified both components" &&
+    typedObs?.evaluation?.verdict === "partial");
+  // The common case, not the edge case: a migrated sitting has marks-only or no
+  // feedback at all. Must be null (so the UI renders nothing) — never a throw,
+  // never an empty shell built from a verdict with no prose behind it.
+  check("ASSESS-SEE §2: legacy feedback (marks, NO prose) → evaluation null, marks still read",
+    legacyObs?.evaluation === null && legacyObs?.marksAwarded === 2 && legacyObs?.marksMax === 5);
+  check("ASSESS-SEE §2: an attempt with NO feedback at all → evaluation null",
+    photoObs?.evaluation === null && photoObs?.marksAwarded === null);
+  // Structural M11 guard. The stored jsonb also holds `model` + `generatedAt`
+  // (answer_feedback.ts's forensics), and a future refactor that spreads the whole
+  // column into the view would leak whatever else lands there. Pin the key set.
+  // Null-guarded on purpose: under a regression that nulls the evaluation this
+  // must report RED, not throw. A probe that CRASHES reads like a broken
+  // environment; a probe that reddens names the defect. (Found by negative-
+  // controlling this very block — the unguarded `!` aborted the whole run.)
+  check("ASSESS-SEE §2: evaluation exposes EXACTLY the 4 student-facing keys (no jsonb spread)",
+    JSON.stringify(Object.keys(typedObs?.evaluation ?? {}).sort()) ===
+      JSON.stringify(["feedback", "improvements", "strengths", "verdict"]));
+  check("ASSESS-SEE §2: forensics fields (model/generatedAt) never reach the tutor payload",
+    !/gemini-3|generatedAt/.test(JSON.stringify(obsB)));
+  // Item 7 — pedagogical_comment was ALREADY returned here and simply unrendered;
+  // nothing asserted it, so the contract the FE now depends on was unprotected.
+  check("ASSESS-SEE §7: the author's intent reaches the tutor on the observation",
+    typedObs?.pedagogicalComment === "PEDA_INTENT: checks whether she separates 'mixed' from 'combined'");
+  check("ASSESS-SEE §7: an observation with no authored intent reads null (renders nothing)",
+    photoObs?.pedagogicalComment === null);
 
   // 6c. getSubTopicQuestions (Assign-tab preview) — approved canonical only, with
   // the authoring "why" (pedagogical_note); draft + private questions excluded.
@@ -340,6 +404,15 @@ async function main() {
   check("override: machine read PRESERVED (still L4)", corrected.observationLevel === 4);
   check("override: tutorLevel = 2, effectiveLevel = 2 (the tutor wins)", corrected.tutorLevel === 2 && corrected.effectiveLevel === 2);
   check("override: reason + overriddenAt stored", (corrected.overrideReason ?? "").length > 0 && corrected.overriddenAt !== null);
+  // ASSESS-SEE — the correction carries the READ fields only, and the client
+  // merges it onto the existing row (`{...x, ...next}`). An own `evaluation` key
+  // here — even one holding undefined, which the `Omit` type cannot prevent at
+  // runtime — would blank the student's evaluation on every correction, i.e. the
+  // act of using item 8 would erase item 2. Assert the key is absent, not falsy.
+  check("ASSESS-SEE §2: a correction carries NO evaluation key (the FE spread must not blank it)",
+    !("evaluation" in (corrected as object)) &&
+    !("marksAwarded" in (corrected as object)) &&
+    !("answerText" in (corrected as object)));
 
   const obsAfter = await withBoard(P.id, (tx) => getObservations(tx, { tutorUserId: userT, studentId: userS1, subTopicId: fx.A }));
   const t2 = obsAfter.find((o) => o.id === target.id)!;

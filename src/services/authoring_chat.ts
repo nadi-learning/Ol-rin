@@ -44,6 +44,7 @@ import {
   WorkerTurn,
   type VendorChoice,
   type WorkerPlan,
+  type WorkerPlanItem,
 } from "@b2c/kernel/contracts";
 import { complete, extractJsonObject } from "./ai_client";
 import type { VendorId } from "./ai/types";
@@ -359,7 +360,8 @@ export async function assembleGrounding(
   const obs = await tx
     .select({
       axis: observation.axis,
-      level: observation.observationLevel,
+      observationLevel: observation.observationLevel,
+      tutorLevel: observation.tutorLevel,
       reasoning: observation.reasoning,
       calibrationFlag: observation.calibrationFlag,
       subTopicName: subTopic.name,
@@ -388,12 +390,23 @@ export async function assembleGrounding(
           .join("\n")
       : "  (no certified mastery yet — the student has not been through Stage-2 certification)";
 
+  // Slice ASSESS-SEE (item 12) — the EFFECTIVE level, never the raw machine read.
+  // A tutor who corrects an observation has overruled the scorer on the evidence;
+  // Stage-2 counts `tutorLevel ?? observationLevel` and so does every other
+  // grounding surface (synthesis.ts, assignment.ts, assessment_chat.ts). This one
+  // read stayed raw, so the surface generating the student's NEXT questions was
+  // the only place in the system that never heard the correction.
+  //
+  // The "(tutor-corrected)" marker matches assessment_chat.ts — a human overruling
+  // the machine is stronger evidence than the machine agreeing with itself, and
+  // the author should weigh it that way.
   const obsLines =
     obs.length > 0
       ? obs
           .map(
             (o) =>
-              `  - [${o.subTopicName}] ${o.axis} L${o.level}` +
+              `  - [${o.subTopicName}] ${o.axis} L${o.tutorLevel ?? o.observationLevel}` +
+              (o.tutorLevel != null ? " (tutor-corrected)" : "") +
               (o.calibrationFlag ? ` (calibration: ${o.calibrationFlag})` : "") +
               `: ${o.reasoning}`,
           )
@@ -1915,11 +1928,59 @@ Pick the ONE sub-topic to author questions for now and how many (1–8, default 
 const PROPOSE_SET_MAX = 5;
 const PROPOSE_SET_ENDPOINT = "authoring.proposeTargetSet";
 
-const PROPOSE_SET_SYSTEM = `You help a tutor assemble an INTERLEAVED practice set for a specific student — a MIX of sub-topics (from possibly different chapters) that are worth practising together so the student must DISCRIMINATE between them, not just drill one skill. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics across the chosen chapters. Pick 2–${PROPOSE_SET_MAX} sub-topics that (a) target genuine weaknesses and (b) are close enough to be confusable / benefit from being mixed. For EACH pick, choose a small count (1–4; interleaved sets are short per sub-topic — 2 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,count}], rationale} where rationale is one sentence on why this MIX.`;
+// ───────────────────────── SET-PLAN-GATE: the item BLUEPRINT ─────────────────────────
+//
+// Each pick now carries an item blueprint — one entry per question the worker will
+// write, mirroring WorkerPlanItem MINUS `n` (the server renumbers 1..N so `n` is
+// sequential regardless of what the model emitted). The per-sub-topic COUNT is
+// DERIVED from items.length — there is no separate count for the two to drift apart
+// (the whole reason single-mode plan-first makes the count non-editable at approve:
+// the tutor approved N specific items). authorSetFromChat threads each pick's plan
+// into spawnAuthoringWorker, whose drafter ALREADY consumes an approved plan (both
+// vendors) — so approving the enriched proposal IS the plan gate, with no second
+// AI phase. The shape is defined here (not imported from authoring_worker) because
+// the model output omits `n`; WorkerPlanItem (with `n`) is assembled in the resolver.
+const proposedItemSchema = z.object({
+  axis: z.enum(["conceptual", "procedural", "both"]),
+  kind: z.string(),
+  intent: z.string(),
+  difficulty: z.string(),
+});
+// Mirrors authoring_worker.ts geminiPlanSchema's item object, minus `n`. Kept in
+// sync by hand; the SOFT probe leg (a real call must fill it) is what proves it.
+const geminiProposedItems = {
+  type: Type.ARRAY,
+  description: "one entry per question you will write for this sub-topic, in the order you'd write them",
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      axis: {
+        type: Type.STRING,
+        enum: ["conceptual", "procedural", "both"],
+        description: "which mastery axis this question probes",
+      },
+      kind: {
+        type: Type.STRING,
+        description: "the conceptual-question kind from the palette",
+      },
+      intent: {
+        type: Type.STRING,
+        description: "the specific misconception or skill this question probes",
+      },
+      difficulty: {
+        type: Type.STRING,
+        description: "the difficulty setting in words, per the dial catalog",
+      },
+    },
+    required: ["axis", "kind", "intent", "difficulty"],
+  },
+} as const;
+
+const PROPOSE_SET_SYSTEM = `You help a tutor assemble an INTERLEAVED practice set for a specific student — a MIX of sub-topics (from possibly different chapters) that are worth practising together so the student must DISCRIMINATE between them, not just drill one skill. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics across the chosen chapters. Pick 2–${PROPOSE_SET_MAX} sub-topics that (a) target genuine weaknesses and (b) are close enough to be confusable / benefit from being mixed. For EACH pick, list the exact ITEMS you will write — one entry per question, in the order you'd write them, each with its axis, the conceptual-question KIND (from the palette), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count, so keep sets short (1–4 per sub-topic — a mix is for contrast, not volume; 2 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why this MIX.`;
 
 const proposeSetResultSchema = z.object({
   picks: z
-    .array(z.object({ choice: z.number().int(), count: z.number().int() }))
+    .array(z.object({ choice: z.number().int(), items: z.array(proposedItemSchema).min(1) }))
     .min(1),
   rationale: z.string().default(""),
 });
@@ -1937,12 +1998,9 @@ const geminiProposeSetSchema = {
             type: Type.INTEGER,
             description: "the 1-based number of the sub-topic, from the list",
           },
-          count: {
-            type: Type.INTEGER,
-            description: "how many questions for this sub-topic (1–4); 2 is a sensible default",
-          },
+          items: geminiProposedItems,
         },
-        required: ["choice", "count"],
+        required: ["choice", "items"],
       },
     },
     rationale: {
@@ -1955,7 +2013,7 @@ const geminiProposeSetSchema = {
 
 const CLAUDE_PROPOSE_SET_FORMAT = `${PROPOSE_SET_SYSTEM}
 
-OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"count":<1-4>}],"rationale":"..."}. No prose, no fences.`;
+OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"items":[{"axis":"conceptual|procedural|both","kind":"...","intent":"...","difficulty":"..."}]}],"rationale":"..."}. No prose, no fences.`;
 
 // ───────────────────────── COVERAGE-1: the second set intent ─────────────────────────
 //
@@ -1993,6 +2051,21 @@ export function clampSetCount(count: number, intent: ProposeSetIntent = "discrim
   return Math.min(Math.max(count, 1), max);
 }
 
+/**
+ * SET-PLAN-GATE: cap a proposed item blueprint to the intent's per-sub-topic range
+ * and renumber 1..N. Pure — so the "count is DERIVED from items.length, capped, and
+ * n is sequential" rule is assertable WITHOUT an AI call (same reason clampSetCount
+ * is pure; a probe that only sees whatever the model proposed passes vacuously).
+ */
+export function clampProposedItems(
+  rawItems: z.infer<typeof proposedItemSchema>[],
+  intent: ProposeSetIntent = "discriminate",
+): WorkerPlanItem[] {
+  return rawItems
+    .slice(0, clampSetCount(rawItems.length, intent))
+    .map((it, i) => ({ n: i + 1, ...it }));
+}
+
 // NOTE: the set-size cap is PROPOSE_SET_MAX (5) for BOTH intents — founder ruled
 // it unchanged (2026-07-29: "keep it 5 only then don't change it").
 const PROPOSE_COVERAGE_SYSTEM = `You help a tutor author questions for SEVERAL sub-topics of ONE chapter at once — a COVERAGE set, so the tutor can build practice across the chapter in parallel instead of one sub-topic at a time. This is NOT an interleaved/discrimination mix: the sub-topics do NOT need to be confusable, and you are working within a single chapter.
@@ -2003,7 +2076,7 @@ Pick the sub-topics to author, in this order of preference:
 1. Any the tutor has NAMED or clearly pointed at in the conversation — honour those first.
 2. Where the tutor has not been specific, fill toward the genuine weaknesses and the least-covered sub-topics (thin or no observations, lower mastery).
 
-Pick 2–${PROPOSE_SET_MAX} sub-topics (never more than ${PROPOSE_SET_MAX}). For EACH, choose a question count (1–${PROPOSE_COVERAGE_COUNT_MAX}; 3 is a sensible default — the tutor can adjust before authoring). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,count}], rationale} where rationale is one sentence on why THESE sub-topics.`;
+Pick 2–${PROPOSE_SET_MAX} sub-topics (never more than ${PROPOSE_SET_MAX}). For EACH, list the exact ITEMS you will write — one entry per question, in order, each with its axis, the conceptual-question KIND (from the palette), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count (1–${PROPOSE_COVERAGE_COUNT_MAX}; ~3 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why THESE sub-topics.`;
 
 const geminiProposeCoverageSchema = {
   type: Type.OBJECT,
@@ -2018,12 +2091,9 @@ const geminiProposeCoverageSchema = {
             type: Type.INTEGER,
             description: "the 1-based number of the sub-topic, from the list",
           },
-          count: {
-            type: Type.INTEGER,
-            description: `how many questions for this sub-topic (1–${PROPOSE_COVERAGE_COUNT_MAX}); 3 is a sensible default`,
-          },
+          items: geminiProposedItems,
         },
-        required: ["choice", "count"],
+        required: ["choice", "items"],
       },
     },
     rationale: {
@@ -2036,14 +2106,18 @@ const geminiProposeCoverageSchema = {
 
 const CLAUDE_PROPOSE_COVERAGE_FORMAT = `${PROPOSE_COVERAGE_SYSTEM}
 
-OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"count":<1-${PROPOSE_COVERAGE_COUNT_MAX}>}],"rationale":"..."}. No prose, no fences.`;
+OUTPUT FORMAT (STRICT): respond with ONLY a JSON object {"picks":[{"choice":<1-based number>,"items":[{"axis":"conceptual|procedural|both","kind":"...","intent":"...","difficulty":"..."}]}],"rationale":"..."}. No prose, no fences.`;
 
 export type ProposeSetPick = {
   subTopicId: string;
   subTopicName: string;
   topicName: string;
   chapterName: string;
+  // DERIVED = items.length. Kept as a field so the FE/fan-out don't recompute it.
   count: number;
+  // SET-PLAN-GATE: the approved blueprint. Empty only on the degenerate fallback
+  // pick (model returned nothing usable) → the fan-out self-derives for that pick.
+  items: WorkerPlanItem[];
 };
 export type ProposeSetResult = {
   chatId: string;
@@ -2155,18 +2229,26 @@ Assemble the ${cover ? "coverage" : "interleaved"} set now. Return {picks:[{choi
     const chosen = subs[idx]!;
     if (seen.has(chosen.subTopicId)) continue;
     seen.add(chosen.subTopicId);
+    // The blueprint is the source of truth: cap it to the intent's range and
+    // renumber 1..N. The count is DERIVED (items.length) — there is no separate
+    // number for it to drift from. Pure helper so the rule is probe-assertable.
+    const items = clampProposedItems(p.items, intent);
     picks.push({
       subTopicId: chosen.subTopicId,
       subTopicName: chosen.subTopicName,
       topicName: chosen.topicName,
       chapterName: chosen.chapterName,
-      count: clampSetCount(p.count, intent),
+      count: items.length,
+      items,
     });
     if (picks.length >= PROPOSE_SET_MAX) break;
   }
   if (picks.length === 0) {
     // The model returned only out-of-range/dup picks — fall back to the first
-    // allowlist entry so the tutor still gets an actionable proposal.
+    // allowlist entry so the tutor still gets an actionable proposal. No usable
+    // blueprint here, so items stays EMPTY: the fan-out threads no plan for this
+    // pick and the worker self-derives (the pre-slice behaviour), rather than
+    // manufacturing an item the model never proposed.
     const first = subs[0]!;
     picks.push({
       subTopicId: first.subTopicId,
@@ -2174,6 +2256,7 @@ Assemble the ${cover ? "coverage" : "interleaved"} set now. Return {picks:[{choi
       topicName: first.topicName,
       chapterName: first.chapterName,
       count: cover ? 3 : 2,
+      items: [],
     });
   }
 
@@ -2224,7 +2307,10 @@ export async function authorSetFromChat(
     boardId: string;
     tutorUserId: string;
     chatId: string;
-    targets: { subTopicId: string; count: number }[];
+    // SET-PLAN-GATE: `plan` is the tutor-approved blueprint for this sub-topic. When
+    // present the drafter writes exactly it (the gate); absent = self-derive (the
+    // pre-slice behaviour, still the path for the degenerate fallback pick).
+    targets: { subTopicId: string; count: number; plan?: WorkerPlan | null }[];
   },
 ): Promise<AuthorSetResult> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
@@ -2243,6 +2329,7 @@ export async function authorSetFromChat(
     topicName: string;
     chapterName: string;
     count: number;
+    plan: WorkerPlan | null;
   }[] = [];
   for (const t of args.targets) {
     if (seen.has(t.subTopicId)) continue;
@@ -2263,12 +2350,18 @@ export async function authorSetFromChat(
       throw new SubTopicNotFoundError(t.subTopicId);
     }
     seen.add(t.subTopicId);
+    // When a plan is present, the count is LOCKED to its item count — the tutor
+    // approved exactly those N items, so drafting a different N would draft
+    // something never approved (single-mode's approveAuthoringPlan rule). Only a
+    // plan-less target honours the caller's raw count.
+    const plan = t.plan && t.plan.items.length > 0 ? t.plan : null;
     resolved.push({
       id: st.id,
       name: st.name,
       topicName: st.topicName,
       chapterName: st.chapterName,
-      count: Math.min(Math.max(t.count, 1), 8),
+      count: plan ? plan.items.length : Math.min(Math.max(t.count, 1), 8),
+      plan,
     });
     if (resolved.length >= PROPOSE_SET_MAX) break;
   }
@@ -2291,6 +2384,10 @@ export async function authorSetFromChat(
           vendor: row.vendor as VendorChoice,
           count: r.count,
           brief,
+          // SET-PLAN-GATE: hand the drafter the approved blueprint directly. There
+          // is no episode row on this path, so spawnAuthoringWorker can't read it
+          // from prior turns — it must be passed in.
+          approvedPlan: r.plan,
         });
         const persisted = await persistDrafts(wtx, {
           boardId: args.boardId,

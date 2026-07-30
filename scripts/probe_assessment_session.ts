@@ -98,7 +98,9 @@ import {
   getAssessmentSession,
   listPendingAssessments,
   openAssessmentSession,
+  redraftSubTopic,
   SessionAlreadyFinalizedError,
+  SubTopicNotInSittingError,
 } from "../src/services/assessment_session";
 import { sendAssessmentChatTurn } from "../src/services/assessment_chat";
 import { gatherSynthesisInput, writeSynthesis } from "../src/services/synthesis";
@@ -448,12 +450,116 @@ async function main() {
     tx.update(assessmentSession).set({ drafts: goodDrafts }).where(eq(assessmentSession.id, opened.id)),
   );
 
+  // ── 8c. REDRAFT-1 (walkthrough item 5) — re-draft ONE sub-topic in place ──
+  // The sitting is still OPEN here. Guard legs first — all deterministic, each
+  // throws BEFORE any Gemini call (the checks run ahead of draftStage2).
+  let notInSitting = false;
+  try {
+    await rows(P.id, (tx) =>
+      redraftSubTopic(tx, { boardId: P.id, tutorUserId: tut.id, sessionId: opened.id, subTopicId: fx.stLoose }),
+    );
+  } catch (e) {
+    notInSitting = e instanceof SubTopicNotInSittingError;
+  }
+  // #1 is the guard the feature most needs: without it a caller drafts an
+  // arbitrary sub_topic into the row that finalize never certifies (M97-family).
+  check("redraft: a sub_topic NOT in the sitting → SUBTOPIC_NOT_IN_SITTING (no AI call)", notInSitting);
+
+  let redraftOwn = false;
+  try {
+    await rows(P.id, (tx) =>
+      redraftSubTopic(tx, { boardId: P.id, tutorUserId: tut2.id, sessionId: opened.id, subTopicId: fx.stA }),
+    );
+  } catch (e) {
+    redraftOwn = e instanceof AssessmentSessionNotFoundError;
+  }
+  check("redraft: a non-owner tutor → ASSESSMENT_SESSION_NOT_FOUND (ownership)", redraftOwn);
+
+  let redraftRls = false;
+  try {
+    await rows(Q.id, (tx) =>
+      redraftSubTopic(tx, { boardId: Q.id, tutorUserId: tut.id, sessionId: opened.id, subTopicId: fx.stA }),
+    );
+  } catch (e) {
+    redraftRls = e instanceof AssessmentSessionNotFoundError;
+  }
+  check("redraft: cross-board (board Q) → not found (RLS)", redraftRls);
+
+  // Happy path — prove the redraft RE-GATHERED the current evidence. The hook is
+  // `observationCount`, which gatherStage2Input computes as `obs.length` in CODE,
+  // never from the model. Add a fresh Stage-1 read, redraft, and the count must
+  // rise; the model's proposed numbers are only a SOFT print (M101: assert the
+  // rule the code owns, not the vendor's output).
+  const beforeCount = opened.drafts[fx.stA]!.observationCount; // 3 in the fixture
+  const beforeDraftB = JSON.stringify(opened.drafts[fx.stB]);
+  const [addedObs] = await rows(P.id, (tx) =>
+    tx
+      .insert(observation)
+      .values({
+        boardId: P.id, studentId: stu.id, subTopicId: fx.stA, axis: "conceptual",
+        observationLevel: 4,
+        reasoning: "REDRAFT_NEW: carried the principle to an untaught context.",
+        source: "stage1_scorer", createdAt: new Date(),
+      })
+      .returning(),
+  );
+  const tR = Date.now();
+  const redrafted = await rows(P.id, (tx) =>
+    redraftSubTopic(tx, { boardId: P.id, tutorUserId: tut.id, sessionId: opened.id, subTopicId: fx.stA }),
+  );
+  soft("redraft wall-clock ms (ONE call)", Date.now() - tR);
+  soft("redraft stA pair (was → now)", {
+    was: { c: dA.draft.conceptualLevel, p: dA.draft.proceduralLevel },
+    now: {
+      c: redrafted.drafts[fx.stA]!.draft.conceptualLevel,
+      p: redrafted.drafts[fx.stA]!.draft.proceduralLevel,
+    },
+  });
+  check(
+    "redraft: RE-GATHERED — observationCount rose to include the new read (code-computed, not the model)",
+    redrafted.drafts[fx.stA]!.observationCount === beforeCount + 1,
+  );
+  check(
+    "redraft: replaced ONLY the target — stB's draft is byte-identical",
+    JSON.stringify(redrafted.drafts[fx.stB]) === beforeDraftB,
+  );
+  check(
+    "redraft: sitting identity unchanged (same id, same 2-sub_topic composition, still open)",
+    redrafted.id === opened.id && redrafted.subTopicIds.length === 2 && redrafted.status === "open",
+  );
+  check(
+    "redraft: the fresh draft is structurally valid (pair 1–5|null, prose non-empty)",
+    (redrafted.drafts[fx.stA]!.draft.conceptualLevel === null ||
+      (redrafted.drafts[fx.stA]!.draft.conceptualLevel! >= 1 &&
+        redrafted.drafts[fx.stA]!.draft.conceptualLevel! <= 5)) &&
+      redrafted.drafts[fx.stA]!.draft.description.trim().length > 0,
+  );
+  // Restore: drop the added read + put stA's original draft back, so the
+  // downstream accept-all assertions (which compare committed levels to dA) hold.
+  await rows(P.id, (tx) => tx.delete(observation).where(eq(observation.id, addedObs!.id)));
+  await rows(P.id, (tx) =>
+    tx.update(assessmentSession).set({ drafts: goodDrafts }).where(eq(assessmentSession.id, opened.id)),
+  );
+
   // ── 9. accept-all fast path (D-S2R-2): no items → commit as drafted ──
   const fin = await rows(P.id, (tx) =>
     finalizeAssessmentSession(tx, { boardId: P.id, tutorUserId: tut.id, sessionId: opened.id }),
   );
   check("accept-all: ONE call with NO items certified every sub_topic in the sitting", fin.committed.length === 2);
   check("accept-all: nothing was flagged as a tutor override (the draft was accepted as-is)", fin.committed.every((c) => !c.overridden));
+
+  // REDRAFT-1 — a finalized sitting is immutable; its drafts are the record of
+  // what was certified. The status guard runs BEFORE membership, so this throws
+  // even for a sub_topic that IS in the sitting.
+  let redraftFinalized = false;
+  try {
+    await rows(P.id, (tx) =>
+      redraftSubTopic(tx, { boardId: P.id, tutorUserId: tut.id, sessionId: opened.id, subTopicId: fx.stA }),
+    );
+  } catch (e) {
+    redraftFinalized = e instanceof SessionAlreadyFinalizedError;
+  }
+  check("redraft: a FINALIZED sitting refuses re-draft → SESSION_ALREADY_FINALIZED", redraftFinalized);
 
   const ms = await rows(P.id, (tx) =>
     tx.select().from(masteryState).where(eq(masteryState.studentId, stu.id)),

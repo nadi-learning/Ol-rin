@@ -44,6 +44,7 @@ import {
   subTopic,
   transcript,
 } from "@b2c/kernel/schema";
+import { applyCertificationRule, type CertAxis } from "@b2c/kernel/mastery";
 import { Type } from "@google/genai";
 import { withBoard } from "../db/with-board";
 import { geminiJson } from "./ai/gemini";
@@ -588,10 +589,15 @@ Grade this answer for CORRECTNESS against the reference per your instructions. R
 // Slice S2 — the end-of-assignment, tutor-in-the-loop certification (assessment.md
 // §3 + §6). The ONLY place mastery moves. Two halves:
 //   - draftStage2: ONE Gemini call reads ALL of a sub-topic's Stage-1 observations
-//     + the current mastery_state (or null = cold start) + the LOs + datetimes,
-//     applies §3's raise/lower rule + the spacing gaps IN THE LLM (§6.2), and
+//     + the current mastery_state (or null = cold start) + the LOs + datetimes and
 //     PROPOSES the new pair + description + log + the two re-check dates. Reads only,
 //     re-runnable — no draft table (D-S2-1).
+//     ⚠️ Slice CERT-RULE (S176): §3's COUNTS + SPACING are no longer the LLM's to
+//     execute. `enforceCertificationRule` (below) clamps the proposal against
+//     `@b2c/kernel/mastery` — the model may not certify above what the evidence
+//     supports, nor demote with no failure to point at. The prompt still states
+//     the ladder (so the model's reasoning stays coherent, and its errors stay
+//     visible in the `[RULE]` log line), but code is authoritative.
 //   - finalizeStage2: the tutor-adjusted proposal is committed in ONE tx — snapshot
 //     → mastery_history; overwrite mastery_state; append transcript(stage2);
 //     append event_log (stage2_finalize always; assessment_override SEPARATELY when
@@ -934,7 +940,54 @@ Apply the rule. Propose the certified pair, the description, the log, the two re
     maxOutputTokens: null,
   });
 
-  return stage2DraftSchema.parse(raw);
+  return enforceCertificationRule(stage2DraftSchema.parse(raw), i);
+}
+
+/**
+ * Slice CERT-RULE — the counts+spacing ladder, applied in CODE to the model's
+ * proposal. See `@b2c/kernel/mastery` for the rule itself and why it exists.
+ *
+ * 🔑 PLACED HERE, NOT IN `draftStage2`, DELIBERATELY. `draftStage2` is called by
+ * `probe_stage2` and nothing else; the REAL path a tutor drives — a sitting
+ * drafting N sub-topics in parallel — calls `runStage2Call` directly
+ * (`assessment_session.ts:380`). Guarding the composition would have gone green
+ * in the probe and left production unprotected (miss-log M97).
+ *
+ * The adjustment is appended to `log` rather than applied silently: the log is
+ * what a tutor reads to trust the number, and a corrected number with an
+ * unchanged justification is the drift this slice exists to remove. The `[RULE]`
+ * marker also makes "how often does the model get the arithmetic wrong?"
+ * greppable in prod.
+ *
+ * ⚠️ Known and accepted: `description`/`reasoning` are the model's prose and may
+ * still narrate the pre-adjustment number. The log states the correction; the
+ * tutor edits the final level either way (§6).
+ */
+export function enforceCertificationRule(draft: Stage2Draft, i: Stage2CallInput): Stage2Draft {
+  const onAxis = (axis: CertAxis) =>
+    i.observations.filter((o) => o.axis === axis).map((o) => ({ level: o.level, at: o.at }));
+
+  const conceptual = applyCertificationRule({
+    proposed: draft.conceptualLevel,
+    current: i.current?.conceptualLevel ?? null,
+    observations: onAxis("conceptual"),
+    axis: "conceptual",
+  });
+  const procedural = applyCertificationRule({
+    proposed: draft.proceduralLevel,
+    current: i.current?.proceduralLevel ?? null,
+    observations: onAxis("procedural"),
+    axis: "procedural",
+  });
+
+  const notes = [conceptual.reason, procedural.reason].filter((r): r is string => r != null);
+
+  return {
+    ...draft,
+    conceptualLevel: conceptual.level,
+    proceduralLevel: procedural.level,
+    log: notes.length ? `${draft.log}\n\n[RULE] ${notes.join(" | ")}` : draft.log,
+  };
 }
 
 export type FinalizeResult = {

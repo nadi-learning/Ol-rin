@@ -180,7 +180,9 @@ import {
   listPendingAssessments,
   NothingToAssessError,
   openAssessmentSession,
+  redraftSubTopic,
   SessionAlreadyFinalizedError,
+  SubTopicNotInSittingError,
 } from "../services/assessment_session";
 // Slice S2R-4 — the Stage-2b advisory chat on an open sitting.
 import { sendAssessmentChatTurn } from "../services/assessment_chat";
@@ -268,7 +270,7 @@ import {
   VerifyImageNotFoundError,
 } from "../services/image_verify";
 import { currentImageFor } from "../services/image_read";
-import { VendorChoice } from "@b2c/kernel/contracts";
+import { VendorChoice, WorkerPlan } from "@b2c/kernel/contracts";
 
 export const appRouter = router({
   // S0 contract: health → { ok: true }.
@@ -1535,6 +1537,46 @@ export const appRouter = router({
         }
       }),
 
+    // redraftSubTopic (walkthrough item 5): re-run 2a for ONE sub-topic of an
+    // open sitting against the current evidence, replacing its frozen draft. A
+    // MUTATION (one real AI call) that runs INLINE, like open. Tutor-triggered
+    // only — the client fires it when the tutor is done correcting reads, never
+    // automatically. Inherits CERT-RULE (it goes through runStage2Call).
+    redraftSubTopic: tutorProcedure
+      .input(
+        z.object({
+          sessionId: z.string().uuid(),
+          subTopicId: z.string().uuid(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await redraftSubTopic(ctx.tx, {
+            boardId: ctx.board.id,
+            tutorUserId: ctx.membership.userId,
+            sessionId: input.sessionId,
+            subTopicId: input.subTopicId,
+          });
+        } catch (e) {
+          if (
+            e instanceof AssessmentSessionNotFoundError ||
+            e instanceof SubTopicNotInSittingError
+          ) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          if (e instanceof SessionAlreadyFinalizedError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          // NoObservationsError / SubTopicNotFoundError from the gather half —
+          // a can't-happen for a sub-topic already in the sitting, but map it
+          // rather than leak a 500.
+          if (e instanceof NoObservationsError || e instanceof SubTopicNotFoundError) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
     // ONE ATOMIC FINALIZE (D-S2R-1): every sub_topic in the sitting commits, or
     // none does. `items` carries ONLY the tutor's edits (§6's editable set);
     // anything omitted is accepted as drafted — an absent/empty `items` IS the
@@ -1961,6 +2003,9 @@ export const appRouter = router({
               z.object({
                 subTopicId: z.string().uuid(),
                 count: z.number().int().min(1).max(8),
+                // SET-PLAN-GATE: the tutor-approved blueprint for this sub-topic.
+                // Optional — a plan-less target self-derives (pre-slice behaviour).
+                plan: WorkerPlan.optional(),
               }),
             )
             .min(1)

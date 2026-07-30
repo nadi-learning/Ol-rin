@@ -224,6 +224,7 @@
 }
 .tut-axis--conceptual { background: #dbe7ff; color: #1b47b8; }
 .tut-axis--procedural { background: #d8efe0; color: #1d7a4d; }
+.tut-axis--both { background: #ece0f7; color: #6b34a8; }
 .tut-level {
   font-weight: 700;
   font-size: 13px;
@@ -287,6 +288,144 @@
   color: var(--muted, #6b6f80);
 }
 .tut-recall-conf { font-weight: 500; text-transform: none; letter-spacing: 0; }
+/* ASSESS-SEE item 1 — the LABEL the student picked, emphasised over the raw
+   number beside it. Migrated attempts carry a number with no label (the old-b2c
+   scale had different wording), so this span is simply absent there. */
+.tut-recall-conf-label { font-weight: 700; color: var(--ink, #1a1c25); }
+
+/* ─── ASSESS-SEE item 2: the evaluation the STUDENT read ───
+   Set apart from the recall blocks around it with a left rule: this is not our
+   reading of the answer, it is the account the student already received. */
+.tut-eval {
+  border-left: 3px solid #cdd8f5;
+  padding-left: 10px;
+}
+.tut-eval-marks { font-weight: 500; text-transform: none; letter-spacing: 0; }
+.tut-eval-verdict {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.tut-eval-verdict--strong { color: #14683f; background: #dcf3e6; }
+.tut-eval-verdict--partial { color: #8a5a00; background: #fdf0d4; }
+.tut-eval-verdict--off_track { color: #9c2626; background: #fbe3e3; }
+.tut-eval-prose {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.tut-eval-list { margin-top: 7px; }
+.tut-eval-list-head {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted, #6b6f80);
+}
+.tut-eval-list ul { margin: 0; padding-left: 17px; }
+.tut-eval-list li { font-size: 13px; line-height: 1.5; }
+/* "Where it fell short" is the answer to the question this block exists for —
+   it reads first and darker than the strengths below it. */
+.tut-eval-list--gap .tut-eval-list-head { color: #9c2626; }
+
+/* ─── ASSESS-SEE item 7: the author's intent for the question ───
+   Mirrors .tut-asg-why (the Assign tab's expander) — same affordance, so a
+   tutor who has opened one already knows what this is. */
+.tut-obs-why { margin-top: 7px; }
+.tut-obs-why-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+}
+.tut-obs-why-toggle:hover { color: var(--ink, #1a1c25); }
+.tut-obs-why-text {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: #fbfaf5;
+  border: 1px solid #efece0;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ─── ASSESS-SEE item 8: the rubric, at the override control ───
+   Collapsed by default and `font-weight: 400` on the toggle so it never competes
+   with the select it sits under — it must be reachable at the decision without
+   occupying the screen when it isn't wanted. */
+.tut-rubric { margin-top: 6px; }
+.tut-rubric-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted, #6b6f80);
+}
+.tut-rubric-toggle:hover { color: var(--ink, #1a1c25); }
+.tut-rubric-body {
+  margin-top: 7px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  border: 1px solid #eceef3;
+  border-radius: 8px;
+}
+/* The null≠1 trap. Loud on purpose: it is the one error on this screen that
+   writes a weakness the student never demonstrated. */
+.tut-rubric-warn {
+  margin: 0 0 9px;
+  padding: 7px 9px;
+  background: #fdf0d4;
+  border: 1px solid #f0d9a4;
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #7a4e00;
+}
+.tut-rubric-rungs { margin: 0; padding: 0; list-style: none; }
+.tut-rubric-rung {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 3px 0;
+}
+.tut-rubric-num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e7eaf2;
+  color: #3b4256;
+  font-weight: 700;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tut-rubric-title { color: var(--ink, #1a1c25); }
+.tut-rubric-aside { color: var(--muted, #6b6f80); }
+.tut-rubric-gates {
+  margin: 9px 0 0;
+  padding: 9px 0 0 17px;
+  border-top: 1px solid #e6e9f0;
+}
+.tut-rubric-gates li {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #3b4256;
+  padding: 2px 0;
+}
 .tut-recall-stem,
 .tut-recall-answer {
   margin: 0;
@@ -588,6 +727,34 @@
 .tut-s2-log { font-size: 12.5px; }
 .tut-s2-log summary { cursor: pointer; color: var(--muted, #6b6f80); font-weight: 600; }
 .tut-s2-actions { display: flex; gap: 10px; align-items: center; }
+
+/* REDRAFT-1 (item 5) — the per-sub-topic re-draft control, between the AI's
+   reasoning and the level selects. A quiet secondary action: it must be findable
+   but never compete with the primary finalize button below the whole sitting. */
+.tut-s2-redraft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+  flex-wrap: wrap;
+}
+.tut-s2-redraft-btn {
+  border: 1px solid var(--line, #d9dbe6);
+  background: #fff;
+  color: #33364a;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 7px;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tut-s2-redraft-btn:hover:not(:disabled) {
+  border-color: var(--primary, #2f63ff);
+  color: var(--primary, #2f63ff);
+}
+.tut-s2-redraft-btn:disabled { opacity: 0.55; cursor: default; }
+.tut-s2-redraft-hint { font-size: 12px; color: var(--muted, #6b6f80); }
 .tut-s2-cancel {
   border: 1px solid var(--line, #d9dbe6);
   background: #fff;
@@ -1990,26 +2157,64 @@
 }
 .tut-chat-set-pick {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 10px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface-sunk);
+}
+.tut-chat-set-pick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .tut-chat-set-pick-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--ink);
 }
-.tut-chat-set-pick .tut-chat-consent-count {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
+.tut-chat-set-pick-count {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
 }
-.tut-chat-set-pick .tut-chat-consent-count input {
-  width: 56px;
+/* SET-PLAN-GATE: the approved item blueprint — one row per question. */
+.tut-chat-set-pick-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tut-chat-set-pick-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.tut-chat-set-pick-item .tut-axis {
+  flex-shrink: 0;
+}
+.tut-chat-item-intent {
+  flex: 1;
+  color: var(--ink);
+}
+.tut-chat-item-diff {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--muted, #6b6f80);
+}
+.tut-chat-set-pick-noplan {
+  margin: 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--muted, #6b6f80);
 }
 .tut-chat-set-failures {
   margin: 0 0 4px;

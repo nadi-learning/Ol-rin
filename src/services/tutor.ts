@@ -144,6 +144,25 @@ export type ObservationView = {
   // (skip / teach-back / legacy pre-marks cache).
   marksAwarded: number | null;
   marksMax: number | null;
+  // Slice ASSESS-SEE (item 2) — the EVALUATION the student actually read, not
+  // just its score. `marksAwarded` says a mark was lost; this says WHERE.
+  //
+  // The axis reasoning above answers "what does this say about mastery"; it does
+  // not answer "what did they get wrong". The tutor needs both, and until now the
+  // second was fetched from the DB and discarded one line before reaching them.
+  //
+  // ⚠️ M11 boundary: every field here is text the STUDENT already read on their
+  // own reveal screen. The reference answer is NOT in `answerFeedbackSchema` and
+  // must never be added to this payload.
+  evaluation: AnswerEvaluationView | null;
+};
+
+/** The student-facing read of one answer, as the tutor sees it (item 2). */
+export type AnswerEvaluationView = {
+  verdict: string;
+  feedback: string;
+  strengths: string[];
+  improvements: string[];
 };
 
 // What a correction returns: the read fields only. The recall context (question +
@@ -157,22 +176,52 @@ export type ObservationCorrection = Omit<
   | "answerPhotoIds"
   | "marksAwarded"
   | "marksMax"
+  | "evaluation"
 >;
 
-// The marks the student saw (attempt.feedback jsonb → answerFeedbackSchema).
-// Read defensively: feedback is nullable + legacy pre-marks caches carry null
-// marks, so anything non-numeric collapses to null (never throws on a read).
-function readMarks(feedback: unknown): {
+// What the student saw (attempt.feedback jsonb → answerFeedbackSchema): the
+// marks AND the evaluation prose behind them (Slice ASSESS-SEE, item 2).
+//
+// Read defensively, never with `.parse()`: feedback is nullable, legacy caches
+// predate `marksAwarded`, and the migrated old-b2c attempts carry no evaluation
+// at all (749 of 810 local observations — the backfill imported answers without
+// the student-facing read). A tutor opening a migrated sitting must get a clean
+// empty block, not a 500, so every field degrades to null/[] independently.
+//
+// ONE reader for both tutor surfaces — the assess evidence rows and the
+// unassessed-attempt roster show the same thing and must not drift apart.
+function readEvaluation(feedback: unknown): {
   marksAwarded: number | null;
   marksMax: number | null;
+  evaluation: AnswerEvaluationView | null;
 } {
   const fb = feedback as
-    | { marksAwarded?: unknown; marksMax?: unknown }
+    | {
+        marksAwarded?: unknown;
+        marksMax?: unknown;
+        verdict?: unknown;
+        feedback?: unknown;
+        strengths?: unknown;
+        improvements?: unknown;
+      }
     | null
     | undefined;
+  const strList = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+  // The prose is the anchor: no `feedback` string means there is nothing to show,
+  // so the whole block collapses rather than rendering an empty shell.
+  const prose = typeof fb?.feedback === "string" ? fb.feedback : null;
   return {
     marksAwarded: typeof fb?.marksAwarded === "number" ? fb.marksAwarded : null,
     marksMax: typeof fb?.marksMax === "number" ? fb.marksMax : null,
+    evaluation: prose
+      ? {
+          verdict: typeof fb?.verdict === "string" ? fb.verdict : "",
+          feedback: prose,
+          strengths: strList(fb?.strengths),
+          improvements: strList(fb?.improvements),
+        }
+      : null,
   };
 }
 
@@ -635,7 +684,7 @@ export async function getObservations(
   // machine said next to what they changed it to (never a silently-replaced value).
   return rows.map(({ attemptId, feedback, ...r }) => ({
     ...r,
-    ...readMarks(feedback),
+    ...readEvaluation(feedback),
     effectiveLevel: r.tutorLevel ?? r.observationLevel,
     answerPhotoIds: attemptId ? photosByAttempt.get(attemptId) ?? [] : [],
   }));
@@ -664,6 +713,10 @@ export type UnassessedAttemptView = {
   // nothing to certify; null for skips / teach-backs / legacy pre-marks caches.
   marksAwarded: number | null;
   marksMax: number | null;
+  // Slice ASSESS-SEE (item 2) — same evaluation block as the scored rows, from
+  // the same reader. An abstained answer is exactly where the tutor most needs
+  // it: Stage-1 declined to score it, so this is the ONLY read of it that exists.
+  evaluation: AnswerEvaluationView | null;
 };
 
 /**
@@ -739,7 +792,7 @@ export async function getUnassessedAttempts(
     answerPhotoIds: photosByAttempt.get(r.attemptId) ?? [],
     skipReason: r.skipReason,
     submittedAt: r.submittedAt,
-    ...readMarks(r.feedback),
+    ...readEvaluation(r.feedback),
   }));
 }
 
