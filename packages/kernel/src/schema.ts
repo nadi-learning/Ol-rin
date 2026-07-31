@@ -971,6 +971,52 @@ export const studentSubjectInsight = pgTable(
   (t) => [unique().on(t.studentId, t.subjectId)],
 );
 
+// Slice AUTHOR-PREF (assess-walkthrough item 10) — HOW TO TEACH THIS STUDENT.
+// One row per (student × subject). Deliberately NOT a column on
+// `student_subject_insight`, and the separation is the whole point of the table:
+//
+//   · subject insight describes the student's UNDERSTANDING, and synthesis
+//     rewrites it incrementally at every finalize;
+//   · this describes HOW TO TEACH THEM — "diagram-first questions land better
+//     than worded ones" — and is TUTOR-OWNED.
+//
+// Sharing a row would let synthesis's rewrite erode the tutor's guidance on its
+// next pass, silently and with no error. Nothing in `synthesis.ts` may write
+// here (walkthrough decision, 2026-07-27: "separate field, subject grain,
+// optional, tutor-owned").
+//
+// OPTIONAL by construction: no row is the normal state, a missing row renders
+// clean, and a finalize never requires one. The service DELETES on an empty
+// save rather than storing "" — an empty string would render as a headed but
+// blank grounding block, which reads to the author as "the tutor had nothing to
+// say about her" instead of "nobody has written this yet".
+//
+// `updated_by` is the attribution D-PDASH-8 established for a per-student row a
+// human authored by hand: a claim about one child that no pipeline produced
+// should carry a name.
+export const studentAuthoringPreference = pgTable(
+  "student_authoring_preference",
+  {
+    id: id(),
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => board.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => appUser.id),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .references(() => subject.id),
+    // Free text, the tutor's own words. Read verbatim into the authoring
+    // grounding (authoring_chat.ts) — never parsed, never summarised.
+    preference: text("preference").notNull(),
+    updatedBy: uuid("updated_by").references(() => appUser.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.studentId, t.subjectId)],
+);
+
 // ── Parent-dashboard copy overrides (S168 — D-PDASH-3's other half) ──────────
 // D-PDASH-3 ruled "CODE ships the full default map; a DB row OVERRIDES per key;
 // a missing key FALLS BACK to the default and NEVER renders blank." Only the
@@ -1866,6 +1912,9 @@ export const TENANT_SCOPED_TABLES = [
   "horizontal_skill_state",
   "student_chapter_insight",
   "student_subject_insight",
+  // Slice AUTHOR-PREF (item 10) — the tutor's per-subject teaching note about a
+  // named child. Student data by any reading, so RLS is not optional (M34).
+  "student_authoring_preference",
   // S168 — per-board overrides of the parent-dashboard copy (D-PDASH-3's other
   // half). Board-scoped CONTENT, not student data: it is a board's voice, and it
   // is scoped for the same reason `chapter` is.

@@ -33,9 +33,14 @@ import {
   authoringChat,
   authoringWorker,
   chapter,
+  horizontalSkillState,
   learningObjective,
   observation,
   question,
+  studentAuthoringPreference,
+  studentChapterInsight,
+  studentSubjectInsight,
+  subject,
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
@@ -345,6 +350,109 @@ function isStaleInteractionError(err: unknown): boolean {
 
 // ───────────────────────── grounding assembler ─────────────────────────
 
+// Slice INSIGHT-GROUND (assess-walkthrough item 11) — THE INSIGHT LAYER.
+//
+// Everything a tutor records ABOVE sub-topic grain — the chapter view, the
+// subject view, the student's standing on the subject-wide horizontal skills —
+// is written by Stage-2b synthesis at finalize and was then read by nobody here.
+// `assembleGrounding` built its entire picture from certified sub-topic mastery
+// plus the last 20 Stage-1 observations, so authoring-level guidance went unread
+// by the one surface that generates the student's NEXT questions.
+//
+// Each block sits at the grain its TABLE is keyed on (founder ruling, S181):
+// chapter insight follows this chat's chapter scope exactly as CHAPTER COVERAGE
+// and CHAPTER BREAKDOWN do; `student_subject_insight` and `horizontal_skill_state`
+// are per-SUBJECT rows, so they resolve to the subject(s) those chapters belong
+// to. Sibling chapters are deliberately NOT walked: the synthesis contract puts
+// subject-wide claims in the SUBJECT insight, which is carried here in full.
+export type InsightGroundingRows = {
+  /** Chapter-grain insight for THIS chat's chapters, in chapter order. */
+  chapters: Array<{ chapterName: string; insight: string }>;
+  /** Subject-grain insight for the subject(s) those chapters belong to. */
+  subjects: Array<{ subjectName: string; insight: string }>;
+  horizontals: Array<{
+    subjectName: string;
+    slug: string;
+    /** NULL = never observed. NOT level 1 — see below. */
+    level: number | null;
+    prose: string;
+  }>;
+  /**
+   * Slice AUTHOR-PREF (item 10) — the TUTOR'S OWN instruction on how to teach
+   * this student, per subject. Unlike the three above it is not synthesis
+   * output: a human wrote it by hand and owns it. Only subjects with a note
+   * appear; an unwritten subject is absent, never an empty line.
+   */
+  preferences: Array<{ subjectName: string; preference: string }>;
+  /** Name the subject per line only when the chat actually spans several. */
+  multiSubject: boolean;
+};
+
+/**
+ * Render the insight layer into grounding sections. PURE — no tx, no AI — so the
+ * rule it encodes can be gated deterministically instead of through a
+ * nondeterministic model read (M101: assert the rule, not an instance of it).
+ *
+ * The rule that matters: a horizontal with a NULL level renders "not yet
+ * observed", NEVER "L1". Null means the student was never given a chance to show
+ * the skill — a coverage gap, not a weakness (`horizontal_skill_state.level`'s
+ * own bound, and the null≠1 note item 8 put in front of the tutor). Collapsing
+ * the two would tell the author to drill a weakness the student never displayed.
+ */
+export function renderInsightBlocks(rows: InsightGroundingRows): string[] {
+  const out: string[] = [];
+
+  if (rows.chapters.length > 0) {
+    out.push(
+      "",
+      "STUDENT INSIGHT — CHAPTER VIEW (the tutor's standing view of this student in this chat's chapter(s), written at Stage-2 certification. This is a HUMAN-REVIEWED judgement about the student and outranks any inference you would draw from the observation list):",
+      rows.chapters.map((c) => `  - ${c.chapterName}: ${c.insight}`).join("\n"),
+    );
+  }
+
+  if (rows.subjects.length > 0) {
+    out.push(
+      "",
+      "STUDENT INSIGHT — SUBJECT VIEW (the same, one level up: how this student works across the whole subject, including chapters outside this chat. Use it for the shape of a question — framing, scaffolding, what to assume — not for what to test):",
+      rows.subjects.map((s) => `  - ${s.subjectName}: ${s.insight}`).join("\n"),
+    );
+  }
+
+  if (rows.horizontals.length > 0) {
+    out.push(
+      "",
+      "HORIZONTAL SKILLS (subject-wide skills that cut across chapters — 1–5, pooled from every sitting. \"not yet observed\" means the student has never been given a chance to show it: a coverage GAP, never a weakness, and never the same as level 1):",
+      rows.horizontals
+        .map(
+          (h) =>
+            `  - ${h.slug}${rows.multiSubject ? ` (${h.subjectName})` : ""}: ` +
+            `${h.level == null ? "not yet observed" : `L${h.level}`} — ${h.prose}`,
+        )
+        .join("\n"),
+    );
+  }
+
+  // Item 10. Last of the four, i.e. closest to the task the author is about to
+  // do — and the only one written BY A HUMAN, which is why it is framed as an
+  // instruction rather than as evidence. It says how to SHAPE the question; it
+  // never says what to test (that stays with mastery + the coverage map), so a
+  // preference must not talk the author out of an under-covered sub-topic.
+  if (rows.preferences.length > 0) {
+    out.push(
+      "",
+      "HOW TO TEACH THIS STUDENT (written BY THE TUTOR, by hand, about this specific student — not inferred by any model. Treat it as an INSTRUCTION about the FORM of what you author: question style, framing, what has been landing. It does NOT change WHAT to test — coverage and mastery decide that. Where it conflicts with your own inference, the tutor is right):",
+      rows.preferences
+        .map(
+          (p) =>
+            `  - ${rows.multiSubject ? `${p.subjectName}: ` : ""}${p.preference}`,
+        )
+        .join("\n"),
+    );
+  }
+
+  return out;
+}
+
 /**
  * Build the student-grounding block for the chat's first (stitched) user turn.
  * Reuses the tutor read surface (getStudentMastery + the ownership guard) and a
@@ -412,6 +520,108 @@ export async function assembleGrounding(
           )
           .join("\n")
       : "  (no Stage-1 observations yet — the student has not submitted scored practice)";
+
+  // Slice INSIGHT-GROUND (item 11) — read the insight layer. Ownership is already
+  // asserted by getStudentMastery above; these are three more reads on the same
+  // student under the same board scope. Omitted whole for legacy chapter-less
+  // chats, exactly like the two blocks below it.
+  const insightSections =
+    (args.chapterIds ?? []).length > 0
+      ? await (async () => {
+          const chapters = await tx
+            .select({
+              chapterId: chapter.id,
+              chapterName: chapter.name,
+              chapterOrdinal: chapter.ordinal,
+              subjectId: chapter.subjectId,
+            })
+            .from(chapter)
+            .where(inArray(chapter.id, args.chapterIds!))
+            .orderBy(asc(chapter.ordinal));
+          if (chapters.length === 0) return [];
+          const subjectIds = [...new Set(chapters.map((c) => c.subjectId))];
+
+          const [chapterRows, subjectRows, hzRows, prefRows] = await Promise.all([
+            tx
+              .select({
+                chapterId: studentChapterInsight.chapterId,
+                insight: studentChapterInsight.insight,
+              })
+              .from(studentChapterInsight)
+              .where(
+                and(
+                  eq(studentChapterInsight.studentId, args.studentId),
+                  inArray(
+                    studentChapterInsight.chapterId,
+                    chapters.map((c) => c.chapterId),
+                  ),
+                ),
+              ),
+            tx
+              .select({
+                subjectName: subject.name,
+                insight: studentSubjectInsight.insight,
+              })
+              .from(studentSubjectInsight)
+              .innerJoin(subject, eq(subject.id, studentSubjectInsight.subjectId))
+              .where(
+                and(
+                  eq(studentSubjectInsight.studentId, args.studentId),
+                  inArray(studentSubjectInsight.subjectId, subjectIds),
+                ),
+              )
+              .orderBy(asc(subject.name)),
+            tx
+              .select({
+                subjectName: subject.name,
+                slug: horizontalSkillState.slug,
+                level: horizontalSkillState.level,
+                prose: horizontalSkillState.prose,
+              })
+              .from(horizontalSkillState)
+              .innerJoin(subject, eq(subject.id, horizontalSkillState.subjectId))
+              .where(
+                and(
+                  eq(horizontalSkillState.studentId, args.studentId),
+                  inArray(horizontalSkillState.subjectId, subjectIds),
+                ),
+              )
+              .orderBy(asc(subject.name), asc(horizontalSkillState.slug)),
+            // Item 10 — the tutor's teaching note. Subject grain, resolved to the
+            // same subject(s) as the SUBJECT INSIGHT block above (S181's ruling:
+            // each block at the grain its own table is keyed on).
+            tx
+              .select({
+                subjectName: subject.name,
+                preference: studentAuthoringPreference.preference,
+              })
+              .from(studentAuthoringPreference)
+              .innerJoin(subject, eq(subject.id, studentAuthoringPreference.subjectId))
+              .where(
+                and(
+                  eq(studentAuthoringPreference.studentId, args.studentId),
+                  inArray(studentAuthoringPreference.subjectId, subjectIds),
+                ),
+              )
+              .orderBy(asc(subject.name)),
+          ]);
+
+          // Chapter order, not insert order — the grounding reads as the syllabus runs.
+          const insightByChapter = new Map(chapterRows.map((r) => [r.chapterId, r.insight]));
+          return renderInsightBlocks({
+            chapters: chapters
+              .filter((c) => insightByChapter.has(c.chapterId))
+              .map((c) => ({
+                chapterName: c.chapterName,
+                insight: insightByChapter.get(c.chapterId)!,
+              })),
+            subjects: subjectRows,
+            horizontals: hzRows,
+            preferences: prefRows,
+            multiSubject: subjectIds.length > 1,
+          });
+        })()
+      : [];
 
   // Chapter coverage: the chapter's full sub-topic list (topic-ordered) with a
   // per-sub-topic count of questions that ALREADY EXIST for this student
@@ -516,6 +726,10 @@ export async function assembleGrounding(
     "",
     "RECENT STAGE-1 OBSERVATIONS (the AI's blind read of the student's recent answers — reasoning + level per axis, no answer keys):",
     obsLines,
+    // The insight layer sits with the rest of the STUDENT picture, ahead of the
+    // curriculum map (coverage + breakdown) — it describes who you are authoring
+    // for, not what there is to author.
+    ...insightSections,
     ...(coverageLines
       ? [
           "",
@@ -582,6 +796,17 @@ export type ChatView = {
   // the default). Mutually exclusive with draftJobId — the FE shows "Planning…"
   // rather than "Drafting…" and opens the gate card when the job completes.
   planJobId?: string;
+  // Slice CHAT-SET-ROUTE: set on a sendTurn whose go-ahead fired while the tutor had
+  // "Several" selected. The turn resolves a SET of sub-topics (carrying SET-PLAN-GATE's
+  // item blueprint) and hands it back as a PROPOSAL — nothing is enqueued. The fan-out
+  // fires only when the tutor approves the card, through the SAME authorSetConfirmed →
+  // authorSetFromChat path the menu button uses.
+  //
+  // Mutually exclusive with draftJobId/planJobId: there is no job to poll on this path.
+  // The gate is deliberate (founder, 2026-07-31) — a chat go-ahead must not silently
+  // spend N sub-topics' worth of AI without the tutor seeing the blueprint, which is
+  // the same reason single-mode's planFirst defaults TRUE.
+  proposedSet?: ProposeSetResult;
 };
 
 /** Load a chat the caller owns, or throw NOT_FOUND (no existence leak). RLS
@@ -867,6 +1092,89 @@ function buildDraftingView(
   };
 }
 
+// ───────────────────────── CHAT-SET-ROUTE (Slice B, §7 of S179) ─────────────────────────
+//
+// The chat go-ahead was MODE-BLIND: both vendor branches routed through
+// resolveTargetAndEnqueue with a single subTopicNumber, so with "Several" selected a
+// tutor's approval still authored ONE sub-topic and the toggle was silently ignored.
+// The parallel fan-out was reachable only from the UI menu.
+//
+// The fix routes a go-ahead to the SAME set proposer the menu uses, and stops there:
+// the tutor gets the blueprint card and the fan-out fires on THEIR approval. Nothing
+// is enqueued by this path, so it changes neither the job system nor the fan-out's
+// (pre-existing, synchronous) shape — it only decides which resolver a go-ahead reaches.
+
+/**
+ * Which set INTENT a chat's go-ahead resolves under. Pure, and exported so the rule
+ * is assertable with no AI in the loop (M101 — a leg that can only observe what the
+ * model happened to propose passes vacuously). Mirrors the FE's own choice at
+ * TutorPage `proposeSet()`; the two arms are asserted TOGETHER in one probe leg so
+ * widening one cannot silently widen the other.
+ *
+ * interleaved → "discriminate" (a confusable MIX across the chat's chapters)
+ * blocked/legacy → "cover"     (several sub-topics of the one chapter)
+ */
+export function setIntentForMode(mode: string | null | undefined): ProposeSetIntent {
+  return mode === "interleaved" ? "discriminate" : "cover";
+}
+
+/** The canned wrap-up when stripping the machine directive left nothing, on the SET
+ *  path. Speaks to a proposal awaiting approval — never "drafting", because on this
+ *  path nothing is being drafted yet. */
+const SET_PROPOSAL_WRAP =
+  "On it — here's the set I'd write across those sub-topics. Have a look and approve it and I'll draft them all in parallel.";
+
+/**
+ * Persist the turn, then resolve a SET proposal from the transcript.
+ *
+ * The persist MUST come first: proposeTargetSet resolves the picks from the chat's
+ * stored messages via its own ownedChat read, and the message naming the sub-topics
+ * is the very turn being handled — proposing before the update would resolve against
+ * a transcript missing the go-ahead. (The existing single-target path sidesteps this
+ * by hand-assembling `convoForIntent`; reusing proposeTargetSet unchanged is worth
+ * the reordering.)
+ */
+async function runSetGoAhead(
+  tx: Tx,
+  a: {
+    row: Awaited<ReturnType<typeof ownedChat>>;
+    tutorUserId: string;
+    messages: ChatMessage[];
+  },
+): Promise<ProposeSetResult> {
+  await tx
+    .update(authoringChat)
+    .set({ messages: a.messages, updatedAt: new Date() })
+    .where(eq(authoringChat.id, a.row.id));
+  return proposeTargetSet(tx, {
+    tutorUserId: a.tutorUserId,
+    chatId: a.row.id,
+    intent: setIntentForMode(a.row.mode),
+  });
+}
+
+/** The ChatView returned when a go-ahead resolved a SET: the proposal rides back on
+ *  the turn and NOTHING was enqueued, so no job id is set and `subTopicId` keeps the
+ *  chat's existing focus (the set spans several — pinning one would be a lie). */
+function buildProposedSetView(
+  row: Awaited<ReturnType<typeof ownedChat>>,
+  vendor: VendorChoice,
+  messages: ChatMessage[],
+  proposedSet: ProposeSetResult,
+): ChatView {
+  return {
+    chatId: row.id,
+    studentId: row.studentId,
+    chapterId: row.chapterId ?? null,
+    chapterIds: chatChapterIds(row),
+    mode: (row.mode as AuthoringMode) ?? "blocked",
+    subTopicId: row.subTopicId ?? null,
+    vendor,
+    messages,
+    proposedSet,
+  };
+}
+
 /**
  * One conversational turn. Appends the tutor's message, resolves resume-vs-
  * stitch (per-thread vendor lock + Claude JSONL preflight), calls the vendor via
@@ -885,6 +1193,17 @@ export async function sendTurn(
      *  tutor explicitly skipped it — a missing flag must never silently mean "skip
      *  the review the founder asked for". */
     planFirst?: boolean;
+    /** Slice CHAT-SET-ROUTE: the tutor's One/Several toggle for THIS sitting. Sent
+     *  per-turn rather than read off the chat row, because the toggle is explicitly
+     *  NOT a property of the chat — COVERAGE-1 derives it from `mode` on open and
+     *  then lets the tutor flip it, so a blocked chat can legitimately be in
+     *  "Several" and an interleaved one in "One". Branching on `row.mode` here would
+     *  fan out for interleaved chats where the tutor chose One, and never fire for
+     *  the blocked+Several case the toggle exists for.
+     *
+     *  Defaults to FALSE — the opposite polarity to planFirst, and for the same
+     *  reason: a missing flag must never silently mean "spend N sub-topics of AI". */
+    setMode?: boolean;
   },
 ): Promise<ChatView> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);
@@ -895,6 +1214,8 @@ export async function sendTurn(
   const history = parseMessages(row.messages);
   // TWOWAY-1: default TRUE — the gate is what you get unless the tutor skipped it.
   const planFirst = args.planFirst !== false;
+  // CHAT-SET-ROUTE: default FALSE — absent means the single path, never a fan-out.
+  const setMode = args.setMode === true;
 
   const userMsg: ChatMessage = {
     id: randomUUID(),
@@ -1072,6 +1393,29 @@ export async function sendTurn(
   //    500 (the exact failure the old native tool produced). ──
   if (isGemini && subs.length > 0 && hasAuthorSentinel(ai.text)) {
     try {
+      // CHAT-SET-ROUTE: the tutor has "Several" selected → this go-ahead resolves a
+      // SET, not one target. Checked BEFORE resolveAuthorIntent so the single-target
+      // resolver's AI call is never spent on a turn that isn't going to use it.
+      if (setMode) {
+        const wrapText = stripAuthorSentinel(sanitiseAssistantText(ai.text)) || SET_PROPOSAL_WRAP;
+        const assistantMsg: ChatMessage = {
+          id: randomUUID(),
+          role: "assistant",
+          text: wrapText,
+          createdAt: new Date().toISOString(),
+          aiSessionId: ai.sessionId ?? undefined,
+          vendorId: vendor,
+          sessionFingerprint: ai.sessionFingerprint,
+        };
+        const messages = [...history, userMsg, assistantMsg];
+        const proposedSet = await runSetGoAhead(tx, {
+          row,
+          tutorUserId: args.tutorUserId,
+          messages,
+        });
+        return buildProposedSetView(row, vendor, messages, proposedSet);
+      }
+
       const convoForIntent = [
         ...history.map((m) => `${m.role === "user" ? "TUTOR" : "AI"}: ${m.text}`),
         `TUTOR: ${text}`,
@@ -1140,6 +1484,36 @@ export async function sendTurn(
   if (!isGemini && subs.length > 0) {
     const marker = parseAuthorMarker(ai.text);
     if (marker) {
+      // CHAT-SET-ROUTE: "Several" is on → resolve a SET and stop at the proposal.
+      // Wrapped in its own try/catch because this branch (unlike Gemini's) has none:
+      // proposeTargetSet throws on NO_CHAPTER / a bad model payload, and that must
+      // degrade to an ordinary reply rather than 500 a conversational endpoint.
+      if (setMode) {
+        try {
+          const wrapText = stripAuthorMarker(ai.text) || SET_PROPOSAL_WRAP;
+          const assistantMsg: ChatMessage = {
+            id: randomUUID(),
+            role: "assistant",
+            text: wrapText,
+            createdAt: new Date().toISOString(),
+            aiSessionId: ai.sessionId ?? undefined,
+            vendorId: vendor,
+            sessionFingerprint: ai.sessionFingerprint,
+          };
+          const messages = [...history, userMsg, assistantMsg];
+          const proposedSet = await runSetGoAhead(tx, {
+            row,
+            tutorUserId: args.tutorUserId,
+            messages,
+          });
+          return buildProposedSetView(row, vendor, messages, proposedSet);
+        } catch (err) {
+          console.error(
+            `[authoring-chat] claude set-route resolve failed, degrading to reply: ${(err as Error).message.slice(0, 200)}`,
+          );
+        }
+      }
+
       // Slice AUTHOR-ASYNC: same as the Gemini path — resolve + ENQUEUE off the
       // request path (the worker draft was the inline hang), the FE polls the job.
       const { chosen, count, jobId, phase } = await resolveTargetAndEnqueue(tx, {
@@ -1978,9 +2352,20 @@ const geminiProposedItems = {
 
 const PROPOSE_SET_SYSTEM = `You help a tutor assemble an INTERLEAVED practice set for a specific student — a MIX of sub-topics (from possibly different chapters) that are worth practising together so the student must DISCRIMINATE between them, not just drill one skill. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics across the chosen chapters. Pick 2–${PROPOSE_SET_MAX} sub-topics that (a) target genuine weaknesses and (b) are close enough to be confusable / benefit from being mixed. For EACH pick, list the exact ITEMS you will write — one entry per question, in the order you'd write them, each with its axis, the conceptual-question KIND (from the palette), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count, so keep sets short (1–4 per sub-topic — a mix is for contrast, not volume; 2 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why this MIX.`;
 
-const proposeSetResultSchema = z.object({
+// CHAT-SET-ROUTE (S179 §8 finding): `items` was `.min(1)` PER PICK, so a single
+// malformed pick threw at .parse() and — since proposeAuthoringSet maps only
+// AuthoringChatNotFoundError/ProposeTargetError — the zod error bubbled as a 500 and
+// the tutor got NO proposal at all. Every other step of this resolver is deliberately
+// tolerant (clamp, dedup, out-of-range fallback), so one bad pick killing the whole
+// set was the outlier. Now: parse permissively (`.default([])`) and DROP empty-item
+// picks below. Fixed here rather than left on the backlog because this slice adds a
+// SECOND caller — the chat go-ahead — to this exact resolver.
+// Exported ONLY so the permissiveness above is assertable with no AI in the loop —
+// the same reason clampSetCount/clampProposedItems are exported (M101: a leg that can
+// only observe what the model happened to return passes vacuously). Not a call site.
+export const proposeSetResultSchema = z.object({
   picks: z
-    .array(z.object({ choice: z.number().int(), items: z.array(proposedItemSchema).min(1) }))
+    .array(z.object({ choice: z.number().int(), items: z.array(proposedItemSchema).default([]) }))
     .min(1),
   rationale: z.string().default(""),
 });
@@ -2228,6 +2613,15 @@ Assemble the ${cover ? "coverage" : "interleaved"} set now. Return {picks:[{choi
     const idx = Math.min(Math.max(p.choice, 1), subs.length) - 1;
     const chosen = subs[idx]!;
     if (seen.has(chosen.subTopicId)) continue;
+    // CHAT-SET-ROUTE (S179 §8): a pick the model returned with NO items carries no
+    // blueprint, so there is nothing for the tutor to approve and nothing to hand the
+    // drafter — DROP it rather than let it 500 the whole proposal at parse (above) or
+    // ride through as a count-0 pick. Dropped BEFORE `seen` is marked so the number
+    // stays available to a later, well-formed pick for the same sub-topic. If every
+    // pick is empty the `picks.length === 0` fallback below still yields one
+    // actionable target, which is the same degenerate path an all-out-of-range
+    // response already takes.
+    if (p.items.length === 0) continue;
     seen.add(chosen.subTopicId);
     // The blueprint is the source of truth: cap it to the intent's range and
     // renumber 1..N. The count is DERIVED (items.length) — there is no separate
@@ -2289,6 +2683,21 @@ export type AuthorSetResult = {
   groups: AuthorSetGroup[];
   failures: AuthorSetFailure[];
 };
+/**
+ * One member of a fan-out. Named + exported (rather than inlined in the signature)
+ * because Slice SET-ASYNC puts it on the QUEUE's job data too: `queue.ts` imports
+ * this type directly, so the enqueued shape and the shape the job body accepts are
+ * one declaration. Deriving it with `Parameters<typeof authorSetFromChat>` instead
+ * resolved to `any` — queue.ts and this module already form a type cycle
+ * (authoring_chat imports AuthoringPhase from queue), and a `typeof <fn>` lookup in
+ * a job-DATA position closes it.
+ */
+export type AuthorSetTarget = {
+  subTopicId: string;
+  count: number;
+  // SET-PLAN-GATE: the tutor-approved blueprint. Absent/null = self-derive.
+  plan?: WorkerPlan | null;
+};
 
 /**
  * Author an interleaved SET: fan out one scoped worker PER sub_topic, in PARALLEL,
@@ -2310,7 +2719,7 @@ export async function authorSetFromChat(
     // SET-PLAN-GATE: `plan` is the tutor-approved blueprint for this sub-topic. When
     // present the drafter writes exactly it (the gate); absent = self-derive (the
     // pre-slice behaviour, still the path for the degenerate fallback pick).
-    targets: { subTopicId: string; count: number; plan?: WorkerPlan | null }[];
+    targets: AuthorSetTarget[];
   },
 ): Promise<AuthorSetResult> {
   const row = await ownedChat(tx, args.tutorUserId, args.chatId);

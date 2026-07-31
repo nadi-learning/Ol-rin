@@ -131,9 +131,14 @@ import { env } from "../config/env";
 import {
   getObservations,
   getUnassessedAttempts,
+  getAuthoringPreferences,
   getProgressTree,
+  getSessionAuthoringPreferences,
   getStudentInsights,
   getStudentMastery,
+  setAuthoringPreference,
+  SittingNotFoundError,
+  SubjectNotOnBoardError,
   getStudentPacePlan,
   getSubTopicQuestions,
   FlagNotFoundError,
@@ -231,7 +236,6 @@ import {
 import {
   assertAuthorTarget,
   AuthoringChatNotFoundError,
-  authorSetFromChat,
   ChapterNotInBoardError,
   getChat,
   listAuthoringChats,
@@ -1671,6 +1675,70 @@ export const appRouter = router({
         }
       }),
 
+    // ─────────── Slice AUTHOR-PREF — walkthrough item 10 ───────────
+    // "How to teach this student", per subject. Tutor-owned and optional; every
+    // subject on the board comes back, unwritten ones with `preference: null`.
+    getAuthoringPreferences: tutorProcedure
+      .input(z.object({ studentId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getAuthoringPreferences(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // The same, narrowed to the subject(s) one sitting spans — the editor on the
+    // sitting's done phase (founder ruling: the second write surface goes there,
+    // the moment the tutor has just read the synthesis).
+    getSessionAuthoringPreferences: tutorProcedure
+      .input(z.object({ sessionId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getSessionAuthoringPreferences(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            sessionId: input.sessionId,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError || e instanceof SittingNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // Write or CLEAR one subject's note. An empty/whitespace `preference` deletes
+    // the row (the service's rule) — the editor's "clear" is the same call.
+    setAuthoringPreference: tutorProcedure
+      .input(
+        z.object({
+          studentId: z.string().uuid(),
+          subjectId: z.string().uuid(),
+          preference: z.string().max(4000).nullable(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await setAuthoringPreference(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            studentId: input.studentId,
+            subjectId: input.subjectId,
+            preference: input.preference,
+          });
+        } catch (e) {
+          if (e instanceof StudentNotFoundError || e instanceof SubjectNotOnBoardError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
     // Slice Report-Signoff (D-P-1 deferred half): the tutor SIGN-OFF side.
     // assembleReport freezes the child's progress into a draft snapshot;
     // publishReport signs it off → visible to the parent. Ownership-gated
@@ -1917,6 +1985,11 @@ export const appRouter = router({
           // (default) or draft straight through. Defaults TRUE on the SERVICE side
           // too, so an old client that never sends it still gets the gate.
           planFirst: z.boolean().optional(),
+          // Slice CHAT-SET-ROUTE: the tutor's One/Several toggle for this sitting.
+          // Defaults FALSE on the SERVICE side too, so an old client that never sends
+          // it keeps the single-target behaviour it was built against — the opposite
+          // polarity to planFirst, because the unsafe direction here is fanning out.
+          setMode: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -1926,6 +1999,7 @@ export const appRouter = router({
             chatId: input.chatId,
             text: input.text,
             ...(input.planFirst === undefined ? {} : { planFirst: input.planFirst }),
+            ...(input.setMode === undefined ? {} : { setMode: input.setMode }),
           });
         } catch (e) {
           if (e instanceof AuthoringChatNotFoundError) {
@@ -1992,8 +2066,16 @@ export const appRouter = router({
 
     // QA3-e-2: author the confirmed SET — fan out one scoped worker per sub_topic
     // in PARALLEL (each in its own board tx), collect into a multi-target review.
-    // Fault-isolated: returns { groups, failures } — a partial failure never sinks
-    // the batch. Max 5 targets (fan-out concurrency stays under the pool).
+    // Fault-isolated: {groups, failures} — a partial failure never sinks the batch.
+    // Max 5 targets (fan-out concurrency stays under the pool).
+    //
+    // Slice SET-ASYNC: this now ENQUEUES and returns { jobId } instead of awaiting
+    // the fan-out. The fan-out is 2 minutes on a good run and S180 measured a single
+    // runaway member at 242s — held open on the request path that is an nginx-wall
+    // risk and a dead tab for the tutor. The job's return value is the same
+    // {groups, failures}; the FE polls getAuthoringJobStatus for it, and the loader
+    // survives a refresh via getActiveAuthoringJob. The fan-out itself is unchanged
+    // and still parallel — it happens INSIDE the one job.
     authorSetFromChat: tutorProcedure
       .input(
         z.object({
@@ -2013,13 +2095,20 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        // Slice SET-ASYNC: guard EVERY target here, before the enqueue, exactly as
+        // the single path does (assertAuthorTarget). Moving the fan-out into a job
+        // moved its own guards off the request path too, so without this a bogus or
+        // cross-scope sub-topic — or someone else's chat — would return a jobId and
+        // fail invisibly in the worker instead of 404-ing the click. Ownership is
+        // the load-bearing half: it must not be reachable only from the job body.
         try {
-          return await authorSetFromChat(ctx.tx, {
-            boardId: ctx.board.id,
-            tutorUserId: ctx.membership.userId,
-            chatId: input.chatId,
-            targets: input.targets,
-          });
+          for (const t of input.targets) {
+            await assertAuthorTarget(ctx.tx, {
+              tutorUserId: ctx.membership.userId,
+              chatId: input.chatId,
+              subTopicId: t.subTopicId,
+            });
+          }
         } catch (e) {
           if (
             e instanceof AuthoringChatNotFoundError ||
@@ -2029,6 +2118,14 @@ export const appRouter = router({
           }
           throw e;
         }
+        const jobId = await enqueueAuthoring({
+          boardId: ctx.board.id,
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+          phase: "set",
+          targets: input.targets,
+        });
+        return { jobId };
       }),
 
     // Revise ONE drafted question per a tutor instruction (the per-question

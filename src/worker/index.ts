@@ -5,7 +5,12 @@ import { db } from "../db/client";
 import { withBoard } from "../db/with-board";
 import { __aiConfigured } from "../services/ai/gemini";
 import { extractTopicsMd } from "../services/admin_ingest";
-import { authorFromChat, planFromChat, reviseDraft } from "../services/authoring_chat";
+import {
+  authorFromChat,
+  authorSetFromChat,
+  planFromChat,
+  reviseDraft,
+} from "../services/authoring_chat";
 import { scoreAttempt } from "../services/assessment";
 import { generateImageForQuestion, isPyrenderDownError } from "../services/image_gen";
 import { verifyImage } from "../services/image_verify";
@@ -174,54 +179,102 @@ reviseWorker.on("failed", (job, err) =>
 // Slice TWOWAY-1 — TWO PHASES on this one queue. 'plan' runs the worker's
 // plan turn (appending it to the worker conversation + relaying it into the master
 // chat) and stops, leaving the episode awaiting the tutor's gate; 'draft' runs the
-// approved plan. Separate jobs, never one job that waits on a human — at
-// concurrency 1 a parked job would pin the only authoring slot behind one unread
-// plan card. An ABSENT phase reads as 'draft' so a job enqueued by pre-slice code
-// and still sitting in Redis at deploy time does what it was queued to do.
-const authoringWorker = new Worker<AuthoringJobData>(
+// approved plan. Separate jobs, never one job that waits on a human — a parked job
+// would pin an authoring slot behind one unread plan card. An ABSENT phase reads as
+// 'draft' so a job enqueued by pre-slice code and still sitting in Redis at deploy
+// time does what it was queued to do.
+//
+// Slice SET-ASYNC — a THIRD phase, 'set': the parallel fan-out, moved off the
+// request path. It is ONE job that fans out INTERNALLY (authorSetFromChat opens its
+// own withBoard tx per sub-topic and Promise.allSettles them), not N queued jobs —
+// so the fan-out stays genuinely parallel regardless of this queue's concurrency,
+// and one chat keeps ONE resume handle. The `tx` opened here is the guard/brief tx;
+// the per-sub-topic workers get their own connections inside.
+//
+// Concurrency raised 1 → 4 (founder ruling, SET-ASYNC). A set job occupies a slot
+// for as long as its slowest member, so at 1 a single fan-out blocked every other
+// tutor's authoring for minutes. 4 is a ceiling, not a target: each slot can itself
+// fan out, so worst case is 4 × PROPOSE_SET_MAX concurrent AI calls — which is why
+// it is not higher.
+// SET-ASYNC: the RESULT generic is supplied too. It was omitted, so BullMQ defaulted
+// it to `any` and every `res` in the listeners below was untyped — which is why they
+// optional-chain fields that are not optional. With it, `res.phase` is a real
+// discriminant and a mis-read of the union is a compile error.
+const authoringWorker = new Worker<AuthoringJobData, AuthoringJobResult>(
   AUTHORING_QUEUE,
   async (job): Promise<AuthoringJobResult> =>
     withBoard(job.data.boardId, (tx): Promise<AuthoringJobResult> => {
-      if ((job.data.phase ?? "draft") === "plan") {
+      // Narrow on the SET variant first: it carries no subTopicId, so it must not
+      // reach either single-job branch.
+      if (job.data.phase === "set") {
+        const d = job.data;
+        return authorSetFromChat(tx, {
+          boardId: d.boardId,
+          tutorUserId: d.tutorUserId,
+          chatId: d.chatId,
+          targets: d.targets,
+        }).then((r) => ({ ...r, phase: "set" as const }));
+      }
+      const d = job.data;
+      if ((d.phase ?? "draft") === "plan") {
         return planFromChat(tx, {
-          tutorUserId: job.data.tutorUserId,
-          chatId: job.data.chatId,
-          subTopicId: job.data.subTopicId,
-          count: job.data.count,
-          ...(job.data.workerId ? { workerId: job.data.workerId } : {}),
+          tutorUserId: d.tutorUserId,
+          chatId: d.chatId,
+          subTopicId: d.subTopicId,
+          count: d.count,
+          ...(d.workerId ? { workerId: d.workerId } : {}),
         });
       }
       return authorFromChat(tx, {
-        tutorUserId: job.data.tutorUserId,
-        chatId: job.data.chatId,
-        subTopicId: job.data.subTopicId,
-        count: job.data.count,
-        ...(job.data.workerId ? { workerId: job.data.workerId } : {}),
+        tutorUserId: d.tutorUserId,
+        chatId: d.chatId,
+        subTopicId: d.subTopicId,
+        count: d.count,
+        ...(d.workerId ? { workerId: d.workerId } : {}),
       }).then((r) => ({ ...r, phase: "draft" as const }));
     }),
-  { connection: redisConnection, concurrency: 1 },
+  { connection: redisConnection, concurrency: 4 },
 );
 
 authoringWorker.on("completed", (job, res) => {
+  // SET-ASYNC: the fan-out reports per-sub-topic outcomes, and a PARTIAL failure is
+  // a normal completion here (allSettled) — so the failure count is logged on the
+  // 'completed' path deliberately. It never reaches the 'failed' handler below.
+  if (res?.phase === "set") {
+    const drafted = res.groups.reduce((n, g) => n + g.drafts.length, 0);
+    console.log(
+      `[b2c-worker] SET authored ${drafted} draft(s) across ${res.groups.length} ` +
+        `sub-topic(s), ${res.failures.length} failed (chat ${job.data.chatId})`,
+    );
+    for (const f of res.failures) {
+      console.error(`[b2c-worker]   SET member ${f.subTopicName} FAILED: ${f.error}`);
+    }
+    return;
+  }
   if (res?.phase === "plan") {
     console.log(
       `[b2c-worker] PLANNED ${res.plan?.items?.length ?? 0} item(s) for ` +
-        `${res.subTopicName ?? job.data.subTopicId} (chat ${job.data.chatId}, ` +
+        `${res.subTopicName ?? subTopicOf(job.data)} (chat ${job.data.chatId}, ` +
         `episode ${res.workerId}) — awaiting the tutor's gate`,
     );
     return;
   }
   console.log(
     `[b2c-worker] authored ${res?.drafts?.length ?? 0} draft(s) for ` +
-      `${res?.subTopicName ?? job.data.subTopicId} (chat ${job.data.chatId})`,
+      `${res?.subTopicName ?? subTopicOf(job.data)} (chat ${job.data.chatId})`,
   );
 });
 authoringWorker.on("failed", (job, err) =>
   console.error(
-    `[b2c-worker] authoring ${job?.data.phase ?? "draft"} FAILED sub-topic ` +
-      `${job?.data.subTopicId} (chat ${job?.data.chatId}): ${err.message}`,
+    `[b2c-worker] authoring ${job?.data.phase ?? "draft"} FAILED ` +
+      `${job ? subTopicOf(job.data) : "(no job)"} (chat ${job?.data.chatId}): ${err.message}`,
   ),
 );
+
+/** A set job has no single sub-topic — name what it covered instead of `undefined`. */
+function subTopicOf(d: AuthoringJobData): string {
+  return d.phase === "set" ? `set of ${d.targets.length}` : d.subTopicId;
+}
 
 // Slice CLOCK-2 — monthly mastery snapshot. A GLOBAL clock (no per-item job): one
 // repeatable fires monthly and freezes every student's mastery rollup so the

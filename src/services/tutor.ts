@@ -28,6 +28,7 @@ import { and, asc, eq, inArray, isNull, notExists } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
+  assessmentSession,
   attempt,
   attemptImage,
   board,
@@ -40,6 +41,7 @@ import {
   practiceSession,
   question,
   student,
+  studentAuthoringPreference,
   studentChapterInsight,
   studentSubjectInsight,
   subTopic,
@@ -1131,4 +1133,180 @@ export async function getStudentInsights(
     .orderBy(asc(subject.name), asc(horizontalSkillState.slug));
 
   return { subjects, chapters, horizontals };
+}
+
+// ─────────────── Slice AUTHOR-PREF — walkthrough item 10 ───────────────
+//
+// "How to teach this student", per subject. TUTOR-OWNED: synthesis writes the
+// insight tables above and must never touch this one (see the table's comment
+// for why they are separate rows and not one).
+//
+// The read is a LEFT JOIN from `subject`, not from the preference table, and
+// that direction is the point: a tutor cannot write the first note for a subject
+// that a preference-first read would never return. An unwritten subject comes
+// back with `preference: null` — the editor's empty state — and is the normal
+// case, not an error.
+
+export type AuthoringPreferenceRow = {
+  subjectId: string;
+  subjectName: string;
+  grade: string;
+  /** null = nobody has written one. NOT "" — see setAuthoringPreference. */
+  preference: string | null;
+  updatedAt: Date | null;
+};
+
+/** Shared read. `subjectIds` null = every subject on the board. */
+async function readAuthoringPreferences(
+  tx: Tx,
+  studentId: string,
+  subjectIds: string[] | null,
+): Promise<AuthoringPreferenceRow[]> {
+  if (subjectIds != null && subjectIds.length === 0) return [];
+  return await tx
+    .select({
+      subjectId: subject.id,
+      subjectName: subject.name,
+      grade: subject.grade,
+      preference: studentAuthoringPreference.preference,
+      updatedAt: studentAuthoringPreference.updatedAt,
+    })
+    .from(subject)
+    .leftJoin(
+      studentAuthoringPreference,
+      and(
+        eq(studentAuthoringPreference.subjectId, subject.id),
+        eq(studentAuthoringPreference.studentId, studentId),
+      ),
+    )
+    .where(subjectIds == null ? undefined : inArray(subject.id, subjectIds))
+    .orderBy(asc(subject.name));
+}
+
+/** Every subject on the board, with this student's note or null. */
+export async function getAuthoringPreferences(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string },
+): Promise<AuthoringPreferenceRow[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  return await readAuthoringPreferences(tx, args.studentId, null);
+}
+
+/**
+ * Only the subjects THIS SITTING spans, for the editor on its done phase.
+ * A catch-all sitting pools whatever evidence was waiting, so its sub-topics can
+ * cross subjects — hence a set, resolved from the frozen `subTopicIds`, and one
+ * editor per subject rather than a guess at the dominant one.
+ */
+export async function getSessionAuthoringPreferences(
+  tx: Tx,
+  args: { tutorUserId: string; sessionId: string },
+): Promise<AuthoringPreferenceRow[]> {
+  const [sitting] = await tx
+    .select({ studentId: assessmentSession.studentId, subTopicIds: assessmentSession.subTopicIds })
+    .from(assessmentSession)
+    .where(eq(assessmentSession.id, args.sessionId));
+  if (!sitting) throw new SittingNotFoundError(args.sessionId);
+  await assertTutorsStudent(tx, args.tutorUserId, sitting.studentId);
+
+  const rows =
+    sitting.subTopicIds.length === 0
+      ? []
+      : await tx
+          .selectDistinct({ subjectId: chapter.subjectId })
+          .from(subTopic)
+          .innerJoin(topic, eq(topic.id, subTopic.topicId))
+          .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+          .where(inArray(subTopic.id, sitting.subTopicIds));
+
+  return await readAuthoringPreferences(
+    tx,
+    sitting.studentId,
+    rows.map((r) => r.subjectId),
+  );
+}
+
+/**
+ * Raised when the sitting isn't this board's. Deliberately NOT the
+ * `AssessmentSessionNotFoundError` that `assessment_session.ts` exports — same
+ * meaning, but importing that one here would couple the tutor read surface to
+ * the sitting service for a single error class. Distinct name so a future reader
+ * cannot mistake one `instanceof` for the other.
+ */
+export class SittingNotFoundError extends Error {
+  code = "ASSESSMENT_SESSION_NOT_FOUND";
+  constructor(id: string) {
+    super(`assessment session ${id} not found`);
+    this.name = "SittingNotFoundError";
+  }
+}
+
+/**
+ * Write (or clear) one subject's note. Returns the same shape the read does, so
+ * the two write surfaces — the student's page and the sitting's done phase —
+ * render from one contract.
+ *
+ * An EMPTY (or whitespace-only) save DELETES the row rather than storing "".
+ * A stored "" would satisfy every `!= null` check downstream and render as a
+ * headed but empty grounding block, which tells the author "the tutor had
+ * nothing to say about her" instead of "nobody has written this yet" — the same
+ * null-vs-zero distinction the mastery bound holds elsewhere.
+ */
+export async function setAuthoringPreference(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string; subjectId: string; preference: string | null },
+): Promise<AuthoringPreferenceRow[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+
+  // The subject must exist ON THIS BOARD. RLS scopes the read, so a subject from
+  // another board simply isn't found — the insert would otherwise create a row
+  // whose board_id (below) disagrees with the subject it points at (M61's
+  // cross-board FK, manufactured deliberately instead of by accident).
+  const [subj] = await tx
+    .select({ id: subject.id, boardId: subject.boardId })
+    .from(subject)
+    .where(eq(subject.id, args.subjectId));
+  if (!subj) throw new SubjectNotOnBoardError(args.subjectId);
+
+  const trimmed = args.preference?.trim() || null;
+
+  if (trimmed == null) {
+    await tx
+      .delete(studentAuthoringPreference)
+      .where(
+        and(
+          eq(studentAuthoringPreference.studentId, args.studentId),
+          eq(studentAuthoringPreference.subjectId, args.subjectId),
+        ),
+      );
+  } else {
+    await tx
+      .insert(studentAuthoringPreference)
+      .values({
+        boardId: subj.boardId,
+        studentId: args.studentId,
+        subjectId: args.subjectId,
+        preference: trimmed,
+        updatedBy: args.tutorUserId,
+      })
+      .onConflictDoUpdate({
+        target: [studentAuthoringPreference.studentId, studentAuthoringPreference.subjectId],
+        set: { preference: trimmed, updatedBy: args.tutorUserId, updatedAt: new Date() },
+      });
+  }
+
+  return await readAuthoringPreferences(tx, args.studentId, null);
+}
+
+/**
+ * Raised when the subject isn't visible on this board. Distinct from
+ * `admin_ingest`'s `SubjectNotFoundError` (same wire code, different module) so
+ * neither `instanceof` can silently catch the other's throw.
+ */
+export class SubjectNotOnBoardError extends Error {
+  code = "SUBJECT_NOT_FOUND";
+  constructor(id: string) {
+    super(`subject ${id} not found`);
+    this.name = "SubjectNotOnBoardError";
+  }
 }

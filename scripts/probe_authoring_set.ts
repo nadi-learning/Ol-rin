@@ -40,14 +40,25 @@ import {
   subTopic,
   topic,
 } from "@b2c/kernel/schema";
+import { randomUUID } from "node:crypto";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { env } from "../src/config/env";
+// Slice SET-ASYNC: the fan-out runs as a background job now, so the QUEUE contract
+// (the job's data shape + the resume handle's phase) is part of this slice's surface.
+import {
+  authoringQueue,
+  enqueueAuthoring,
+  getActiveAuthoringJob,
+} from "../src/worker/queue";
 import {
   authorSetFromChat,
   clampProposedItems,
   clampSetCount,
+  proposeSetResultSchema,
   proposeTargetSet,
+  sendTurn,
+  setIntentForMode,
   startChat,
   SubTopicNotFoundError,
 } from "../src/services/authoring_chat";
@@ -320,6 +331,130 @@ async function main() {
     /intent:\s*chat\.mode === "interleaved" \? "discriminate" : "cover"/.test(tutorPageSrc),
   );
 
+  // ══ CHAT-SET-ROUTE — the chat go-ahead is MODE-AWARE ═══════════════════════════
+  // S179 §7: both vendor branches routed through resolveTargetAndEnqueue with a
+  // SINGLE subTopicNumber and never called the fan-out, so with "Several" selected a
+  // go-ahead still authored ONE sub-topic and the toggle was silently ignored — the
+  // chat model, lacking any mechanism, invented a "two consecutive briefs" workaround.
+
+  // ── FIRM 8: the intent rule, BOTH arms in ONE leg ──────────────────────────────
+  // M101: the moment a change makes two rules diverge, assert them together —
+  // separately, one quietly becomes the other's stale sibling.
+  check(
+    "CHAT-SET-ROUTE: setIntentForMode maps interleaved→discriminate AND blocked→cover",
+    setIntentForMode("interleaved") === "discriminate" && setIntentForMode("blocked") === "cover",
+  );
+  check(
+    "CHAT-SET-ROUTE: a legacy null/undefined mode falls to 'cover', never 'discriminate'",
+    setIntentForMode(null) === "cover" && setIntentForMode(undefined) === "cover",
+  );
+
+  // ── FIRM 9: S179 §8 — one malformed pick must not 500 the whole proposal ───────
+  // `items` was `.min(1)` per pick, so a single empty-items pick threw at .parse()
+  // and bubbled as a 500 with NO proposal. Deterministic: no AI in this leg.
+  const emptyPickParse = proposeSetResultSchema.safeParse({
+    picks: [
+      { choice: 1 },
+      { choice: 2, items: [{ axis: "conceptual", kind: "k", intent: "i", difficulty: "d" }] },
+    ],
+    rationale: "r",
+  });
+  check(
+    "CHAT-SET-ROUTE (§8): a pick with NO items PARSES instead of throwing (was a 500)",
+    emptyPickParse.success && (emptyPickParse.data.picks[0]?.items?.length ?? -1) === 0,
+  );
+  // The other half of the same fix: an all-empty payload must still parse, so the
+  // resolver reaches its own degenerate fallback rather than dying at the boundary.
+  check(
+    "CHAT-SET-ROUTE (§8): an ALL-empty-items payload parses (resolver handles the fallback)",
+    proposeSetResultSchema.safeParse({ picks: [{ choice: 1 }], rationale: "" }).success,
+  );
+
+  // ── FIRM 10: the FE wiring, on a COMMENT-STRIPPED source ───────────────────────
+  // M77 has recurred THREE times in this repo: a probe that greps raw source is
+  // reading a document that argues with itself, and the prose wins as often as the
+  // code. Strip comments at the block level before asserting.
+  const tutorPageCode = tutorPageSrc
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  check(
+    "CHAT-SET-ROUTE (FE): the toggle is SENT with the turn (`setMode: setModeOn`)",
+    /setMode:\s*setModeOn/.test(tutorPageCode),
+  );
+  check(
+    "CHAT-SET-ROUTE (FE): a returned proposal routes into the EXISTING set card",
+    /if \(c\.proposedSet\)/.test(tutorPageCode) &&
+      /setProposalSet\(c\.proposedSet\)/.test(tutorPageCode),
+  );
+
+  // ── SOFT + GATE: a REAL go-ahead in a BLOCKED chat with the toggle on ──────────
+  // Deliberately the blocked chat: that is the founder's case and the one `chat.mode`
+  // could never have selected (interleaved+One and blocked+Several both exist, which
+  // is why the toggle has to travel with the turn). ~2 real Gemini calls.
+  let setTurn = await rows(P.id, (tx) =>
+    sendTurn(tx, {
+      tutorUserId: tut.id,
+      chatId: blocked.chatId,
+      text: "Go ahead — author across several sub-topics of this chapter now, in parallel.",
+      setMode: true,
+    }),
+  );
+  if (!setTurn.proposedSet) {
+    // The model didn't emit the go-ahead sentinel on the first ask (a conversational
+    // outcome, not a defect). Retry once, blunter — same discipline as
+    // probe_authoring_tool's go-ahead legs.
+    setTurn = await rows(P.id, (tx) =>
+      sendTurn(tx, {
+        tutorUserId: tut.id,
+        chatId: blocked.chatId,
+        text: "This is the go-ahead. Author several sub-topics of this chapter now.",
+        setMode: true,
+      }),
+    );
+  }
+  soft("set-route picks", setTurn.proposedSet?.picks?.map((p) => p.subTopicName) ?? null);
+  check(
+    "CHAT-SET-ROUTE: a go-ahead with setMode ON returns a SET PROPOSAL",
+    (setTurn.proposedSet?.picks?.length ?? 0) >= 1,
+  );
+  check(
+    "CHAT-SET-ROUTE: the proposal carries the SET-PLAN-GATE blueprint (items, count derived)",
+    (setTurn.proposedSet?.picks ?? []).every(
+      (p) => (p.items?.length ?? 0) > 0 && p.count === p.items.length,
+    ),
+  );
+  // The gate itself: NOTHING is enqueued on this path. The fan-out must be reachable
+  // only through the tutor approving the card (founder, 2026-07-31) — a chat go-ahead
+  // that silently spent N sub-topics of AI is the thing this slice must not become.
+  check(
+    "CHAT-SET-ROUTE (GATE): the set turn enqueued NOTHING (no draftJobId, no planJobId)",
+    setTurn.draftJobId === undefined && setTurn.planJobId === undefined,
+  );
+
+  // ── NEGATIVE CONTROL: the SAME chat + go-ahead with setMode OFF ────────────────
+  // M104: a control whose subject is produced by a fallible live call can pass by the
+  // subject never being produced. So this REQUIRES the subject to exist — a job id
+  // must actually come back. If the call fails or emits no go-ahead, the leg REDS
+  // rather than passing on an absent `proposedSet`.
+  const noSetTurn = await rows(P.id, (tx) =>
+    sendTurn(tx, {
+      tutorUserId: tut.id,
+      chatId: blocked.chatId,
+      text: "This is the go-ahead. Author 2 questions on sub-topic 1 now.",
+      // setMode deliberately OMITTED — proves the default is the single path.
+    }),
+  );
+  const singleJobId = noSetTurn.planJobId ?? noSetTurn.draftJobId ?? "";
+  soft("negative control jobId", singleJobId || null);
+  check(
+    "CHAT-SET-ROUTE (NEG): setMode OMITTED → a real job id came back (subject EXISTS)",
+    typeof singleJobId === "string" && singleJobId.length > 0,
+  );
+  check(
+    "CHAT-SET-ROUTE (NEG): that same turn produced NO set proposal",
+    noSetTurn.proposedSet === undefined,
+  );
+
   const geminiConfigured = !!env.GEMINI_API_KEY;
   if (!geminiConfigured) console.log("  ~ real-Gemini legs SKIPPED (GEMINI_API_KEY unset)");
 
@@ -565,6 +700,88 @@ async function main() {
       noBrief.length > 0 && !noBrief.includes(SENTINEL) && !noBrief.includes(MARKER),
     );
   }
+
+  // ── SET-ASYNC: the fan-out is a JOB — prove the queue contract (no AI) ────────
+  // All deterministic. What is NEW in this slice is not the fan-out (unchanged, and
+  // covered by the legs above) but the ENQUEUE: a third job variant that carries
+  // `targets` instead of a `subTopicId`, and a resume handle that must report it.
+  //
+  // A SYNTHETIC chatId is used deliberately. `activeJobIdForChat` matches the FIRST
+  // in-flight job for a (board, chat) — and the negative-control turn above already
+  // left a single-phase job on `blocked.chatId` that no worker consumes during a
+  // probe run. Reusing that chat would make the phase leg read the OLDER job and red
+  // for a reason that has nothing to do with this slice.
+  const setChatId = randomUUID();
+  const setJobPlan: WorkerPlan = {
+    read: "",
+    items: [
+      { n: 1, axis: "conceptual", kind: "misconception-probe", intent: "SET-ASYNC round-trip", difficulty: "medium" },
+    ],
+    questions: [],
+  };
+  const setJobId = await enqueueAuthoring({
+    boardId: P.id,
+    tutorUserId: tut.id,
+    chatId: setChatId,
+    phase: "set",
+    targets: [
+      { subTopicId: fx.chA.subIds[0]!, count: 1, plan: setJobPlan },
+      { subTopicId: fx.chA.subIds[1]!, count: 2 },
+    ],
+  });
+  check(
+    "SET-ASYNC: enqueueAuthoring accepts the 'set' variant and returns a job id",
+    typeof setJobId === "string" && setJobId.length > 0,
+  );
+  // Read it BACK out of Redis — a serialisation round-trip, not the object we passed.
+  const setJob = await authoringQueue.getJob(setJobId);
+  const setData = setJob?.data;
+  check(
+    "SET-ASYNC: the job's phase round-trips through Redis as 'set'",
+    setData?.phase === "set",
+  );
+  check(
+    "SET-ASYNC: BOTH targets survive the round-trip, with the SET-PLAN-GATE blueprint intact",
+    setData?.phase === "set" &&
+      setData.targets.length === 2 &&
+      setData.targets[0]?.plan?.items?.[0]?.intent === "SET-ASYNC round-trip" &&
+      setData.targets[1]?.count === 2,
+  );
+  // The variant hazard the required `phase` exists to prevent: a set job has no
+  // subTopicId, so if its phase were ever lost the `?? "draft"` default would hand
+  // the single-job branch an undefined sub-topic.
+  check(
+    "SET-ASYNC: a set job carries NO subTopicId (it is genuinely the other variant)",
+    setData !== undefined && !("subTopicId" in setData),
+  );
+  const liveSet = await getActiveAuthoringJob(P.id, setChatId);
+  check(
+    "SET-ASYNC: getActiveAuthoringJob reports phase 'set' → the loader resumes as the fan-out",
+    liveSet?.jobId === setJobId && liveSet?.phase === "set",
+  );
+  // Remove BEFORE the 2s enqueue delay elapses — a probe must not leave a real
+  // authoring job for a running daemon to pick up and spend AI on (M106's family).
+  await setJob?.remove();
+
+  // NEGATIVE CONTROL (M104 — the subject must EXIST, and the read must discriminate).
+  // Same helper, same chat, a SINGLE-variant job: if the phase leg above were reading
+  // a constant rather than the job, this would also say "set".
+  const ctlChatId = randomUUID();
+  const ctlJobId = await enqueueAuthoring({
+    boardId: P.id,
+    tutorUserId: tut.id,
+    chatId: ctlChatId,
+    subTopicId: fx.chA.subIds[0]!,
+    count: 1,
+    phase: "draft",
+  });
+  const liveCtl = await getActiveAuthoringJob(P.id, ctlChatId);
+  check(
+    "SET-ASYNC (NEG): a single-variant job on the same helper reports 'draft', not 'set'",
+    ctlJobId.length > 0 && liveCtl?.jobId === ctlJobId && liveCtl?.phase === "draft",
+  );
+  await (await authoringQueue.getJob(ctlJobId))?.remove();
+  await authoringQueue.close();
 
   // ── HTTP: both new procedures require a session → 401 ──
   for (const [name, proc, body] of [

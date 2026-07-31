@@ -57,6 +57,11 @@ type CrossConceptFlagView = Awaited<
 type StudentInsightsView = Awaited<
   ReturnType<typeof trpc.tutor.getStudentInsights.query>
 >;
+// Slice AUTHOR-PREF — walkthrough item 10. One row per subject; `preference`
+// null means nobody has written one yet, which is the normal state.
+type AuthoringPreferenceRow = Awaited<
+  ReturnType<typeof trpc.tutor.getAuthoringPreferences.query>
+>[number];
 type SessionChatMessage = AssessmentSessionView["messages"][number];
 type DueGroup = Awaited<
   ReturnType<typeof trpc.tutor.getDueQueue.query>
@@ -319,6 +324,7 @@ function StudentDetail({
       {tab === "assess" && (
         <>
           <StudentInsights insights={insights} />
+          <StudentAuthoringPreferences studentId={student.studentId} />
           <section className="tut-section">
             <h3 className="tut-section-title">Waiting to assess</h3>
             <PendingList student={student} pending={pending} onFinalized={reload} />
@@ -1601,6 +1607,170 @@ function StudentInsights({ insights }: { insights: StudentInsightsView | null })
   );
 }
 
+// ─────────── Slice AUTHOR-PREF — walkthrough item 10 ───────────
+//
+// "How to teach this student", per subject — the tutor's own instruction to the
+// question author. Rendered in TWO places from ONE contract: the student's page
+// (every subject on the board) and a finalized sitting's done phase (only the
+// subject(s) that sitting spans). Both call the same mutation.
+//
+// Deliberately NOT seeded from the prop on every render. The textarea holds the
+// tutor's in-progress typing, so a parent refetch must not overwrite it
+// mid-sentence; instead the canonical value is taken from the MUTATION's own
+// response after a save (M103: `useState(prop)` binds once at mount, so a
+// component that must resync does it explicitly rather than hoping for a remount).
+function AuthoringPreferenceCard({
+  studentId,
+  row,
+  onSaved,
+}: {
+  studentId: string;
+  row: AuthoringPreferenceRow;
+  onSaved: (rows: AuthoringPreferenceRow[]) => void;
+}) {
+  const [text, setText] = useState(row.preference ?? "");
+  const [saved, setSaved] = useState(row.preference ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const dirty = text.trim() !== saved.trim();
+
+  function save() {
+    setBusy(true);
+    setErr(null);
+    trpc.tutor.setAuthoringPreference
+      .mutate({ studentId, subjectId: row.subjectId, preference: text })
+      .then((rows) => {
+        // Resync from the SERVER's answer, not from what was typed: a
+        // whitespace-only save clears the row, and the box must then read empty
+        // rather than keeping the spaces that deleted it.
+        const mine = rows.find((r) => r.subjectId === row.subjectId);
+        setText(mine?.preference ?? "");
+        setSaved(mine?.preference ?? "");
+        onSaved(rows);
+      })
+      .catch((e) => setErr(String(e?.message ?? e)))
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <div className="tut-pref-card">
+      <div className="tut-pref-head">
+        <span className="tut-pref-title">How to teach this student — {row.subjectName}</span>
+        <span className="tut-pref-optional">optional</span>
+      </div>
+      <textarea
+        className="tut-pref-text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="e.g. diagram-first questions land better than long worded ones — more of those."
+        rows={3}
+      />
+      <div className="tut-pref-foot">
+        <span className="tut-pref-note">
+          Tutor-owned · the question author reads this · never rewritten by the assessment
+        </span>
+        <button
+          type="button"
+          className="tut-pref-save"
+          onClick={save}
+          disabled={busy || !dirty}
+        >
+          {busy ? "Saving…" : saved && !text.trim() ? "Clear" : "Save"}
+        </button>
+      </div>
+      {err && <p className="tut-error">{err}</p>}
+      {row.updatedAt && !dirty && saved && (
+        <p className="tut-pref-stamp">
+          Last written {new Date(row.updatedAt).toLocaleDateString()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Write surface 1 — the student's page. Every subject on the board, so a tutor
+ * can write the FIRST note for a subject the student has no history in yet.
+ *
+ * Renders nothing at all until the query answers, and nothing if the board has
+ * no subjects — but an UNWRITTEN subject still renders its (empty) card. That is
+ * the point of the surface: an editor that only appeared once a note existed
+ * could never be used to write the first one.
+ */
+function StudentAuthoringPreferences({ studentId }: { studentId: string }) {
+  const [rows, setRows] = useState<AuthoringPreferenceRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    trpc.tutor.getAuthoringPreferences
+      .query({ studentId })
+      .then((r) => live && setRows(r))
+      .catch(() => live && setRows([]));
+    return () => {
+      live = false;
+    };
+  }, [studentId]);
+
+  if (!rows || rows.length === 0) return null;
+  return (
+    <section className="tut-section">
+      <h3 className="tut-section-title">How to teach this student</h3>
+      <p className="tut-pref-lede">
+        Your own note to the question author — what lands, what to avoid. It shapes the
+        FORM of what gets authored, not what gets tested.
+      </p>
+      <div className="tut-prefs">
+        {rows.map((r) => (
+          <AuthoringPreferenceCard
+            key={r.subjectId}
+            studentId={studentId}
+            row={r}
+            onSaved={setRows}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Write surface 2 — a finalized sitting's done phase, narrowed to the subject(s)
+ * that sitting actually spans (a catch-all sitting can cross subjects, so this
+ * is a list, not a single card).
+ */
+function SessionAuthoringPreferences({
+  sessionId,
+  studentId,
+}: {
+  sessionId: string;
+  studentId: string;
+}) {
+  const [rows, setRows] = useState<AuthoringPreferenceRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    trpc.tutor.getSessionAuthoringPreferences
+      .query({ sessionId })
+      .then((r) => live && setRows(r))
+      .catch(() => live && setRows([]));
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div className="tut-prefs tut-prefs--sitting">
+      {rows.map((r) => (
+        <AuthoringPreferenceCard
+          key={r.subjectId}
+          studentId={studentId}
+          row={r}
+          onSaved={setRows}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ASSESS-FIX-4 — weak prerequisites spotted while the student was working on
 // something ELSE ("ran the trig fine, couldn't rationalise the denominator").
 // These carry NO level and count toward NO mastery — by design: the rule that
@@ -1886,6 +2056,11 @@ function AssessmentSitting({
             )}
           </div>
         )}
+        {/* Write surface 2 (founder ruling) — the moment the tutor has just read
+            the synthesis is the moment "how should we teach them next" is live.
+            Narrowed to the subject(s) THIS sitting spans. Optional: skipping it
+            and pressing Done is the ordinary path, and nothing here blocks it. */}
+        {session && <SessionAuthoringPreferences sessionId={session.id} studentId={session.studentId} />}
         <button className="tut-assess-btn" onClick={onFinalized}>
           Done
         </button>
@@ -3239,6 +3414,9 @@ type AuthorJobStatus = Awaited<ReturnType<typeof trpc.tutor.getAuthoringJobStatu
 type AuthorJobResult = Extract<AuthorJobStatus, { state: "completed" }>["result"];
 type AuthorDraft = Extract<AuthorJobResult, { phase: "draft" }>;
 type AuthorPlan = Extract<AuthorJobResult, { phase: "plan" }>;
+// Slice SET-ASYNC: the parallel fan-out is a JOB now, so its {groups, failures} is
+// the third member of the same union — no longer the mutation's return value.
+type AuthorSet = Extract<AuthorJobResult, { phase: "set" }>;
 type AuthorDraftItem = AuthorDraft["drafts"][number];
 // The plan awaiting a gate, as carried on getChat (the resume-proof source) — the
 // same shape the plan card renders from however it arrived.
@@ -3251,9 +3429,11 @@ type ProposeResult = Awaited<
 type ProposeSetResult = Awaited<
   ReturnType<typeof trpc.tutor.proposeAuthoringSet.mutate>
 >;
-type AuthorSetResult = Awaited<
-  ReturnType<typeof trpc.tutor.authorSetFromChat.mutate>
->;
+// Slice SET-ASYNC: authorSetFromChat now returns { jobId } — the fan-out's payload
+// arrives via the job poll, so this alias is sourced from the job union (AuthorSet),
+// not from the mutation. Left as a name because the failures list is rendered from
+// it in several places.
+type AuthorSetResult = AuthorSet;
 type AuthoredQuestion = Awaited<
   ReturnType<typeof trpc.tutor.listAuthoredQuestions.query>
 >[number];
@@ -3413,6 +3593,22 @@ function AuthorChat({
   const [setFailures, setSetFailures] = useState<
     AuthorSetResult["failures"] | null
   >(null);
+  // Slice SET-ASYNC: the fan-out is a background job, so its loader is durable in the
+  // same shape as the draft/plan loaders — jobId + timer as REFS (survive re-render),
+  // and it resumes across a refresh via getActiveAuthoringJob. `authoringSet` stays
+  // the rendered flag; the refs are what make it survive.
+  const setJobRef = useRef<string | null>(null);
+  const setPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (setPollRef.current) clearTimeout(setPollRef.current);
+    },
+    [],
+  );
+  const SET_FAILED_MSG =
+    "We couldn't author this set. Please try again — if it keeps failing, ask for fewer sub-topics at a time.";
+  const SET_SLOW_MSG =
+    "Authoring the set is taking longer than usual. Leave this open — the questions will appear here when they're ready.";
 
   // COVERAGE-1: does this chat author ONE sub-topic at a time, or SEVERAL in
   // parallel? A toggle, not conversational intent-detection (founder, 2026-07-29:
@@ -3621,6 +3817,14 @@ function AuthorChat({
     if (planPollRef.current) clearTimeout(planPollRef.current);
     planPollRef.current = null;
     planJobRef.current = null;
+    // SET-ASYNC: and the fan-out poll. Same semantics as the two above — the JOB
+    // keeps running server-side, this session just stops tracking it; re-opening the
+    // chat re-attaches via getActiveAuthoringJob.
+    setAuthoringSet(false);
+    if (setPollRef.current) clearTimeout(setPollRef.current);
+    setPollRef.current = null;
+    setJobRef.current = null;
+    setSetFailures(null);
     setSaved(null);
     setError(null);
     setInput("");
@@ -3657,7 +3861,13 @@ function AuthorChat({
     // TWOWAY-1: the handle carries the PHASE, so a plan in flight resumes as
     // "Planning…" and its poll expects a plan. Guessing here would restore the wrong
     // loader and then feed the review form a payload it can't open.
-    if (!draftJobRef.current && !planJobRef.current) {
+    //
+    // SET-ASYNC: 'set' is the third phase. It is ONE job per chat like the others —
+    // the fan-out happens inside it — so this scan still finds exactly one handle and
+    // needs no N-way change. That is precisely why the fan-out was NOT split into N
+    // queued jobs: activeJobIdForChat matches the FIRST job for the chat, so N of
+    // them would resume an arbitrary member's loader.
+    if (!draftJobRef.current && !planJobRef.current && !setJobRef.current) {
       void (async () => {
         pinBoard(); // BOARD-PIN
         const live = await trpc.tutor.getActiveAuthoringJob
@@ -3666,6 +3876,8 @@ function AuthorChat({
         if (!live) return;
         if (live.phase === "plan") {
           if (!planJobRef.current) startPlanningPoll(live.jobId);
+        } else if (live.phase === "set") {
+          if (!setJobRef.current) startSetPoll(live.jobId);
         } else if (!draftJobRef.current) {
           startDraftingPoll(live.jobId);
         }
@@ -3903,7 +4115,11 @@ function AuthorChat({
     setChat({ ...chat, messages: [...chat.messages, optimistic] });
     pinBoard(); // BOARD-PIN — this is the call the founder saw fail as "thread not found"
     trpc.tutor.sendAuthoringChatTurn
-      .mutate({ chatId: chat.chatId, text, planFirst })
+      // CHAT-SET-ROUTE: the One/Several toggle rides along with the turn. It is a
+      // choice for this sitting (COVERAGE-1 deliberately does not persist it), so the
+      // server cannot read it off the chat row — sending it per-turn is what makes a
+      // chat go-ahead honour the toggle at all.
+      .mutate({ chatId: chat.chatId, text, planFirst, setMode: setModeOn })
       .then((c) => {
         setChat(c); // authoritative list replaces the optimistic turn
         // TWOWAY-FIX: the server refused to start new work because a gate is already
@@ -3914,6 +4130,15 @@ function AuthorChat({
         // types, instead of waiting for a reload.
         if (c.pendingPlan) {
           setPlan(c.pendingPlan);
+          return; // nothing was enqueued, so there is no job to poll
+        }
+        // CHAT-SET-ROUTE: the go-ahead fired with "Several" on, so the server resolved
+        // a SET and handed back the blueprint proposal instead of enqueueing anything.
+        // Drop it into the SAME state the menu's "Suggest sub-topics" button fills, so
+        // the existing card renders it and the existing approve path fans out — the
+        // chat route reaches the fan-out through the tutor's approval, never directly.
+        if (c.proposedSet) {
+          setProposalSet(c.proposedSet);
           return; // nothing was enqueued, so there is no job to poll
         }
         // AUTHOR-ASYNC: an in-chat author fired (Gemini sentinel / Claude marker) →
@@ -4038,29 +4263,92 @@ function AuthorChat({
             : {}),
         })),
       })
-      .then((r) => {
-        const cs = r.groups.flatMap((g) =>
-          g.drafts.map((d) => toCard(d, g.subTopicId, g.subTopicName)),
-        );
-        if (cs.length > 0) {
-          const first = r.groups[0]!;
-          setTarget({
-            subTopicId: first.subTopicId,
-            subTopicName: first.subTopicName,
-            nextOrdinal: first.nextOrdinal,
-          });
-          setCards(cs);
-          setPreviewMinimized(false);
+      // Slice SET-ASYNC: this returns a jobId now, not the fan-out. The loader stays
+      // up until the POLL resolves — so `finally(() => setAuthoringSet(false))` would
+      // be wrong here: it would clear the spinner the instant the job was queued.
+      .then((r) => startSetPoll(r.jobId))
+      .catch((e) => {
+        setAuthoringSet(false);
+        setError(String(e?.message ?? e));
+      });
+  }
+
+  /** Apply a completed fan-out to the review form. Shared by the fresh poll and the
+   *  resumed one, so a set opened after a refresh renders identically. */
+  function applySetResult(r: AuthorSet) {
+    const cs = r.groups.flatMap((g) =>
+      g.drafts.map((d) => toCard(d, g.subTopicId, g.subTopicName)),
+    );
+    if (cs.length > 0) {
+      const first = r.groups[0]!;
+      setTarget({
+        subTopicId: first.subTopicId,
+        subTopicName: first.subTopicName,
+        nextOrdinal: first.nextOrdinal,
+      });
+      setCards(cs);
+      setPreviewMinimized(false);
+    }
+    setSetFailures(r.failures.length > 0 ? r.failures : null);
+    if (cs.length === 0 && r.failures.length > 0) {
+      setError(
+        `Authoring failed for all ${r.failures.length} sub-topic${r.failures.length === 1 ? "" : "s"}. Try again.`,
+      );
+    }
+  }
+
+  // Poll a SET job until the fan-out lands. Mirrors pollAuthoring, including treating
+  // 'unknown' as still-working (a transient Redis blip inside the poll window, never
+  // the 1h age-out). The cap is the DRAFT cap — a set is N drafts in parallel, so its
+  // wall-clock is the slowest member, not the sum (200 × 3s ≈ 10min).
+  function pollAuthoringSet(jobId: string, tries: number) {
+    if (tries > 200) {
+      setJobRef.current = null;
+      setAuthoringSet(false);
+      setError(SET_SLOW_MSG);
+      return;
+    }
+    pinBoard(); // BOARD-PIN — re-pinned on EVERY tick; a long fan-out spans drift
+    trpc.tutor.getAuthoringJobStatus
+      .query({ jobId })
+      .then((s) => {
+        if (s.state === "completed") {
+          setJobRef.current = null;
+          setAuthoringSet(false);
+          // Symmetric to the draft/plan polls' cross-phase guards: never hand a
+          // non-set payload to the set applier. A plan reaching here means the
+          // loaders crossed — gate it rather than drop it; a draft opens the form.
+          if (s.result.phase === "plan") {
+            setPlan(planFromJob(s.result));
+            return;
+          }
+          if (s.result.phase === "draft") {
+            openReviewForm(s.result);
+            return;
+          }
+          applySetResult(s.result);
+          return;
         }
-        setSetFailures(r.failures.length > 0 ? r.failures : null);
-        if (cs.length === 0 && r.failures.length > 0) {
-          setError(
-            `Authoring failed for all ${r.failures.length} sub-topic${r.failures.length === 1 ? "" : "s"}. Try again.`,
-          );
+        if (s.state === "failed") {
+          setJobRef.current = null;
+          setAuthoringSet(false);
+          setError(SET_FAILED_MSG);
+          return;
         }
+        setPollRef.current = setTimeout(() => pollAuthoringSet(jobId, tries + 1), 3000);
       })
-      .catch((e) => setError(String(e?.message ?? e)))
-      .finally(() => setAuthoringSet(false));
+      .catch(() => {
+        setJobRef.current = null;
+        setAuthoringSet(false);
+        setError(SET_FAILED_MSG);
+      });
+  }
+
+  /** Start (or resume) the durable "Authoring the set…" loader + poll for a job id. */
+  function startSetPoll(jobId: string) {
+    setJobRef.current = jobId;
+    setAuthoringSet(true);
+    pollAuthoringSet(jobId, 0);
   }
 
   const patch = (i: number, p: Partial<DraftCard>) =>
@@ -4149,6 +4437,12 @@ function AuthorChat({
             setPlan(planFromJob(s.result));
             return;
           }
+          // SET-ASYNC: same rule for a fan-out payload — its cards live under
+          // {groups}, so openReviewForm cannot read it. Route, don't drop.
+          if (s.result.phase === "set") {
+            applySetResult(s.result);
+            return;
+          }
           openReviewForm(s.result);
           return;
         }
@@ -4214,6 +4508,10 @@ function AuthorChat({
           // poll, open the review form rather than dropping the drafts on the floor.
           if (s.result.phase === "draft") {
             openReviewForm(s.result);
+            return;
+          }
+          if (s.result.phase === "set") {
+            applySetResult(s.result);
             return;
           }
           setPlan(planFromJob(s.result));
@@ -5001,9 +5299,13 @@ function AuthorChat({
             {planFirst ? "Working out a plan…" : "Authoring the questions… (~10–30s)"}
           </p>
         )}
+        {/* SET-ASYNC: the fan-out is a background job now, so this loader is durable
+            — say so, exactly as the drafting loader does. Before this slice the
+            request was held open and closing the tab lost the work; now it doesn't. */}
         {authoringSet && !proposalSet && (
           <p className="tut-muted tut-chat-authmeta">
-            Authoring the set in parallel - one worker per sub-topic… (~20–40s)
+            Authoring the set in parallel - one worker per sub-topic… You can leave
+            this open.
           </p>
         )}
         {/* AUTHOR-ASYNC: the durable drafting loader (survives a refresh; resumed
@@ -5146,13 +5448,21 @@ function AuthorChat({
                     it off restores the pre-slice behaviour (straight to drafting).
                     Resets to ON on a refresh — a skip should be a decision each
                     time, not a sticky mode.
-                    DISABLED under "Several": the set fan-out has never had a plan
-                    gate, so a ✓ here would promise a gate that will not appear.
-                    Says so rather than hiding, or the row would just vanish. */}
+                    LOCKED ON under "Several" (SET-PLAN-GATE): a set ALWAYS gates —
+                    the proposal card carries the per-sub-topic blueprint, and the
+                    fan-out fires only on approval. That is a DIFFERENT gate from
+                    this one (per-proposal before spawn, not the worker's own plan
+                    phase — the set path runs no plan phase), but the tutor-facing
+                    promise is identical: nothing is written until you approve. So
+                    it reads ✓ and not-clickable. It previously read UNCHECKED with
+                    "a set drafts straight away", which claimed the opposite of what
+                    the code does. Presentation only — sendTurn branches on setMode
+                    (:1355/:1447) before planFirst is consumed (:1396/:1481), so the
+                    flag is already ignored on this path. */}
                 <button
                   type="button"
                   role="menuitemcheckbox"
-                  aria-checked={planFirst && !setModeOn}
+                  aria-checked={setModeOn || planFirst}
                   className="tut-chat-opts-item"
                   onClick={() => setPlanFirst(!planFirst)}
                   disabled={planning || drafting || !!plan || setModeOn}
@@ -5160,10 +5470,10 @@ function AuthorChat({
                   <span className="tut-chat-opts-label">Plan first</span>
                   <span className="tut-chat-opts-sub">
                     {setModeOn
-                      ? "Not used when authoring several — a set drafts straight away"
+                      ? "You approve the blueprint before any question is written"
                       : "The worker states what it intends to write, and waits for your go-ahead"}
                   </span>
-                  {planFirst && !setModeOn && (
+                  {(setModeOn || planFirst) && (
                     <span className="tut-chat-opts-check" aria-hidden>
                       ✓
                     </span>

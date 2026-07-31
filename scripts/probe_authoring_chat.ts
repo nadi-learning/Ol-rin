@@ -18,14 +18,19 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
+  assessmentSession,
   authoringChat,
   authoringWorker,
   board,
   chapter,
   eventLog,
+  horizontalSkillState,
   learningObjective,
   masteryState,
   observation,
+  studentAuthoringPreference,
+  studentChapterInsight,
+  studentSubjectInsight,
   practiceSession,
   question,
   student,
@@ -44,6 +49,7 @@ import {
   parseAuthorMarker,
   proposeTarget,
   ProposeTargetError,
+  renderInsightBlocks,
   reviseDraft,
   sendTurn,
   startChat,
@@ -52,6 +58,12 @@ import {
   stripAuthorSentinel,
   SubTopicNotFoundError,
 } from "../src/services/authoring_chat";
+import {
+  getAuthoringPreferences,
+  getSessionAuthoringPreferences,
+  setAuthoringPreference,
+  SubjectNotOnBoardError,
+} from "../src/services/tutor";
 import { approveDrafts } from "../src/services/authoring";
 import { startSession } from "../src/services/practice";
 import { StudentNotFoundError } from "../src/services/tutor";
@@ -128,7 +140,15 @@ async function main() {
     await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Canonical Q", referenceAnswer: "ref", ordinal: 0, source: "seed" });
     await tx.insert(masteryState).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, conceptualLevel: 3, proceduralLevel: 2, description: "Solid on the idea of rate-of-change; shaky converting units under time pressure.", log: "internal" });
     await tx.insert(observation).values({ boardId: P.id, studentId: stuA.id, subTopicId: st!.id, axis: "procedural", observationLevel: 2, reasoning: "Set up Δv/Δt correctly but dropped the unit conversion s→ms.", source: "stage1_scorer", calibrationFlag: "over" });
+    // Slice AUTHOR-PREF — a SECOND SUBJECT, so "this subject's note, not that
+    // one's" is a claim that can actually fail. Subject + chapter only: no topic
+    // and no sub_topic, so nothing that walks the spine (target allowlists,
+    // chapter coverage) sees new material and the existing legs are untouched.
+    const [subj2] = await tx.insert(subject).values({ boardId: P.id, slug: "chem", name: "Chemistry", grade: "IGCSE" }).returning();
+    await tx.insert(chapter).values({ boardId: P.id, subjectId: subj2!.id, slug: "acids", name: "Acids and Bases", ordinal: 1 });
     return {
+      subjectId: subj!.id,
+      subject2Id: subj2!.id,
       chapterId: chap!.id,
       chapter2Id: chap2!.id,
       subTopicId: st!.id,
@@ -142,7 +162,7 @@ async function main() {
     const [chap] = await tx.insert(chapter).values({ boardId: Q.id, subjectId: subj!.id, slug: "motion", name: "Motion", ordinal: 1 }).returning();
     const [tp] = await tx.insert(topic).values({ boardId: Q.id, chapterId: chap!.id, slug: "speed", name: "Speed", ordinal: 1 }).returning();
     const [st] = await tx.insert(subTopic).values({ boardId: Q.id, topicId: tp!.id, slug: "accel", name: "Acceleration", ordinal: 1 }).returning();
-    return { subTopicId: st!.id };
+    return { subTopicId: st!.id, subjectId: subj!.id };
   });
 
   // ─────────── Slice ASSESS-SEE — item 12 ───────────
@@ -180,6 +200,298 @@ async function main() {
   check("ASSESS-SEE §12: an uncorrected observation still reads its machine level, no marker",
     rawLine.includes("L2") && !rawLine.includes("(tutor-corrected)"));
   await withBoard(P.id, (tx) => tx.delete(observation).where(eq(observation.id, groundFx.ovId)));
+
+  // ─────────── Slice INSIGHT-GROUND — walkthrough item 11 ───────────
+  // Everything the tutor records ABOVE sub-topic grain (chapter view, subject
+  // view, subject-wide horizontal skills — all written by Stage-2b synthesis at
+  // finalize) was read by nobody when authoring the student's next questions.
+  //
+  // ⚠️ These tables are EMPTY in every local dataset (0 chapter-insight rows, 0
+  // subject-insight rows at build time) — so without this fixture the new read
+  // would only ever exercise its no-rows branch and go green having proved
+  // nothing (M52/M104). The fixture is the point of the leg, not setup for it.
+  //
+  // Part A — the RULE, pure, no DB and no AI in the loop (M101).
+  const pureBlocks = renderInsightBlocks({
+    chapters: [{ chapterName: "Motion", insight: "PURE_CHAPTER_TEXT" }],
+    subjects: [{ subjectName: "Physics", insight: "PURE_SUBJECT_TEXT" }],
+    horizontals: [
+      { subjectName: "Physics", slug: "unit_discipline", level: 3, prose: "PURE_L3_PROSE" },
+      { subjectName: "Physics", slug: "causal_reasoning", level: null, prose: "PURE_NULL_PROSE" },
+    ],
+    preferences: [],
+    multiSubject: false,
+  });
+  const pureText = pureBlocks.join("\n");
+  const nullLine = pureText.split("\n").find((l) => l.includes("causal_reasoning")) ?? "";
+  const l3Line = pureText.split("\n").find((l) => l.includes("unit_discipline")) ?? "";
+  // BOTH arms in ONE leg: a null level must read "not yet observed" and must NOT
+  // read L1, while a real level still reads its number. Asserted together so
+  // collapsing one into the other cannot pass (M101's corollary).
+  check(
+    "INSIGHT-GROUND: a NULL horizontal reads 'not yet observed', never L1 — and a real level still reads L3",
+    nullLine.includes("not yet observed") &&
+      !nullLine.includes("L1") &&
+      l3Line.includes("L3") &&
+      !l3Line.includes("not yet observed"),
+  );
+  // A student with no insight layer must get the prompt UNCHANGED — no empty
+  // headers, no "(none yet)" filler inviting the model to comment on absence.
+  check(
+    "INSIGHT-GROUND: no insight rows → no sections emitted at all (prompt unchanged)",
+    renderInsightBlocks({ chapters: [], subjects: [], horizontals: [], preferences: [], multiSubject: false }).length === 0,
+  );
+
+  // ─────────── Slice AUTHOR-PREF — walkthrough item 10 ───────────
+  // The tutor's own "how to teach this student" note, per subject — the FOURTH
+  // grounding input item 11 left a socket for, and the only one written by a
+  // human rather than by synthesis.
+  //
+  // Part A — the RULE, pure, no DB and no AI (M101).
+  //
+  // The load-bearing call is the null-vs-empty one: an unwritten subject emits
+  // NO block. A stored "" would render a headed but empty section, which reads
+  // to the author as "the tutor had nothing to say about her" rather than
+  // "nobody has written this yet" — so the service deletes instead of storing "".
+  // BOTH arms in ONE leg so collapsing either into the other cannot pass.
+  const prefOn = renderInsightBlocks({
+    chapters: [], subjects: [], horizontals: [],
+    preferences: [{ subjectName: "Physics", preference: "PURE_PREF_TEXT" }],
+    multiSubject: false,
+  }).join("\n");
+  const prefOff = renderInsightBlocks({
+    chapters: [{ chapterName: "Motion", insight: "PURE_CHAPTER_TEXT" }],
+    subjects: [], horizontals: [], preferences: [], multiSubject: false,
+  }).join("\n");
+  check(
+    "AUTHOR-PREF: a written note emits the HOW TO TEACH block; NO note emits no block at all — while a sibling block still renders",
+    prefOn.includes("HOW TO TEACH THIS STUDENT") &&
+      prefOn.includes("PURE_PREF_TEXT") &&
+      !prefOff.includes("HOW TO TEACH THIS STUDENT") &&
+      prefOff.includes("PURE_CHAPTER_TEXT"),
+  );
+  // The note is an instruction about FORM, not about what to test — the framing
+  // that stops a preference talking the author out of an under-covered sub-topic.
+  check(
+    "AUTHOR-PREF: the block is framed as the TUTOR's instruction, and says it does not decide what to test",
+    prefOn.includes("BY THE TUTOR") && prefOn.includes("does NOT change WHAT to test"),
+  );
+  // Multi-subject only: a single-subject chat must not prefix every line with a
+  // subject name it already knows (same rule the horizontals block follows).
+  const prefMulti = renderInsightBlocks({
+    chapters: [], subjects: [], horizontals: [],
+    preferences: [
+      { subjectName: "Physics", preference: "PURE_PHYS_PREF" },
+      { subjectName: "Chemistry", preference: "PURE_CHEM_PREF" },
+    ],
+    multiSubject: true,
+  }).join("\n");
+  check(
+    "AUTHOR-PREF: the subject is named per line only when the chat spans several",
+    prefMulti.includes("Physics: PURE_PHYS_PREF") &&
+      prefMulti.includes("Chemistry: PURE_CHEM_PREF") &&
+      !prefOn.includes("Physics: PURE_PREF_TEXT"),
+  );
+
+  // Part B — the real read, against real rows under real RLS.
+  await withBoard(P.id, async (tx: Tx) => {
+    await tx.insert(studentChapterInsight).values({
+      boardId: P.id, studentId: stuA.id, chapterId: fx.chapterId,
+      insight: "INS_CHAPTER_MOTION: reaches for a formula before asking what is changing.",
+    });
+    // OUT of this chat's chapter scope — the founder's natural-grain ruling made
+    // checkable: chapter insight follows the chat's chapters, nothing wider.
+    await tx.insert(studentChapterInsight).values({
+      boardId: P.id, studentId: stuA.id, chapterId: fx.chapter2Id,
+      insight: "INS_CHAPTER_FORCES: should not appear in a Motion-only chat.",
+    });
+    await tx.insert(studentSubjectInsight).values({
+      boardId: P.id, studentId: stuA.id, subjectId: fx.subjectId,
+      insight: "INS_SUBJECT_PHYS: reads the question too fast; strong once she slows down.",
+    });
+    await tx.insert(horizontalSkillState).values({
+      boardId: P.id, studentId: stuA.id, subjectId: fx.subjectId,
+      slug: "unit_discipline", level: 2, prose: "INS_HZ_LEVELLED: drops units mid-derivation.",
+    });
+    await tx.insert(horizontalSkillState).values({
+      boardId: P.id, studentId: stuA.id, subjectId: fx.subjectId,
+      slug: "causal_reasoning", level: null, prose: "INS_HZ_NULL: never asked to explain a mechanism.",
+    });
+  });
+  const gIns = await withBoard(P.id, (tx) =>
+    assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
+  );
+  check(
+    "INSIGHT-GROUND: all three insight blocks reach the authoring grounding",
+    gIns.includes("INS_CHAPTER_MOTION") &&
+      gIns.includes("INS_SUBJECT_PHYS") &&
+      gIns.includes("INS_HZ_LEVELLED") &&
+      gIns.includes("INS_HZ_NULL"),
+  );
+  // The scope control. Requires the IN-scope text to be present, so a grounding
+  // that failed to build cannot pass this by being empty (M104).
+  check(
+    "INSIGHT-GROUND: an OUT-of-scope chapter's insight is excluded, while the same subject's insight IS carried",
+    gIns.includes("INS_CHAPTER_MOTION") &&
+      gIns.includes("INS_SUBJECT_PHYS") &&
+      !gIns.includes("INS_CHAPTER_FORCES"),
+  );
+  // Chapter order, not insert order — chapterIds passed deliberately REVERSED.
+  const gOrder = await withBoard(P.id, (tx) =>
+    assembleGrounding(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapter2Id, fx.chapterId],
+    }),
+  );
+  const iMotion = gOrder.indexOf("INS_CHAPTER_MOTION");
+  const iForces = gOrder.indexOf("INS_CHAPTER_FORCES");
+  check(
+    "INSIGHT-GROUND: with both chapters in scope both render, in CHAPTER ordinal order",
+    iMotion >= 0 && iForces >= 0 && iMotion < iForces,
+  );
+  // The insight layer describes WHO you are authoring for, so it must sit with
+  // the student picture — ahead of the curriculum map, not buried after it.
+  check(
+    "INSIGHT-GROUND: the blocks sit after the observations and before CHAPTER COVERAGE",
+    gIns.indexOf("RECENT STAGE-1 OBSERVATIONS") < gIns.indexOf("STUDENT INSIGHT — CHAPTER VIEW") &&
+      gIns.indexOf("STUDENT INSIGHT — CHAPTER VIEW") < gIns.indexOf("CHAPTER COVERAGE"),
+  );
+  await withBoard(P.id, async (tx: Tx) => {
+    await tx.delete(studentChapterInsight).where(eq(studentChapterInsight.studentId, stuA.id));
+    await tx.delete(studentSubjectInsight).where(eq(studentSubjectInsight.studentId, stuA.id));
+    await tx.delete(horizontalSkillState).where(eq(horizontalSkillState.studentId, stuA.id));
+  });
+  // …and with the rows gone the grounding must be clean again — proves the
+  // sections are driven by the rows, not by something latched at module load.
+  const gAfter = await withBoard(P.id, (tx) =>
+    assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
+  );
+  check(
+    "INSIGHT-GROUND: rows removed → the insight sections disappear (grounding still builds)",
+    gAfter.length > 0 &&
+      gAfter.includes("CERTIFIED TWO-AXIS MASTERY") &&
+      !gAfter.includes("STUDENT INSIGHT"),
+  );
+
+  // Part B — AUTHOR-PREF through the REAL write path. Every write below goes
+  // through `setAuthoringPreference`, never a raw insert: the seam under test is
+  // service → table → grounding, and a probe that inserts the row itself proves
+  // only that the reader reads (M40/M64).
+  //
+  // Leg #1 is the scenario the feature was invented for, driven end to end —
+  // the tutor writes a note, and it reaches the surface that authors the
+  // student's next questions (M97).
+  await rows(P.id, (tx) =>
+    setAuthoringPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, subjectId: fx.subjectId,
+      preference: "PREF_PHYS: diagram-first questions land; long worded stems lose her.",
+    }),
+  );
+  await rows(P.id, (tx) =>
+    setAuthoringPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, subjectId: fx.subject2Id,
+      preference: "PREF_CHEM: should not appear in a Physics chat.",
+    }),
+  );
+  const gPref = await rows(P.id, (tx) =>
+    assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
+  );
+  check(
+    "AUTHOR-PREF: a tutor's note written through the service reaches the authoring grounding",
+    gPref.includes("HOW TO TEACH THIS STUDENT") && gPref.includes("PREF_PHYS"),
+  );
+  // Subject scope. Requires the IN-scope note present, so a grounding that failed
+  // to build cannot pass this by being empty (M104).
+  check(
+    "AUTHOR-PREF: only the chat's OWN subject's note is carried — another subject's is excluded",
+    gPref.includes("PREF_PHYS") && !gPref.includes("PREF_CHEM"),
+  );
+  // The LEFT JOIN direction is the design call: reading FROM `subject` is what
+  // lets a tutor write the FIRST note for a subject. A preference-first read
+  // would never return the row that does not exist yet, so the editor would have
+  // nothing to render and the feature would be unreachable for every new subject.
+  const prefsB4 = await rows(P.id, (tx) =>
+    getAuthoringPreferences(tx, { tutorUserId: tut.id, studentId: stuB.id }),
+  );
+  check(
+    "AUTHOR-PREF: a student with NO notes still gets every board subject back, each with preference null",
+    prefsB4.length === 2 &&
+      prefsB4.every((p) => p.preference === null) &&
+      prefsB4.some((p) => p.subjectId === fx.subjectId) &&
+      prefsB4.some((p) => p.subjectId === fx.subject2Id),
+  );
+  // Clearing. A whitespace-only save must DELETE, not store "" — the null-vs-empty
+  // rule Part A gated purely, here proven against the real table.
+  await rows(P.id, (tx) =>
+    setAuthoringPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, subjectId: fx.subjectId, preference: "   ",
+    }),
+  );
+  const [prefRowAfterClear] = await rows(P.id, (tx) =>
+    tx.select().from(studentAuthoringPreference).where(
+      and(
+        eq(studentAuthoringPreference.studentId, stuA.id),
+        eq(studentAuthoringPreference.subjectId, fx.subjectId),
+      ),
+    ),
+  );
+  const gCleared = await rows(P.id, (tx) =>
+    assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
+  );
+  check(
+    "AUTHOR-PREF: a whitespace save DELETES the row (never stores \"\") and the block leaves the grounding, which still builds",
+    prefRowAfterClear === undefined &&
+      gCleared.length > 0 &&
+      gCleared.includes("CERTIFIED TWO-AXIS MASTERY") &&
+      !gCleared.includes("HOW TO TEACH THIS STUDENT"),
+  );
+  // The sitting's editor (the founder's second write surface) sees ONLY the
+  // subject(s) that sitting spans — not every subject on the board.
+  const [sitting] = await rows(P.id, (tx) =>
+    tx.insert(assessmentSession).values({
+      boardId: P.id, studentId: stuA.id, tutorId: tut.id,
+      subTopicIds: [fx.subTopicId], drafts: {}, messages: [],
+    }).returning(),
+  );
+  const sessPrefs = await rows(P.id, (tx) =>
+    getSessionAuthoringPreferences(tx, { tutorUserId: tut.id, sessionId: sitting!.id }),
+  );
+  check(
+    "AUTHOR-PREF: the sitting's editor is narrowed to the subject(s) that sitting spans, not the whole board",
+    sessPrefs.length === 1 &&
+      sessPrefs[0]?.subjectId === fx.subjectId &&
+      prefsB4.length === 2,
+  );
+  // Ownership, both directions. stuC is deliberately UNLINKED from this tutor.
+  let prefRead403 = false;
+  await rows(P.id, (tx) => getAuthoringPreferences(tx, { tutorUserId: tut.id, studentId: stuC.id }))
+    .catch((e) => { prefRead403 = e instanceof StudentNotFoundError; return null; });
+  let prefWrite403 = false;
+  await rows(P.id, (tx) =>
+    setAuthoringPreference(tx, {
+      tutorUserId: tut.id, studentId: stuC.id, subjectId: fx.subjectId, preference: "PREF_LEAK",
+    }),
+  ).catch((e) => { prefWrite403 = e instanceof StudentNotFoundError; return null; });
+  check(
+    "AUTHOR-PREF: an unlinked student is refused on BOTH the read and the write (no existence leak)",
+    prefRead403 && prefWrite403,
+  );
+  // A subject from ANOTHER board must be refused rather than written: FK checks
+  // bypass RLS, so without this guard the insert would succeed and manufacture
+  // exactly the cross-board row M61 created by accident.
+  let crossBoard = false;
+  await rows(P.id, (tx) =>
+    setAuthoringPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, subjectId: fxQ.subjectId, preference: "PREF_CROSS",
+    }),
+  ).catch((e) => { crossBoard = e instanceof SubjectNotOnBoardError; return null; });
+  check(
+    "AUTHOR-PREF: a subject from another board is refused, not written cross-board",
+    crossBoard,
+  );
+  await rows(P.id, async (tx: Tx) => {
+    await tx.delete(assessmentSession).where(eq(assessmentSession.id, sitting!.id));
+    await tx.delete(studentAuthoringPreference).where(eq(studentAuthoringPreference.studentId, stuA.id));
+  });
 
   // 2. ownership: startChat for an UNLINKED student → STUDENT_NOT_FOUND.
   let nf = false;

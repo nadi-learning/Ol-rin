@@ -3784,3 +3784,84 @@
   .tut-work-bar { padding: 12px 14px; }
   .tut-work-body { padding: 14px 14px 32px; }
 }
+
+/* ── Slice AUTHOR-PREF (walkthrough item 10) — "how to teach this student" ──
+   One card per subject, rendered in two places from one component: the student's
+   page (every subject) and a finalized sitting's done phase (that sitting's
+   subjects only). Deliberately quieter than .tut-insight-card — an insight is a
+   finding about the student, this is a note the tutor is writing, so it reads as
+   an input, not as a verdict. */
+.tut-pref-lede {
+  margin: -6px 0 12px;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted, #6b6f80);
+  max-width: 62ch;
+}
+.tut-prefs { display: flex; flex-direction: column; gap: 10px; }
+/* Inside a sitting the card sits between the synthesis read-out and the Done
+   button, so it needs its own breathing room rather than a section's. */
+.tut-prefs--sitting { margin: 14px 0 16px; }
+.tut-pref-card {
+  border: 1px dashed var(--border, #e3e5ee);
+  border-radius: var(--r-card, 12px);
+  background: var(--surface-sunk, #f4f6fd);
+  padding: 12px 14px;
+}
+.tut-pref-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tut-pref-title { font-size: 13.5px; font-weight: 700; color: #33364a; }
+.tut-pref-optional {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted, #6b6f80);
+}
+.tut-pref-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink, #15162b);
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  padding: 10px 12px;
+  resize: vertical;
+}
+.tut-pref-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.tut-pref-note { font-size: 11.5px; color: var(--muted, #6b6f80); }
+.tut-pref-save {
+  flex: none;
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 7px 16px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--primary, #2f63ff);
+  background: var(--primary, #2f63ff);
+  color: #fff;
+  cursor: pointer;
+}
+.tut-pref-save:hover { filter: brightness(1.05); }
+.tut-pref-save:disabled { opacity: 0.45; cursor: default; }
+.tut-pref-stamp { margin: 8px 0 0; font-size: 11.5px; color: var(--muted, #6b6f80); }
+
+@media (max-width: 720px) {
+  .tut-pref-foot { align-items: flex-start; flex-direction: column; }
+  .tut-pref-save { align-self: stretch; text-align: center; }
+}

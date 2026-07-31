@@ -337,6 +337,13 @@
       "when": 1785060232199,
       "tag": "0047_jazzy_mulholland_black",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1785504623881,
+      "tag": "0048_solid_ender_wiggin",
+      "breakpoints": true
     }
   ]
 }

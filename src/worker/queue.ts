@@ -5,6 +5,8 @@ import { redisConnection } from "../redis/connection";
 import type { extractTopicsMd } from "../services/admin_ingest";
 import type {
   authorFromChat,
+  authorSetFromChat,
+  AuthorSetTarget,
   planFromChat,
   reviseDraft,
 } from "../services/authoring_chat";
@@ -14,10 +16,23 @@ type ReviseResult = Awaited<ReturnType<typeof reviseDraft>>;
 // Slice TWOWAY-1: the authoring queue now returns one of TWO shapes. `phase` is the
 // discriminant; the draft shape gains it here rather than in the service, so
 // AuthorFromChatResult stays the single shape the review form has always consumed.
+// Slice SET-ASYNC: a THIRD shape — the parallel fan-out's {groups, failures}.
 type AuthoringPlanJobResult = Awaited<ReturnType<typeof planFromChat>>;
 type AuthoringDraftJobResult = Awaited<ReturnType<typeof authorFromChat>> & {
   phase: "draft";
 };
+type AuthoringSetJobResult = Awaited<ReturnType<typeof authorSetFromChat>> & {
+  phase: "set";
+};
+/**
+ * Slice SET-ASYNC: the fan-out's targets — the SERVICE's own exported type, not a
+ * re-declaration. `plan` carries the SET-PLAN-GATE blueprint, and the log already
+ * flags that item shape as hand-synced in three places (S179 §8); a fourth copy here
+ * would be the one that drifts. Imported as a named type rather than derived via
+ * `Parameters<typeof authorSetFromChat>` — that form resolved to `any` through the
+ * queue↔authoring_chat type cycle, which silently un-typed the whole job payload.
+ */
+type AuthoringSetTargets = AuthorSetTarget[];
 
 /**
  * Shared helper: find the id of an in-flight job (active/queued) whose data
@@ -391,14 +406,24 @@ export function getActiveReviseJobId(boardId: string, questionId: string): Promi
 //   'plan'  — the worker states what it intends to write; the episode lands
 //             'planned' and the tutor gates it.
 //   'draft' — the tutor approved; the worker writes the approved items.
-// They MUST be separate jobs, not one job that waits: this queue is concurrency 1,
-// so a job parked on a human decision would pin the only authoring slot and block
-// every other tutor's authoring behind one unread plan card.
+// They MUST be separate jobs, not one job that waits: a job parked on a human
+// decision would pin an authoring slot and block other tutors' authoring behind one
+// unread plan card. (Said "the only slot" when concurrency was 1; SET-ASYNC raised
+// it to 4, which widens the margin but does not change the rule.)
+//
+// Slice SET-ASYNC — a THIRD phase:
+//   'set'   — the parallel fan-out (N sub-topics, one worker each). ONE job per
+//             tutor action, fanning out INSIDE the job, rather than N queued jobs.
+//             That is deliberate: N jobs would serialise against the queue's
+//             concurrency and turn today's parallel ~26s into a sum, and the resume
+//             handle (activeJobIdForChat) finds ONE job per chat, so N of them would
+//             restore an arbitrary member's loader.
 export const AUTHORING_QUEUE = "b2c.authoring";
 
-export type AuthoringPhase = "plan" | "draft";
+export type AuthoringPhase = "plan" | "draft" | "set";
 
-export interface AuthoringJobData {
+/** The single-sub-topic job: the 'plan' and 'draft' phases. Unchanged by SET-ASYNC. */
+export interface AuthoringSingleJobData {
   boardId: string;
   tutorUserId: string;
   chatId: string;
@@ -407,12 +432,28 @@ export interface AuthoringJobData {
   // Optional so a job enqueued by PRE-slice code (one already sitting in Redis at
   // deploy time) still runs — absent reads as 'draft', which is exactly what those
   // jobs meant. Every new enqueue sets it explicitly.
-  phase?: AuthoringPhase;
+  phase?: "plan" | "draft";
   // The planned episode this job belongs to: set on a 'draft' after approval, and on
   // a 'plan' that is a RE-plan following an amendment. Absent = a one-shot spawn
   // (the plan-skip path) or a first plan.
   workerId?: string;
 }
+
+/**
+ * Slice SET-ASYNC — the fan-out job. `phase` is REQUIRED here (unlike the single
+ * variant's optional one): a set job carries no `subTopicId`, so if its phase went
+ * missing the `?? "draft"` default would hand the single-job branch an undefined
+ * sub-topic. Required-ness is what makes that unrepresentable rather than guarded.
+ */
+export interface AuthoringSetJobData {
+  boardId: string;
+  tutorUserId: string;
+  chatId: string;
+  phase: "set";
+  targets: AuthoringSetTargets;
+}
+
+export type AuthoringJobData = AuthoringSingleJobData | AuthoringSetJobData;
 
 export const authoringQueue = new Queue<AuthoringJobData>(AUTHORING_QUEUE, {
   connection: redisConnection,
@@ -455,7 +496,11 @@ export async function enqueueAuthoring(data: AuthoringJobData): Promise<string> 
 // hands back a plan to gate, a draft job hands back drafts to review. The FE
 // narrows on `result.phase`; the union (rather than a widened single shape) is what
 // makes it a compile error to feed a plan into the review form.
-export type AuthoringJobResult = AuthoringPlanJobResult | AuthoringDraftJobResult;
+// Slice SET-ASYNC adds the fan-out's {groups, failures} as the third member.
+export type AuthoringJobResult =
+  | AuthoringPlanJobResult
+  | AuthoringDraftJobResult
+  | AuthoringSetJobResult;
 
 export type AuthoringJobStatus =
   | { state: "waiting" | "active" | "unknown" }
