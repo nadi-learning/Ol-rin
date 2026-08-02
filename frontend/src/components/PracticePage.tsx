@@ -798,11 +798,43 @@ function PickList({
   // self-serve; there is nothing behind these rows to gate).
   const ready = subTopics.filter((st) => st.available);
   const soonCount = subTopics.length - ready.length;
+  // Slice ASG-FOCUS — while the tutor's assignment is still open, the browse list
+  // is NOT offered. Two reasons, and the second is the load-bearing one:
+  //
+  //  1. An assigned sub_topic was ALSO listed here, so the same work had two
+  //     entry points that looked identical to the student.
+  //  2. They were NOT equivalent. The assigned box calls pick(subTopicId,
+  //     assignmentId); this list calls pick(id) with no assignment. Completion is
+  //     derived ONLY from sessions carrying that id (assignment.ts:338), so a
+  //     student who started the assigned topic from HERE did the entire thing and
+  //     it never counted - the tutor kept seeing it outstanding, and the evidence
+  //     was stamped self-serve instead of tutor_assigned.
+  //
+  // Hiding the list makes the assigned box the ONLY path to that sub_topic, so
+  // the stamp cannot be missed. `hasAssigned` already means "has an assignment
+  // that is not explicitly done", which is exactly the condition wanted.
+  const browsable = !hasAssigned;
+  // The SoonBanner deliberately SURVIVES the hide: its tutorLine ("Your tutor's
+  // assignments are always open above ↑") was written for precisely this moment,
+  // and without it a student mid-assignment would meet an empty page.
+  //
+  // Nothing left to draw ⇒ render no empty bordered section. Reachable only when
+  // an assignment is open AND every sub_topic is authored (soonCount 0) - a state
+  // that does not exist today (154/157 unauthored) but arrives as the bank fills.
+  // Errors still force a render: `error` is passed only to this component, so
+  // returning null unconditionally would swallow a failed pick from the ASSIGNED
+  // box too.
+  if (!browsable && soonCount === 0 && !error) return null;
   return (
     <section className="prac-picklist">
-      <h2 className="prac-browse-title">
-        {hasAssigned ? "Or practice any topic" : "Practice any topic"}
-      </h2>
+      {browsable && (
+        <h2 className="prac-browse-title">
+          {/* Keyed on hasAssignedBlock, not hasAssigned: a student who has
+              FINISHED their assignment still has the caught-up card above, so
+              "Or" is the honest word. hasAssigned can no longer be true here. */}
+          {hasAssignedBlock ? "Or practice any topic" : "Practice any topic"}
+        </h2>
+      )}
       {/* Kept as the defensive fallback: a topic can empty out between the
           availability read and the click (question deleted, chip stale). */}
       {error === "NO_QUESTIONS" && (
@@ -811,7 +843,7 @@ function PickList({
         </p>
       )}
       {error && error !== "NO_QUESTIONS" && <p className="prac-error">{error}</p>}
-      {ready.length > 0 && (
+      {browsable && ready.length > 0 && (
         <ul className="prac-pick-ul">
           {ready.map((st) => (
             <li key={st.id}>
