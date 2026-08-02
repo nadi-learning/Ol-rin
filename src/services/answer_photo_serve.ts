@@ -90,13 +90,26 @@ async function resolveBoardAndUser(
 }
 
 /**
- * Transient pre-submit preview: the freshly-uploaded photo for one upload token,
- * owned by the caller. Serves the first photo (ordinal 0) — the practice flow is
- * one photo per slot. 404 for a missing/other-user/other-board token, or one that
- * hasn't been uploaded yet (nothing to preview).
+ * Transient pre-submit preview: ONE of the freshly-uploaded photos for an upload
+ * token, owned by the caller, addressed by its `ordinal` within the batch.
+ *
+ * Slice PREVIEW-ALL — this used to serve `keys[0]` unconditionally, on the stated
+ * premise that "the practice flow is one photo per slot". That premise was already
+ * false when it was written down: the phone POST stores up to MAX_PHOTOS keys
+ * (upload.ts) and MOBILE-1 shipped a multi-file picker. So a student who
+ * photographed two pages saw one thumbnail and a singular "Photo received", with
+ * no way to tell whether page 2 had landed — while both pages were in fact stored,
+ * submitted as two attempt_image rows, and read by Stage-1. The preview was the
+ * only liar in the chain, and it drove students to re-upload (which abandons the
+ * token, and CAN lose page 1 for real).
+ *
+ * The ordinal indexes `upload_keys`, so it is the same ordering the attempt_image
+ * rows get at submit. Out of range / not an integer → 404, same as a bad token —
+ * no existence leak, and nothing to preview.
  */
 export async function resolveUploadPreviewBytes(args: {
   token: string;
+  ordinal: number;
   boardSlug: string;
   email: string | null;
 }): Promise<ResolvedImage> {
@@ -126,7 +139,13 @@ export async function resolveUploadPreviewBytes(args: {
   if (row.status !== "uploaded" && row.status !== "consumed") {
     throw new ImageError(404, "PREVIEW_NOT_READY");
   }
-  const storageKey = row.keys[0];
+  // Guard the index itself: a non-integer / negative ordinal must not fall through
+  // to an array read (`keys[-1]`, `keys[NaN]` are both undefined, but saying so
+  // explicitly is what the probe asserts).
+  if (!Number.isInteger(args.ordinal) || args.ordinal < 0) {
+    throw new ImageError(404, "PREVIEW_NOT_FOUND");
+  }
+  const storageKey = row.keys[args.ordinal];
   if (!storageKey) throw new ImageError(404, "PREVIEW_NOT_FOUND");
 
   try {

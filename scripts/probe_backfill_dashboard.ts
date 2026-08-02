@@ -20,13 +20,21 @@
  *
  *   bun scripts/probe_backfill_dashboard.ts [--file ~/Downloads/dashboard.json]
  */
-import { eq, and } from "drizzle-orm";
-import { appUser, board, crossConceptFlag, practiceSession } from "@b2c/kernel/schema";
+import { eq, and, like } from "drizzle-orm";
+import { appUser, board, crossConceptFlag, practiceSession, question } from "@b2c/kernel/schema";
 import { isSolid } from "@b2c/kernel/mastery";
 import { horizontalLabel } from "@b2c/kernel/parent-copy";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
 import { getChildDashboard, listChildren } from "../src/services/parent";
+// S191 — the guard below asserts against the REAL availability predicate, not a
+// restatement of it, so the probe cannot drift from what Practice serves.
+import { availableQuestionWhere } from "../src/services/practice";
+/**
+ * Mirrors `BACKFILL_STANDIN_SOURCE` in backfill_dashboard.ts. Deliberately a
+ * literal and not an import: that module runs a backfill on load.
+ */
+const BACKFILL_STANDIN_SOURCE = "backfill_standin";
 // The writer maps some hand-off addresses onto profiles that already exist
 // (S169). Matching on the RAW address would report a correctly-loaded student
 // as missing — the probe has to resolve the same way the writer does.
@@ -316,6 +324,69 @@ async function main() {
     check(
       "M11: the question stand-in's internal note never ships",
       !blob.includes("backfill stand-in"),
+    );
+
+    // ── S191: the stand-in must be UNSERVABLE to the very student it belongs to ──
+    // This probe already checked the stand-in's note never reaches a PARENT, and
+    // passed every run while the stand-in was being served to the CHILD as live
+    // practice: it was written with `target_student_id = the student` and no
+    // `status`, so it defaulted to 'approved' and matched availableQuestionWhere's
+    // `target IS NULL OR = caller` branch. Real students opened Practice and got
+    // "Backfilled practice item — …" answerable against a placeholder reference.
+    //
+    // The guard calls the REAL predicate rather than restating it, so it cannot
+    // drift from what Practice actually serves (the same reason
+    // availableQuestionWhere is one shared function in the first place).
+    const servableStandIns = await withBoard(cbse.id, (tx) =>
+      tx
+        .select({ id: question.id, stem: question.stem })
+        .from(question)
+        .where(
+          and(
+            availableQuestionWhere(childRow.studentId),
+            eq(question.source, BACKFILL_STANDIN_SOURCE),
+          ),
+        ),
+    );
+    check(
+      `S191: ZERO backfill stand-ins are servable to their own student (got ${servableStandIns.length})`,
+      servableStandIns.length === 0,
+    );
+    // Belt AND braces — the stem is the thing a student would actually read, so
+    // assert on it independently of the source marker in case a future run marks
+    // a stand-in some third way.
+    const servableByStem = await withBoard(cbse.id, (tx) =>
+      tx
+        .select({ id: question.id })
+        .from(question)
+        .where(
+          and(
+            availableQuestionWhere(childRow.studentId),
+            like(question.stem, "Backfilled practice item —%"),
+          ),
+        ),
+    );
+    check(
+      `S191: no "Backfilled practice item" stem is servable, however marked (got ${servableByStem.length})`,
+      servableByStem.length === 0,
+    );
+    // And the stand-in must stay OUT of the tutor's authored tabs, which match on
+    // source='b2c_authoring' — the second surface the old marking polluted.
+    const inTutorTabs = await withBoard(cbse.id, (tx) =>
+      tx
+        .select({ id: question.id })
+        .from(question)
+        .where(
+          and(
+            eq(question.targetStudentId, childRow.studentId),
+            eq(question.source, "b2c_authoring"),
+            like(question.stem, "Backfilled practice item —%"),
+          ),
+        ),
+    );
+    check(
+      `S191: no stand-in sits in the tutor's authored tabs (got ${inTutorTabs.length})`,
+      inTutorTabs.length === 0,
     );
 
     console.log(

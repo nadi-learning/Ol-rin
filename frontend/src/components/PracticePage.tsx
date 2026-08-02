@@ -1014,6 +1014,11 @@ function UploadPanel({
 }) {
   const [mint, setMint] = useState<{ token: string; uploadUrl: string } | null>(null);
   const [received, setReceived] = useState(false);
+  // Slice PREVIEW-ALL — how many photos actually landed for this token. Read from
+  // the SERVER once the upload lands, never from the picker's local file count, so
+  // the QR path and the direct-upload path get the same number from the same
+  // source of truth — and a phone that sent 3 but stored 2 shows 2, not 3.
+  const [photoCount, setPhotoCount] = useState<number | null>(null);
   const firedRef = useRef(false);
   const cbRef = useRef(onUploaded);
   useEffect(() => {
@@ -1032,6 +1037,7 @@ function UploadPanel({
     // A new slot means a fresh QR to wait on.
     setMint(null);
     setReceived(false);
+    setPhotoCount(null);
     firedRef.current = false;
     trpc.practice.createUploadToken
       .mutate({ sessionId, questionId })
@@ -1068,20 +1074,55 @@ function UploadPanel({
     };
   }, [mint, sessionId, questionId, received]);
 
+  // Slice PREVIEW-ALL — once the batch has landed, ask the server how many photos
+  // are actually in it. ONE call, on the `received` edge, so BOTH entry points are
+  // covered identically: the QR poll (which already knew, but shouldn't be the only
+  // path that does) and DirectUpload (which never polls, so otherwise never learns
+  // the count). Failure keeps the 1-photo floor — the token reached 'uploaded', so
+  // at least one photo is there; showing one thumb beats showing none.
+  useEffect(() => {
+    if (!received || !mint) return;
+    let alive = true;
+    trpc.practice.getUploadStatus
+      .query({ sessionId, questionId, token: mint.token })
+      .then((s) => {
+        if (alive) setPhotoCount(s.photoCount);
+      })
+      .catch(() => {
+        /* keep the floor — a missing count must not blank the preview */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [received, mint, sessionId, questionId]);
+
   if (!mint) return <p className="prac-muted">Preparing upload…</p>;
 
-  // Uploaded — show the photo the student just took (expand on click), so they
-  // can confirm the right page went up before setting confidence + submitting.
+  // Uploaded — show EVERY photo the student just took (each expands on click), so
+  // they can confirm the whole answer went up before setting confidence +
+  // submitting. Slice PREVIEW-ALL: one thumb per ordinal, and the count is stated
+  // in words — "did page 2 make it?" has to be answerable at a glance, which a
+  // lone thumbnail under a singular label actively prevented.
   if (received) {
+    const n = photoCount ?? 1;
     return (
       <div className="prac-upload-done">
-        <p className="prac-qr-status is-live">✓ Photo received</p>
-        <PhotoThumb
-          src={`/practice/upload-preview/${mint.token}?board=${getBoard() ?? ""}`}
-          alt="Your uploaded answer"
-        />
+        <p className="prac-qr-status is-live">
+          {n === 1 ? "✓ Photo received" : `✓ All ${n} photos received`}
+        </p>
+        <div className="prac-thumb-row">
+          {Array.from({ length: n }, (_, i) => (
+            <PhotoThumb
+              key={i}
+              src={`/practice/upload-preview/${mint.token}/${i}?board=${getBoard() ?? ""}`}
+              alt={n === 1 ? "Your uploaded answer" : `Your uploaded answer, page ${i + 1}`}
+            />
+          ))}
+        </div>
         <p className="prac-muted">
-          Check it&apos;s the right page, then set how sure you are and submit.
+          {n === 1
+            ? "Check it’s the right page, then set how sure you are and submit."
+            : "Check every page is there, then set how sure you are and submit."}
         </p>
       </div>
     );

@@ -122,15 +122,19 @@ app.get("/content/image/:imageId", async (c) => {
 // Answer-photo bytes (Slice UPLOAD-UX). Same transport as /content/image — a
 // plain <img src> can't send x-board, so board rides in ?board= and the session
 // cookie rides along. OWNER-scoped in the resolver (a student's own answer only).
-//   /practice/upload-preview/:token   — transient, pre-submit preview by token
+//   /practice/upload-preview/:token/:ordinal — transient, pre-submit preview of
+//       ONE photo in the token's batch (Slice PREVIEW-ALL — a batch can hold up
+//       to MAX_PHOTOS; the desktop renders one <img> per ordinal)
 //   /practice/answer-photo/:imageId   — durable, post-submit reveal + review
-app.get("/practice/upload-preview/:token", async (c) => {
+app.get("/practice/upload-preview/:token/:ordinal", async (c) => {
   const token = c.req.param("token");
+  const ordinal = Number(c.req.param("ordinal"));
   const boardSlug = c.req.query("board") ?? "";
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   try {
     const { bytes, mime } = await resolveUploadPreviewBytes({
       token,
+      ordinal,
       boardSlug,
       email: session?.user?.email ?? null,
     });

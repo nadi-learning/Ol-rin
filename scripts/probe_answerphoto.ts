@@ -12,7 +12,7 @@
  *   A4 cross-board (Q member)     → 404 (RLS hides the P row under a Q claim)
  *   A5 unknown imageId (owner)    → 404
  *
- * resolveUploadPreviewBytes (transient, by token — pre-submit preview):
+ * resolveUploadPreviewBytes (transient, by token + ordinal — pre-submit preview):
  *   P1 owner W, CONSUMED token    → 200 (still serves after submit)
  *   P2 owner W, UPLOADED token    → 200, mime image/jpeg
  *   P3 unauth                     → 401
@@ -20,9 +20,16 @@
  *   P5 board mismatch (owner, Q)  → 404
  *   P6 PENDING token (owner)      → 404 (nothing uploaded yet)
  *
+ * Slice PREVIEW-ALL — MULTI-photo batch (3 photos on one token). Every case above
+ * uses a single-photo token, which is exactly how a preview hard-coded to keys[0]
+ * passed this gate while showing a two-page student only page 1:
+ *   P7 ordinals 0/1/2 (owner)     → 200 each, DISTINCT bytes, per-ordinal mime
+ *   P8 ordinal 3 (past the end)   → 404
+ *   P9 ordinal -1 / NaN           → 404 (no negative-index or coercion fallthrough)
+ *
  * HTTP (soft, M30 — a new route needs a server restart to register):
- *   H1 GET /practice/answer-photo/:id   unauth → 401 (registered)
- *   H2 GET /practice/upload-preview/:t   unauth → 401 (registered)
+ *   H1 GET /practice/answer-photo/:id          unauth → 401 (registered)
+ *   H2 GET /practice/upload-preview/:t/0       unauth → 401 (registered)
  */
 import { eq, sql } from "drizzle-orm";
 import { rm } from "node:fs/promises";
@@ -98,7 +105,10 @@ async function main() {
     const [st] = await tx.insert(subTopic).values({ boardId: P.id, topicId: tp!.id, slug: "st", name: "ST", ordinal: 1 }).returning();
     const [q1] = await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Q1", referenceAnswer: "REF1", explanation: "EX1", pedagogicalNote: "N1", ordinal: 1, source: "b2c_authoring" }).returning();
     const [q2] = await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "procedural", kind: "subjective", stem: "Q2", referenceAnswer: "REF2", explanation: "EX2", pedagogicalNote: "N2", ordinal: 2, source: "b2c_authoring" }).returning();
-    return { subTopic: st!.id, q1: q1!.id, q2: q2!.id };
+    // PREVIEW-ALL — its own slot, so the multi-photo batch doesn't have to share a
+    // (session, question) slot with the single-photo token above.
+    const [q3] = await tx.insert(question).values({ boardId: P.id, subTopicId: st!.id, axis: "conceptual", kind: "subjective", stem: "Q3", referenceAnswer: "REF3", explanation: "EX3", pedagogicalNote: "N3", ordinal: 3, source: "b2c_authoring" }).returning();
+    return { subTopic: st!.id, q1: q1!.id, q2: q2!.id, q3: q3!.id };
   });
 
   const emailW = `ap-w-${tag}@example.com`;
@@ -121,6 +131,17 @@ async function main() {
   // W uploads q2 (jpeg) but does NOT submit → token stays 'uploaded'.
   const tokW2 = await withBoard(P.id, (tx) => mintUploadToken(tx, { boardId: P.id, appUserId: userW, sessionId: sW.sessionId, questionId: fx.q2 }));
   await recordPhoneUpload(tokW2.token, [{ bytes: IMG(2), mime: "image/jpeg" }]);
+
+  // Slice PREVIEW-ALL — W uploads THREE photos in ONE batch for q3, no submit.
+  // Until this slice every token here carried exactly one photo, which is why a
+  // preview hard-coded to keys[0] passed the whole gate. Mixed mimes so the mime
+  // is proven to come from the addressed ordinal, not from the token.
+  const tokW3 = await withBoard(P.id, (tx) => mintUploadToken(tx, { boardId: P.id, appUserId: userW, sessionId: sW.sessionId, questionId: fx.q3 }));
+  await recordPhoneUpload(tokW3.token, [
+    { bytes: IMG(7), mime: "image/png" },
+    { bytes: IMG(8), mime: "image/jpeg" },
+    { bytes: IMG(9), mime: "image/png" },
+  ]);
 
   // X mints for q1 but never uploads → token stays 'pending'.
   const sX = await withBoard(P.id, (tx) => startSession(tx, { boardId: P.id, appUserId: userX, subTopicId: fx.subTopic }));
@@ -161,29 +182,46 @@ async function main() {
   check("T5 cross-board (Q member, P image) → 404 (RLS)", t5.status === 404);
 
   // ── resolveUploadPreviewBytes (transient) ──
-  const p1 = await call(() => resolveUploadPreviewBytes({ token: tokW1.token, boardSlug: P.slug, email: emailW }));
+  const p1 = await call(() => resolveUploadPreviewBytes({ token: tokW1.token, ordinal: 0, boardSlug: P.slug, email: emailW }));
   check("P1 owner W, CONSUMED token → 200 (still serves post-submit)", p1.status === 200 && p1.bytes?.[4] === 1);
-  const p2 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, boardSlug: P.slug, email: emailW }));
+  const p2 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, ordinal: 0, boardSlug: P.slug, email: emailW }));
   check("P2 owner W, UPLOADED token → 200, mime image/jpeg", p2.status === 200 && p2.bytes?.[4] === 2 && p2.mime === "image/jpeg");
-  const p3 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, boardSlug: P.slug, email: null }));
+  const p3 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, ordinal: 0, boardSlug: P.slug, email: null }));
   check("P3 unauth → 401", p3.status === 401);
-  const p4 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, boardSlug: P.slug, email: emailX }));
+  const p4 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, ordinal: 0, boardSlug: P.slug, email: emailX }));
   check("P4 board-mate X (not owner) → 404", p4.status === 404);
-  const p5 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, boardSlug: Q.slug, email: emailW }));
+  const p5 = await call(() => resolveUploadPreviewBytes({ token: tokW2.token, ordinal: 0, boardSlug: Q.slug, email: emailW }));
   check("P5 board mismatch (owner, wrong board) → 404", p5.status === 404);
-  const p6 = await call(() => resolveUploadPreviewBytes({ token: tokX1.token, boardSlug: P.slug, email: emailX }));
+  const p6 = await call(() => resolveUploadPreviewBytes({ token: tokX1.token, ordinal: 0, boardSlug: P.slug, email: emailX }));
   check("P6 PENDING token (owner) → 404 (nothing uploaded)", p6.status === 404);
+
+  // ── PREVIEW-ALL: the multi-photo batch (the case that was never covered) ──
+  const p7 = await Promise.all(
+    [0, 1, 2].map((o) => call(() => resolveUploadPreviewBytes({ token: tokW3.token, ordinal: o, boardSlug: P.slug, email: emailW }))),
+  );
+  check("P7a ordinal 0 → 200, IMG(7), image/png", p7[0]!.status === 200 && p7[0]!.bytes?.[4] === 7 && p7[0]!.mime === "image/png");
+  check("P7b ordinal 1 → 200, IMG(8), image/jpeg (mime is per-ordinal)", p7[1]!.status === 200 && p7[1]!.bytes?.[4] === 8 && p7[1]!.mime === "image/jpeg");
+  check("P7c ordinal 2 → 200, IMG(9), image/png", p7[2]!.status === 200 && p7[2]!.bytes?.[4] === 9 && p7[2]!.mime === "image/png");
+  // The regression guard proper: three DISTINCT payloads, not the same byte thrice.
+  const markers = new Set(p7.map((r) => r.bytes?.[4]));
+  check("P7d the three ordinals return three DISTINCT photos (not keys[0] ×3)", markers.size === 3);
+  const p8 = await call(() => resolveUploadPreviewBytes({ token: tokW3.token, ordinal: 3, boardSlug: P.slug, email: emailW }));
+  check("P8 ordinal 3 on a 3-photo batch (past the end) → 404", p8.status === 404);
+  const p9a = await call(() => resolveUploadPreviewBytes({ token: tokW3.token, ordinal: -1, boardSlug: P.slug, email: emailW }));
+  check("P9a ordinal -1 → 404 (no negative-index fallthrough)", p9a.status === 404);
+  const p9b = await call(() => resolveUploadPreviewBytes({ token: tokW3.token, ordinal: Number("abc"), boardSlug: P.slug, email: emailW }));
+  check("P9b ordinal NaN (non-numeric path segment) → 404", p9b.status === 404);
 
   // ── HTTP (soft, M30) ──
   try {
     const h1 = await fetch(`http://localhost:${env.PORT}/practice/answer-photo/${imgId}`);
-    const h2 = await fetch(`http://localhost:${env.PORT}/practice/upload-preview/${tokW2.token}`);
+    const h2 = await fetch(`http://localhost:${env.PORT}/practice/upload-preview/${tokW2.token}/0`);
     const h3 = await fetch(`http://localhost:${env.PORT}/practice/tutor-answer-photo/${imgId}`);
     if (h1.status === 404 || h2.status === 404 || h3.status === 404) {
       console.log("  ~ HTTP skipped (route 404 → server stale/down, M30 restart needed)");
     } else {
       check(`H1 GET /practice/answer-photo/:id unauth → 401 (got ${h1.status})`, h1.status === 401);
-      check(`H2 GET /practice/upload-preview/:t unauth → 401 (got ${h2.status})`, h2.status === 401);
+      check(`H2 GET /practice/upload-preview/:t/0 unauth → 401 (got ${h2.status})`, h2.status === 401);
       check(`H3 GET /practice/tutor-answer-photo/:id unauth → 401 (got ${h3.status})`, h3.status === 401);
     }
   } catch {

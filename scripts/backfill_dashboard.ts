@@ -97,6 +97,15 @@ const EXECUTE = argv.includes("--execute");
 const KEEP_LIVE = !argv.includes("--replace");
 /** Provenance prefix on every mastery row this script writes — see the wipe. */
 const BACKFILL_STAMP = "backfilled from old-b2c extraction";
+/**
+ * `question.source` for the synthetic per-sub_topic stand-ins (S191).
+ *
+ * Deliberately NOT 'b2c_authoring': that value is what the tutor's authored-question
+ * tabs match on (`listSaved` and `listDrafts` both require it), so a stand-in
+ * carrying it padded the tutor's tree with hundreds of fake rows. Plain `text`
+ * column — a new value needs no migration.
+ */
+const BACKFILL_STANDIN_SOURCE = "backfill_standin";
 const fileArg = argv[argv.indexOf("--file") + 1];
 const FILE = (argv.includes("--file") && fileArg ? fileArg : "~/Downloads/dashboard.json")
   .replace(/^~/, homedir());
@@ -638,10 +647,51 @@ async function loadStudent(
   // NOT NULL; the old system's question text is not in the hand-off and is never
   // rendered on the parent surface, so a per-topic stand-in carries the FK
   // without pretending to be the item the child actually saw.
+  //
+  // 🔴 S191 — THIS BLOCK SHIPPED TWO DEFECTS. Both are fixed here; read before editing.
+  //
+  // 1. IT WAS SERVED TO STUDENTS. The row said `targetStudentId: studentUserId`
+  //    with the comment "private — keeps it out of the shared bank", and
+  //    "never rendered" above. `target_student_id` is a TARGETING mechanism, not a
+  //    hiding one: `availableQuestionWhere` (practice.ts) serves
+  //    `target_student_id IS NULL OR = caller`, so this made the stand-in invisible
+  //    to everyone EXCEPT the one student who must never see it. `status` was left
+  //    to its column DEFAULT of 'approved' (schema.ts), so the other gate passed
+  //    too. Real students opened Practice and got "Backfilled practice item — …"
+  //    with reference answer "(not carried by the old-b2c extraction)".
+  //    → `status: "draft"` is what actually hides it: Practice, the tutor's Saved
+  //      tab and listDrafts all gate on status/source, and draft is never served.
+  //    → a DISTINCT `source` keeps it out of BOTH tutor authoring tabs, which
+  //      match on `source = 'b2c_authoring'`. Plain text column — no migration.
+  //    Belt AND braces on purpose: either alone leaves one surface leaking.
+  //
+  // 2. IT WAS NOT IDEMPOTENT. A bare insert per run meant every re-run added a
+  //    whole fresh set — prod-adjacent data showed exactly 8 / 5 / 3 stand-ins per
+  //    sub_topic for three students, i.e. the number of times this had been run.
+  //    There is no unique constraint to ON CONFLICT against (adding one is a
+  //    migration), so REUSE an existing stand-in when one is already there.
   const qBySubTopic = new Map<string, string>();
   await withBoard(b.id, async (tx) => {
     for (const ref of new Set(s.attempts.map((a) => a.subTopicRef))) {
       const r = R(ref);
+      // Idempotency: a previous run's stand-in for this (student, sub_topic) is
+      // reused rather than duplicated. Keyed on the same three columns the fix
+      // below marks, so it cannot match a real authored question.
+      const [existing] = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(
+          and(
+            eq(question.subTopicId, r.subTopicId),
+            eq(question.targetStudentId, studentUserId),
+            eq(question.source, BACKFILL_STANDIN_SOURCE),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        qBySubTopic.set(ref, existing.id);
+        continue;
+      }
       const [q] = await tx
         .insert(question)
         .values({
@@ -653,8 +703,14 @@ async function loadStudent(
           referenceAnswer: "(not carried by the old-b2c extraction)",
           pedagogicalNote: "backfill stand-in: satisfies attempt.question_id, never rendered",
           ordinal: 1,
-          source: "b2c_authoring",
-          targetStudentId: studentUserId, // private — keeps it out of the shared bank
+          // NOT 'b2c_authoring' — that source is what puts a row in the tutor's
+          // authored-questions tabs. See defect 1 above.
+          source: BACKFILL_STANDIN_SOURCE,
+          // Kept for provenance (whose history this carries). It is NOT what makes
+          // the row private — `status: "draft"` is. See defect 1 above.
+          targetStudentId: studentUserId,
+          // 🔑 THE GUARD. Practice serves `status = 'approved'` only.
+          status: "draft",
         })
         .returning();
       qBySubTopic.set(ref, q!.id);

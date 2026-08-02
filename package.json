@@ -67,6 +67,7 @@
     "rehearsal:state": "bun scripts/rehearsal_state.ts",
     "merge:spine": "bun scripts/merge_spine_duplicates.ts",
     "probe:backfill": "bun scripts/probe_backfill_dashboard.ts",
+    "probe:standin": "bun scripts/probe_standin_marking.ts",
     "probe:parentcopy": "bun scripts/probe_parent_copy.ts",
     "probe:parentcopydb": "bun scripts/probe_parent_copy_db.ts",
     "probe:budget": "bun scripts/probe_chapter_budget.ts",
