@@ -972,7 +972,7 @@ export const studentSubjectInsight = pgTable(
 );
 
 // Slice AUTHOR-PREF (assess-walkthrough item 10) — HOW TO TEACH THIS STUDENT.
-// One row per (student × subject). Deliberately NOT a column on
+// One row per (student × CHAPTER). Deliberately NOT a column on
 // `student_subject_insight`, and the separation is the whole point of the table:
 //
 //   · subject insight describes the student's UNDERSTANDING, and synthesis
@@ -984,6 +984,28 @@ export const studentSubjectInsight = pgTable(
 // next pass, silently and with no error. Nothing in `synthesis.ts` may write
 // here (walkthrough decision, 2026-07-27: "separate field, subject grain,
 // optional, tutor-owned").
+//
+// ── D-CHAPTER-PREF (S185, founder ruling) — the grain REVERSED to chapter ────
+// The 2026-07-27 decision above said SUBJECT grain; the founder overruled it
+// after seeing the surface render (S184 §3). The write and the read are now at
+// DIFFERENT grains, and that asymmetry is the ruling, not an accident:
+//
+//   · WRITE at CHAPTER — the note button is only reachable from inside a
+//     chapter, so there is no subject-wide note to write.
+//   · READ across the whole SUBJECT — authoring pulls EVERY chapter note under
+//     the subject in scope, including chapters the chat is not about.
+//
+// Read-at-subject is what keeps chapter grain affordable. A pure chapter-grain
+// read would invert coverage from "the note always applies" to "usually empty"
+// (74 CBSE chapters vs 12 subjects — ~6× the write cost before a note is worth
+// anything), because the odds that the tutor annotated the exact chapter being
+// authored are low. Reading siblings means one note written anywhere in the
+// subject still reaches every chapter's authoring.
+//
+// CONSEQUENCE, and it is load-bearing: because a note can now come from a
+// chapter the chat is NOT about, every rendered line MUST carry its chapter
+// name (authoring_chat.ts `renderInsightBlocks`). Without it the author cannot
+// tell a general instruction from one that is specific to a different chapter.
 //
 // OPTIONAL by construction: no row is the normal state, a missing row renders
 // clean, and a finalize never requires one. The service DELETES on an empty
@@ -1004,9 +1026,13 @@ export const studentAuthoringPreference = pgTable(
     studentId: uuid("student_id")
       .notNull()
       .references(() => appUser.id),
-    subjectId: uuid("subject_id")
+    // D-CHAPTER-PREF: was `subject_id` until 0049/0050. The subject is reachable
+    // via `chapter.subject_id`, so it is not duplicated here — one source of
+    // truth for which subject a note belongs to, and no way for the two to
+    // disagree.
+    chapterId: uuid("chapter_id")
       .notNull()
-      .references(() => subject.id),
+      .references(() => chapter.id),
     // Free text, the tutor's own words. Read verbatim into the authoring
     // grounding (authoring_chat.ts) — never parsed, never summarised.
     preference: text("preference").notNull(),
@@ -1014,7 +1040,7 @@ export const studentAuthoringPreference = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.studentId, t.subjectId)],
+  (t) => [unique().on(t.studentId, t.chapterId)],
 );
 
 // ── Parent-dashboard copy overrides (S168 — D-PDASH-3's other half) ──────────
@@ -1478,6 +1504,22 @@ export const authoringChat = pgTable("authoring_chat", {
   // have mode/chapterIds null → the effective-chapters helper falls back to
   // chapter_id, so legacy chats read as single-chapter blocked.
   mode: text("mode"), // 'blocked' | 'interleaved' | null (legacy)
+  // Slice SEVERAL-THREAD: how many sub-topics a go-ahead in THIS thread authors.
+  // A THIRD thread-locked setting, joining `vendor` and the chapter scope — and
+  // locked for the same reason vendor is: the conversational system prompt differs
+  // between the two grains, and the resume fingerprint is sha256(systemPrompt+slot).
+  // A grain that could change mid-thread would break `--resume` on every flip, so
+  // changing it starts a NEW chat (the transcript is carried over as seeded text).
+  //
+  // ⚠️ NOT the same axis as `mode` above. `mode` is chapter SPAN (one chapter vs a
+  // confusable mix across several); this is how many sub-topics get authored at
+  // once WITHIN whatever that span is. A blocked chat can legitimately be 'several'
+  // and an interleaved one 'one' — which is exactly why CHAT-SET-ROUTE could not
+  // derive it from `mode` and passed it per-turn instead.
+  //
+  // Text, not a pg enum (M23). Null = legacy row → reads as 'one', the safe
+  // polarity: a missing value must never silently mean "spend N sub-topics of AI".
+  authorGrain: text("author_grain"), // 'one' | 'several' | null (legacy → one)
   chapterIds: jsonb("chapter_ids"), // string[] of selected chapter ids
   subTopicId: uuid("sub_topic_id").references(() => subTopic.id), // resolved focus; set by proposeTarget
   vendor: text("vendor").notNull(), // per-thread lock: 'claude_cli' | 'gemini_api'
@@ -1912,8 +1954,11 @@ export const TENANT_SCOPED_TABLES = [
   "horizontal_skill_state",
   "student_chapter_insight",
   "student_subject_insight",
-  // Slice AUTHOR-PREF (item 10) — the tutor's per-subject teaching note about a
-  // named child. Student data by any reading, so RLS is not optional (M34).
+  // Slice AUTHOR-PREF (item 10) — the tutor's per-CHAPTER teaching note about a
+  // named child (re-grained from subject by D-CHAPTER-PREF, S185). Student data
+  // by any reading, so RLS is not optional (M34). The 0049 re-key swaps a column
+  // on an existing table, so the policy — keyed on board_id — is untouched; it is
+  // listed here because it was already scoped, not because the re-key scopes it.
   "student_authoring_preference",
   // S168 — per-board overrides of the parent-dashboard copy (D-PDASH-3's other
   // half). Board-scoped CONTENT, not student data: it is a board's voice, and it

@@ -107,6 +107,7 @@
     "probe:plan": "bun scripts/probe_authoring_plan.ts",
     "probe:buildstamp": "bun scripts/probe_build_stamp.ts",
     "probe:set": "bun scripts/probe_authoring_set.ts",
+    "probe:severalthread": "bun scripts/probe_several_thread.ts",
     "probe:upload": "bun scripts/probe_upload_capture.ts",
     "probe:answerphoto": "bun scripts/probe_answerphoto.ts",
     "probe:landing": "bun scripts/probe_landing.ts",

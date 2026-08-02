@@ -1,0 +1,1 @@
+ALTER TABLE "authoring_chat" ADD COLUMN "author_grain" text;

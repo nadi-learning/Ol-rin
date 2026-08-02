@@ -3430,6 +3430,14 @@
   background: #fdfaf3;
   border-radius: 10px;
   padding: 12px 14px;
+  /* NOTES-TAB: this is a top-level surface on the Notes tab now, but it renders
+     BARE — it owns its header and returns null when empty, so a .tut-section
+     wrapper would strand a heading and reserve dead space. It therefore carries
+     .tut-section's own 26px rhythm itself: without this the panel sat flush
+     against the drill-down above it, measured at 0px where every other seam on
+     the tab is 128px. A margin on the element rather than a wrapper is also
+     what makes the spacing disappear along with the panel. */
+  margin-top: 26px;
   margin-bottom: 14px;
   display: flex;
   flex-direction: column;
@@ -3800,6 +3808,54 @@
   max-width: 62ch;
 }
 .tut-prefs { display: flex; flex-direction: column; gap: 10px; }
+
+/* D-CHAPTER-PREF (S185) — the subject → chapter drill-down that replaced the
+   flat list of one editor per subject. Collapsed by default: the whole board's
+   curriculum sits above "Waiting to assess", and S184's render showed 16 open
+   editors pushing the queue off-screen. */
+.tut-drill {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border, #e3e5ee);
+  border-radius: var(--r-card, 12px);
+  background: var(--surface-sunk, #f4f6fd);
+  padding: 6px;
+}
+.tut-drill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  font-family: var(--font-body, Inter, sans-serif);
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--ink, #15162b);
+}
+.tut-drill-row:hover { background: var(--surface, #fff); }
+.tut-drill-row--subject { font-size: 13.5px; font-weight: 700; }
+.tut-drill-row--chapter { font-size: 13px; font-weight: 500; padding-left: 26px; }
+.tut-drill-caret { flex: none; font-size: 10px; color: var(--muted, #6b6f80); }
+.tut-drill-name { flex: 1 1 auto; min-width: 0; }
+/* The grade is the whole point of rendering it: Physics-9 and Physics-10 are
+   different subjects that the name alone draws identically (S184 §3). */
+.tut-drill-grade {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted, #6b6f80);
+  letter-spacing: 0.02em;
+}
+.tut-drill-count { flex: none; font-size: 11.5px; color: var(--muted, #6b6f80); }
+.tut-drill-noted { color: var(--primary, #2f63ff); font-weight: 700; }
+.tut-drill-dot { flex: none; font-size: 11px; color: transparent; min-width: 44px; text-align: right; }
+.tut-drill-dot--on { color: var(--primary, #2f63ff); font-weight: 700; }
+.tut-drill-chapters { display: flex; flex-direction: column; gap: 2px; }
+.tut-drill-note { padding: 4px 6px 10px 26px; }
 /* Inside a sitting the card sits between the synthesis read-out and the Done
    button, so it needs its own breathing room rather than a section's. */
 .tut-prefs--sitting { margin: 14px 0 16px; }
@@ -3864,4 +3920,47 @@
 @media (max-width: 720px) {
   .tut-pref-foot { align-items: flex-start; flex-direction: column; }
   .tut-pref-save { align-self: stretch; text-align: center; }
+}
+
+/* --- SEVERAL-THREAD: the grain-switch confirm ---
+   Flipping One/Several starts a NEW thread (the grain picks the system prompt and
+   the resume fingerprint derives from it), so the flip has to be confirmed rather
+   than applied silently. Deliberately the same overlay language as the launcher —
+   this is the same KIND of event as choosing a model, not a new modal idiom. */
+.tut-grain-confirm {
+  position: fixed;
+  inset: 0;
+  background: rgba(21, 22, 43, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 70; /* above the launcher's 60 — it can open over a chat */
+}
+.tut-grain-confirm-box {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #d9dbe4);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(21, 22, 43, 0.22);
+  padding: 20px 22px;
+  max-width: 420px;
+  width: 100%;
+}
+.tut-grain-confirm-title {
+  font-family: var(--font-display, Inter, sans-serif);
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.tut-grain-confirm-body {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted, #6b6f80);
+  margin: 0 0 16px;
+}
+.tut-grain-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
 }

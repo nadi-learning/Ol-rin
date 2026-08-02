@@ -59,10 +59,10 @@ import {
   SubTopicNotFoundError,
 } from "../src/services/authoring_chat";
 import {
-  getAuthoringPreferences,
-  getSessionAuthoringPreferences,
-  setAuthoringPreference,
-  SubjectNotOnBoardError,
+  getChapterPreferences,
+  getSessionChapterPreferences,
+  setChapterPreference,
+  ChapterNotOnBoardError,
 } from "../src/services/tutor";
 import { approveDrafts } from "../src/services/authoring";
 import { startSession } from "../src/services/practice";
@@ -145,12 +145,16 @@ async function main() {
     // and no sub_topic, so nothing that walks the spine (target allowlists,
     // chapter coverage) sees new material and the existing legs are untouched.
     const [subj2] = await tx.insert(subject).values({ boardId: P.id, slug: "chem", name: "Chemistry", grade: "IGCSE" }).returning();
-    await tx.insert(chapter).values({ boardId: P.id, subjectId: subj2!.id, slug: "acids", name: "Acids and Bases", ordinal: 1 });
+    const [chap3] = await tx.insert(chapter).values({ boardId: P.id, subjectId: subj2!.id, slug: "acids", name: "Acids and Bases", ordinal: 1 }).returning();
     return {
       subjectId: subj!.id,
       subject2Id: subj2!.id,
       chapterId: chap!.id,
       chapter2Id: chap2!.id,
+      // Chemistry's only chapter — the OTHER SUBJECT's note lives here, so
+      // "a sibling chapter's note carries, another subject's does not" is one
+      // claim about chapter_id and one about the subject filter, not a guess.
+      chapter3Id: chap3!.id,
       subTopicId: st!.id,
       allowedSubTopicIds: [st!.id, st2!.id],
       outOfChapterSubTopicId: st3!.id,
@@ -162,7 +166,7 @@ async function main() {
     const [chap] = await tx.insert(chapter).values({ boardId: Q.id, subjectId: subj!.id, slug: "motion", name: "Motion", ordinal: 1 }).returning();
     const [tp] = await tx.insert(topic).values({ boardId: Q.id, chapterId: chap!.id, slug: "speed", name: "Speed", ordinal: 1 }).returning();
     const [st] = await tx.insert(subTopic).values({ boardId: Q.id, topicId: tp!.id, slug: "accel", name: "Acceleration", ordinal: 1 }).returning();
-    return { subTopicId: st!.id, subjectId: subj!.id };
+    return { subTopicId: st!.id, subjectId: subj!.id, chapterId: chap!.id };
   });
 
   // ─────────── Slice ASSESS-SEE — item 12 ───────────
@@ -256,7 +260,9 @@ async function main() {
   // BOTH arms in ONE leg so collapsing either into the other cannot pass.
   const prefOn = renderInsightBlocks({
     chapters: [], subjects: [], horizontals: [],
-    preferences: [{ subjectName: "Physics", preference: "PURE_PREF_TEXT" }],
+    preferences: [
+      { subjectName: "Physics", chapterName: "PURE_CHAP_NAME", preference: "PURE_PREF_TEXT" },
+    ],
     multiSubject: false,
   }).join("\n");
   const prefOff = renderInsightBlocks({
@@ -276,21 +282,24 @@ async function main() {
     "AUTHOR-PREF: the block is framed as the TUTOR's instruction, and says it does not decide what to test",
     prefOn.includes("BY THE TUTOR") && prefOn.includes("does NOT change WHAT to test"),
   );
-  // Multi-subject only: a single-subject chat must not prefix every line with a
-  // subject name it already knows (same rule the horizontals block follows).
+  // D-CHAPTER-PREF: the CHAPTER name is unconditional, the SUBJECT name is not.
+  // Asserted as one leg because the two are easy to collapse into each other,
+  // and collapsing them is the actual danger: drop the chapter name and a note
+  // about Forces reads as a note about the chapter being authored.
   const prefMulti = renderInsightBlocks({
     chapters: [], subjects: [], horizontals: [],
     preferences: [
-      { subjectName: "Physics", preference: "PURE_PHYS_PREF" },
-      { subjectName: "Chemistry", preference: "PURE_CHEM_PREF" },
+      { subjectName: "Physics", chapterName: "Motion", preference: "PURE_PHYS_PREF" },
+      { subjectName: "Chemistry", chapterName: "Acids", preference: "PURE_CHEM_PREF" },
     ],
     multiSubject: true,
   }).join("\n");
   check(
-    "AUTHOR-PREF: the subject is named per line only when the chat spans several",
-    prefMulti.includes("Physics: PURE_PHYS_PREF") &&
-      prefMulti.includes("Chemistry: PURE_CHEM_PREF") &&
-      !prefOn.includes("Physics: PURE_PREF_TEXT"),
+    "D-CHAPTER-PREF: every line names its CHAPTER always, and its SUBJECT only when the chat spans several",
+    prefMulti.includes("Physics · Motion: PURE_PHYS_PREF") &&
+      prefMulti.includes("Chemistry · Acids: PURE_CHEM_PREF") &&
+      prefOn.includes("PURE_CHAP_NAME: PURE_PREF_TEXT") &&
+      !prefOn.includes("Physics"),
   );
 
   // Part B — the real read, against real rows under real RLS.
@@ -373,64 +382,96 @@ async function main() {
   );
 
   // Part B — AUTHOR-PREF through the REAL write path. Every write below goes
-  // through `setAuthoringPreference`, never a raw insert: the seam under test is
+  // through `setChapterPreference`, never a raw insert: the seam under test is
   // service → table → grounding, and a probe that inserts the row itself proves
   // only that the reader reads (M40/M64).
   //
-  // Leg #1 is the scenario the feature was invented for, driven end to end —
-  // the tutor writes a note, and it reaches the surface that authors the
-  // student's next questions (M97).
+  // ── D-CHAPTER-PREF (S185) — the grain moved subject → CHAPTER ───────────────
+  // Write at chapter, READ across the whole subject. Leg #1 below is the exact
+  // scenario the founder's shape was invented for, and it is the one that would
+  // have silently failed under a naive chapter-grain read (M97):
+  //
+  //   the tutor annotates FORCES; the chat is about MOTION; Motion has no note
+  //   of its own — and the note must STILL reach the authoring grounding.
+  //
+  // Without that, chapter grain collapses coverage from "the note always
+  // applies" to "usually empty" — the objection the founder overruled by
+  // splitting the grains, so it is the claim this probe owes.
+  // Named once and reused at every write AND every assertion below. The last
+  // leg compares stored values for EXACT equality, and writing the literal twice
+  // is how that leg went red twice: the assertion held the sentinel prefix while
+  // the row held the whole sentence.
+  const NOTE_SIBLING = "PREF_SIBLING: diagram-first questions land; long worded stems lose her.";
+  const NOTE_CHEM = "PREF_CHEM: should not appear in a Physics chat.";
   await rows(P.id, (tx) =>
-    setAuthoringPreference(tx, {
-      tutorUserId: tut.id, studentId: stuA.id, subjectId: fx.subjectId,
-      preference: "PREF_PHYS: diagram-first questions land; long worded stems lose her.",
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fx.chapter2Id,
+      preference: NOTE_SIBLING,
     }),
   );
   await rows(P.id, (tx) =>
-    setAuthoringPreference(tx, {
-      tutorUserId: tut.id, studentId: stuA.id, subjectId: fx.subject2Id,
-      preference: "PREF_CHEM: should not appear in a Physics chat.",
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fx.chapter3Id,
+      preference: NOTE_CHEM,
     }),
   );
   const gPref = await rows(P.id, (tx) =>
     assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
   );
+  const prefLine = gPref.split("\n").find((l) => l.includes("PREF_SIBLING")) ?? "";
   check(
-    "AUTHOR-PREF: a tutor's note written through the service reaches the authoring grounding",
-    gPref.includes("HOW TO TEACH THIS STUDENT") && gPref.includes("PREF_PHYS"),
+    "D-CHAPTER-PREF #1: a note on a SIBLING chapter (Forces) reaches a chat about a chapter with NO note of its own (Motion) — the read spans the subject",
+    gPref.includes("HOW TO TEACH THIS STUDENT") && prefLine !== "",
   );
-  // Subject scope. Requires the IN-scope note present, so a grounding that failed
-  // to build cannot pass this by being empty (M104).
+  // The consequence the founder named: a note from a chapter the chat is NOT
+  // about must say so, or the author reads it as being about Motion.
   check(
-    "AUTHOR-PREF: only the chat's OWN subject's note is carried — another subject's is excluded",
-    gPref.includes("PREF_PHYS") && !gPref.includes("PREF_CHEM"),
+    "D-CHAPTER-PREF: the note carries the CHAPTER it was written against (Forces), so a sibling note can't pose as one about this chapter",
+    prefLine.includes("Forces") && !prefLine.includes("Motion"),
   );
-  // The LEFT JOIN direction is the design call: reading FROM `subject` is what
-  // lets a tutor write the FIRST note for a subject. A preference-first read
-  // would never return the row that does not exist yet, so the editor would have
-  // nothing to render and the feature would be unreachable for every new subject.
+  // Subject scope. Requires the IN-scope note PRESENT, so a grounding that
+  // failed to build cannot pass this by being empty (M104).
+  check(
+    "D-CHAPTER-PREF: the read stops at the SUBJECT boundary — another subject's chapter note is excluded",
+    prefLine !== "" && !gPref.includes("PREF_CHEM"),
+  );
+  // The LEFT JOIN direction is the design call: reading FROM `chapter` is what
+  // lets a tutor write the FIRST note for a chapter. A preference-first read
+  // would never return the row that does not exist yet, so the drill-down would
+  // have nothing to render and the feature would be unreachable for every
+  // un-annotated chapter — which, at 74 CBSE chapters, is nearly all of them.
   const prefsB4 = await rows(P.id, (tx) =>
-    getAuthoringPreferences(tx, { tutorUserId: tut.id, studentId: stuB.id }),
+    getChapterPreferences(tx, { tutorUserId: tut.id, studentId: stuB.id }),
   );
   check(
-    "AUTHOR-PREF: a student with NO notes still gets every board subject back, each with preference null",
-    prefsB4.length === 2 &&
+    "D-CHAPTER-PREF: a student with NO notes still gets every board CHAPTER back, each with preference null",
+    prefsB4.length === 3 &&
       prefsB4.every((p) => p.preference === null) &&
-      prefsB4.some((p) => p.subjectId === fx.subjectId) &&
-      prefsB4.some((p) => p.subjectId === fx.subject2Id),
+      prefsB4.some((p) => p.chapterId === fx.chapterId) &&
+      prefsB4.some((p) => p.chapterId === fx.chapter2Id) &&
+      prefsB4.some((p) => p.chapterId === fx.chapter3Id),
+  );
+  // The drill-down groups by subject and labels each with its GRADE — every row
+  // must carry both, or the FE cannot draw the tree from this one read (and
+  // Physics-9 vs Physics-10 draw as two identical rows, S184 §3's finding).
+  check(
+    "D-CHAPTER-PREF: every chapter row carries its subject + grade, so the drill-down needs no second read",
+    prefsB4.every((p) => !!p.subjectId && !!p.subjectName && !!p.grade) &&
+      prefsB4.filter((p) => p.subjectId === fx.subjectId).length === 2 &&
+      prefsB4.filter((p) => p.subjectId === fx.subject2Id).length === 1,
   );
   // Clearing. A whitespace-only save must DELETE, not store "" — the null-vs-empty
   // rule Part A gated purely, here proven against the real table.
   await rows(P.id, (tx) =>
-    setAuthoringPreference(tx, {
-      tutorUserId: tut.id, studentId: stuA.id, subjectId: fx.subjectId, preference: "   ",
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fx.chapter2Id, preference: "   ",
     }),
   );
   const [prefRowAfterClear] = await rows(P.id, (tx) =>
     tx.select().from(studentAuthoringPreference).where(
       and(
         eq(studentAuthoringPreference.studentId, stuA.id),
-        eq(studentAuthoringPreference.subjectId, fx.subjectId),
+        eq(studentAuthoringPreference.chapterId, fx.chapter2Id),
       ),
     ),
   );
@@ -438,14 +479,15 @@ async function main() {
     assembleGrounding(tx, { tutorUserId: tut.id, studentId: stuA.id, chapterIds: [fx.chapterId] }),
   );
   check(
-    "AUTHOR-PREF: a whitespace save DELETES the row (never stores \"\") and the block leaves the grounding, which still builds",
+    "D-CHAPTER-PREF: a whitespace save DELETES the row (never stores \"\") and the block leaves the grounding, which still builds",
     prefRowAfterClear === undefined &&
       gCleared.length > 0 &&
       gCleared.includes("CERTIFIED TWO-AXIS MASTERY") &&
       !gCleared.includes("HOW TO TEACH THIS STUDENT"),
   );
   // The sitting's editor (the founder's second write surface) sees ONLY the
-  // subject(s) that sitting spans — not every subject on the board.
+  // chapter(s) that sitting spans — not every chapter on the board. Its
+  // sub_topic resolves to Motion, so Forces and Acids must both be absent.
   const [sitting] = await rows(P.id, (tx) =>
     tx.insert(assessmentSession).values({
       boardId: P.id, studentId: stuA.id, tutorId: tut.id,
@@ -453,40 +495,92 @@ async function main() {
     }).returning(),
   );
   const sessPrefs = await rows(P.id, (tx) =>
-    getSessionAuthoringPreferences(tx, { tutorUserId: tut.id, sessionId: sitting!.id }),
+    getSessionChapterPreferences(tx, { tutorUserId: tut.id, sessionId: sitting!.id }),
   );
   check(
-    "AUTHOR-PREF: the sitting's editor is narrowed to the subject(s) that sitting spans, not the whole board",
+    "D-CHAPTER-PREF: the sitting's editor is narrowed to the CHAPTER(s) that sitting spans, not the whole board",
     sessPrefs.length === 1 &&
-      sessPrefs[0]?.subjectId === fx.subjectId &&
-      prefsB4.length === 2,
+      sessPrefs[0]?.chapterId === fx.chapterId &&
+      prefsB4.length === 3,
   );
   // Ownership, both directions. stuC is deliberately UNLINKED from this tutor.
   let prefRead403 = false;
-  await rows(P.id, (tx) => getAuthoringPreferences(tx, { tutorUserId: tut.id, studentId: stuC.id }))
+  await rows(P.id, (tx) => getChapterPreferences(tx, { tutorUserId: tut.id, studentId: stuC.id }))
     .catch((e) => { prefRead403 = e instanceof StudentNotFoundError; return null; });
   let prefWrite403 = false;
   await rows(P.id, (tx) =>
-    setAuthoringPreference(tx, {
-      tutorUserId: tut.id, studentId: stuC.id, subjectId: fx.subjectId, preference: "PREF_LEAK",
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuC.id, chapterId: fx.chapterId, preference: "PREF_LEAK",
     }),
   ).catch((e) => { prefWrite403 = e instanceof StudentNotFoundError; return null; });
   check(
-    "AUTHOR-PREF: an unlinked student is refused on BOTH the read and the write (no existence leak)",
+    "D-CHAPTER-PREF: an unlinked student is refused on BOTH the read and the write (no existence leak)",
     prefRead403 && prefWrite403,
   );
-  // A subject from ANOTHER board must be refused rather than written: FK checks
+  // A chapter from ANOTHER board must be refused rather than written: FK checks
   // bypass RLS, so without this guard the insert would succeed and manufacture
   // exactly the cross-board row M61 created by accident.
   let crossBoard = false;
   await rows(P.id, (tx) =>
-    setAuthoringPreference(tx, {
-      tutorUserId: tut.id, studentId: stuA.id, subjectId: fxQ.subjectId, preference: "PREF_CROSS",
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fxQ.chapterId, preference: "PREF_CROSS",
     }),
-  ).catch((e) => { crossBoard = e instanceof SubjectNotOnBoardError; return null; });
+  ).catch((e) => { crossBoard = e instanceof ChapterNotOnBoardError; return null; });
   check(
-    "AUTHOR-PREF: a subject from another board is refused, not written cross-board",
+    "D-CHAPTER-PREF: a chapter from another board is refused, not written cross-board",
     crossBoard,
+  );
+  // The unique key moved with the grain: a second write to the SAME chapter must
+  // update in place (single note per chapter, the founder's Q1 ruling), while a
+  // write to a DIFFERENT chapter of the same subject adds a row rather than
+  // overwriting — the two halves of `unique(student_id, chapter_id)`.
+  const NOTE_ONE = "PREF_ONE: the first note, which must be overwritten.";
+  const NOTE_TWO = "PREF_TWO: the second note, which must replace it in place.";
+  const NOTE_OTHER = "PREF_OTHER: a different chapter, which must get its own row.";
+  await rows(P.id, (tx) =>
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fx.chapterId, preference: NOTE_ONE,
+    }),
+  );
+  await rows(P.id, (tx) =>
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fx.chapterId, preference: NOTE_TWO,
+    }),
+  );
+  await rows(P.id, (tx) =>
+    setChapterPreference(tx, {
+      tutorUserId: tut.id, studentId: stuA.id, chapterId: fx.chapter2Id, preference: NOTE_OTHER,
+    }),
+  );
+  const afterUpsert = await rows(P.id, (tx) =>
+    tx.select().from(studentAuthoringPreference).where(eq(studentAuthoringPreference.studentId, stuA.id)),
+  );
+  const noteOn = (chapterId: string) =>
+    afterUpsert.filter((r) => r.chapterId === chapterId).map((r) => r.preference);
+  const upsertOk =
+    // Exactly one row per chapter, each holding what was LAST written there.
+    // Chemistry is named explicitly rather than left to a total count: it was
+    // written earlier and never cleared, so asserting the whole set proves the
+    // upsert touched ONLY its own key.
+    afterUpsert.length === 3 &&
+    JSON.stringify(noteOn(fx.chapterId)) === JSON.stringify([NOTE_TWO]) &&
+    JSON.stringify(noteOn(fx.chapter2Id)) === JSON.stringify([NOTE_OTHER]) &&
+    JSON.stringify(noteOn(fx.chapter3Id)) === JSON.stringify([NOTE_CHEM]) &&
+    !afterUpsert.some((r) => r.preference === NOTE_ONE);
+  // A red here is worth reading, not re-guessing: print what the table actually
+  // held. (This leg went red twice on a wrong EXPECTATION, not a wrong table.)
+  if (!upsertOk) {
+    console.error(
+      `    ↳ actual rows: ${JSON.stringify(
+        afterUpsert.map((r) => ({ chapter: r.chapterId, pref: r.preference })),
+        null,
+        0,
+      )}`,
+    );
+  }
+  check(
+    "D-CHAPTER-PREF: one note per chapter — a re-save UPDATES in place, while another chapter of the same subject gets its OWN row",
+    upsertOk,
   );
   await rows(P.id, async (tx: Tx) => {
     await tx.delete(assessmentSession).where(eq(assessmentSession.id, sitting!.id));

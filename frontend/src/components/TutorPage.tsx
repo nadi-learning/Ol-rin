@@ -57,10 +57,12 @@ type CrossConceptFlagView = Awaited<
 type StudentInsightsView = Awaited<
   ReturnType<typeof trpc.tutor.getStudentInsights.query>
 >;
-// Slice AUTHOR-PREF — walkthrough item 10. One row per subject; `preference`
-// null means nobody has written one yet, which is the normal state.
-type AuthoringPreferenceRow = Awaited<
-  ReturnType<typeof trpc.tutor.getAuthoringPreferences.query>
+// Slice AUTHOR-PREF — walkthrough item 10, re-grained by D-CHAPTER-PREF (S185).
+// One row per CHAPTER, carrying its subject + grade so the drill-down draws the
+// whole tree from one read; `preference` null means nobody has written one yet,
+// which is the normal state for nearly every chapter.
+type ChapterPreferenceRow = Awaited<
+  ReturnType<typeof trpc.tutor.getChapterPreferences.query>
 >[number];
 type SessionChatMessage = AssessmentSessionView["messages"][number];
 type DueGroup = Awaited<
@@ -315,6 +317,10 @@ function StudentDetail({
 
       <nav className="tut-tabs" role="tablist">
         <TutorTabButton id="assess" tab={tab} onPick={setTab} label="Assess" badge={pendingCount} />
+        {/* No badge, deliberately. The only countable thing here is open
+            cross-concept flags, and nothing clears them on its own — a count
+            would sit there permanently beside two badges that mean "act now". */}
+        <TutorTabButton id="notes" tab={tab} onPick={setTab} label="Notes" />
         <TutorTabButton id="assign" tab={tab} onPick={setTab} label="Assign" badge={dueCount} />
         <TutorTabButton id="pace" tab={tab} onPick={setTab} label="Pace" />
         <TutorTabButton id="reports" tab={tab} onPick={setTab} label="Reports" />
@@ -322,13 +328,23 @@ function StudentDetail({
       </nav>
 
       {tab === "assess" && (
+        <section className="tut-section">
+          <h3 className="tut-section-title">Waiting to assess</h3>
+          <PendingList student={student} pending={pending} onFinalized={reload} />
+        </section>
+      )}
+
+      {tab === "notes" && (
         <>
           <StudentInsights insights={insights} />
           <StudentAuthoringPreferences studentId={student.studentId} />
-          <section className="tut-section">
-            <h3 className="tut-section-title">Waiting to assess</h3>
-            <PendingList student={student} pending={pending} onFinalized={reload} />
-          </section>
+          {/* Machine-written, and the only one of the three carrying an action
+              ("Mark handled"). It lives here rather than in Assess because
+              handling a flag certifies nothing — it closes a worklist item that
+              by design touches no mastery level (schema.ts cross_concept_flag).
+              Rendered BARE, no section wrapper: it carries its own head and
+              returns null when empty, so a wrapper would strand a heading. */}
+          <CrossConceptFlags studentId={student.studentId} />
         </>
       )}
 
@@ -575,7 +591,13 @@ function PacePillTut({ status }: { status: string }) {
   );
 }
 
-type TutorTab = "assess" | "assign" | "pace" | "reports" | "author";
+// Slice NOTES-TAB — "notes" splits OUT of "assess". Assess had accreted four
+// unrelated surfaces (insights, the teaching-note drill-down, the cross-concept
+// worklist, the sittings); only the last is something the tutor goes there to DO.
+// The split is by verb, not by subject: Assess = act on it now, Notes = what is
+// written about this student. S185's drill-down landing above "Waiting to assess"
+// is what made the pile legible (S184 §3).
+type TutorTab = "assess" | "notes" | "assign" | "pace" | "reports" | "author";
 
 // Slice QA3-c: the Author tab is PROGRESS-FIRST (D-QA3-1), a two-level drill-down
 // (eyeball feedback): (1) chapter list — each chapter + its two-axis rollup;
@@ -702,6 +724,10 @@ type LaunchConfig = {
   vendor: VendorChoice;
   mode: "blocked" | "interleaved";
   chapterIds: string[];
+  // SEVERAL-THREAD: the third thread-locked setting, chosen here beside model and
+  // chapter for the same reason those are — it selects the conversational system
+  // prompt, and the resume fingerprint is derived from that prompt.
+  authorGrain: "one" | "several";
 };
 
 // The L0 "Author questions" modal (QA3-d): model → mode → chapter(s). Blocked =
@@ -717,6 +743,7 @@ function AuthorLauncher({
 }) {
   const [vendor, setVendor] = useState<VendorChoice>("gemini_api");
   const [mode, setMode] = useState<"blocked" | "interleaved">("blocked");
+  const [authorGrain, setAuthorGrain] = useState<"one" | "several">("one");
   const [picked, setPicked] = useState<string[]>([]);
   // Chapter picker is now a searchable dropdown: `ddOpen` toggles the panel,
   // `query` filters the option list by chapter name.
@@ -822,6 +849,32 @@ function AuthorLauncher({
           </div>
         </div>
 
+        {/* SEVERAL-THREAD — the grain, beside model and mode because it locks for
+            the thread exactly as they do. Reusing the vendor-toggle markup, no new
+            component kind (the founder's standing "don't want to see new UI kinds"
+            on this modal). */}
+        <div className="tut-launch-field">
+          <span className="tut-chat-vendorlabel">Author</span>
+          <div className="tut-chat-vendortoggle" role="tablist">
+            {(
+              [
+                ["one", "One"],
+                ["several", "Several"],
+              ] as const
+            ).map(([g, label]) => (
+              <button
+                key={g}
+                role="tab"
+                aria-selected={authorGrain === g}
+                className={`tut-chat-vendoropt${authorGrain === g ? " is-on" : ""}`}
+                onClick={() => setAuthorGrain(g)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="tut-launch-field">
           <span className="tut-chat-vendorlabel">
             {mode === "blocked" ? "Chapter" : "Chapters"}
@@ -905,7 +958,7 @@ function AuthorLauncher({
           <button
             className="btn-solid"
             disabled={!ready}
-            onClick={() => onConfirm({ vendor, mode, chapterIds: picked })}
+            onClick={() => onConfirm({ vendor, mode, chapterIds: picked, authorGrain })}
           >
             Start authoring →
           </button>
@@ -1625,8 +1678,8 @@ function AuthoringPreferenceCard({
   onSaved,
 }: {
   studentId: string;
-  row: AuthoringPreferenceRow;
-  onSaved: (rows: AuthoringPreferenceRow[]) => void;
+  row: ChapterPreferenceRow;
+  onSaved: (rows: ChapterPreferenceRow[]) => void;
 }) {
   const [text, setText] = useState(row.preference ?? "");
   const [saved, setSaved] = useState(row.preference ?? "");
@@ -1637,13 +1690,13 @@ function AuthoringPreferenceCard({
   function save() {
     setBusy(true);
     setErr(null);
-    trpc.tutor.setAuthoringPreference
-      .mutate({ studentId, subjectId: row.subjectId, preference: text })
+    trpc.tutor.setChapterPreference
+      .mutate({ studentId, chapterId: row.chapterId, preference: text })
       .then((rows) => {
         // Resync from the SERVER's answer, not from what was typed: a
         // whitespace-only save clears the row, and the box must then read empty
         // rather than keeping the spaces that deleted it.
-        const mine = rows.find((r) => r.subjectId === row.subjectId);
+        const mine = rows.find((r) => r.chapterId === row.chapterId);
         setText(mine?.preference ?? "");
         setSaved(mine?.preference ?? "");
         onSaved(rows);
@@ -1655,7 +1708,7 @@ function AuthoringPreferenceCard({
   return (
     <div className="tut-pref-card">
       <div className="tut-pref-head">
-        <span className="tut-pref-title">How to teach this student — {row.subjectName}</span>
+        <span className="tut-pref-title">How to teach this student — {row.chapterName}</span>
         <span className="tut-pref-optional">optional</span>
       </div>
       <textarea
@@ -1667,7 +1720,8 @@ function AuthoringPreferenceCard({
       />
       <div className="tut-pref-foot">
         <span className="tut-pref-note">
-          Tutor-owned · the question author reads this · never rewritten by the assessment
+          Tutor-owned · read when authoring anywhere in {row.subjectName}, not just this chapter ·
+          never rewritten by the assessment
         </span>
         <button
           type="button"
@@ -1689,19 +1743,34 @@ function AuthoringPreferenceCard({
 }
 
 /**
- * Write surface 1 — the student's page. Every subject on the board, so a tutor
- * can write the FIRST note for a subject the student has no history in yet.
+ * Write surface 1 — the student's page, as a SUBJECT → CHAPTER drill-down
+ * (D-CHAPTER-PREF, S185).
  *
- * Renders nothing at all until the query answers, and nothing if the board has
- * no subjects — but an UNWRITTEN subject still renders its (empty) card. That is
+ * Two things this shape fixes, both found by rendering S184's flat version:
+ *   · 16 near-identical editors stacked above "Waiting to assess", so the tutor
+ *     scrolled past the whole board's subjects to reach the queue they opened
+ *     the tab for. Collapsed, this is one row per subject.
+ *   · Two cards both read "Chemistry" because the title rendered `subjectName`
+ *     alone while `grade` has drifted into four formats — so the GRADE now
+ *     renders beside the name. That does NOT fix the underlying data split
+ *     (owed separately); it stops the surface lying about it.
+ *
+ * The note editor is deliberately unreachable until the tutor is INSIDE a
+ * chapter — the founder's rule, and why there is no subject-level editor here.
+ * Reading is wider than writing: a note written on one chapter reaches authoring
+ * across the whole subject (see the service comment).
+ *
+ * An UNWRITTEN chapter still lists and still opens a writable editor. That is
  * the point of the surface: an editor that only appeared once a note existed
  * could never be used to write the first one.
  */
 function StudentAuthoringPreferences({ studentId }: { studentId: string }) {
-  const [rows, setRows] = useState<AuthoringPreferenceRow[] | null>(null);
+  const [rows, setRows] = useState<ChapterPreferenceRow[] | null>(null);
+  const [openSubject, setOpenSubject] = useState<string | null>(null);
+  const [openChapter, setOpenChapter] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    trpc.tutor.getAuthoringPreferences
+    trpc.tutor.getChapterPreferences
       .query({ studentId })
       .then((r) => live && setRows(r))
       .catch(() => live && setRows([]));
@@ -1710,32 +1779,121 @@ function StudentAuthoringPreferences({ studentId }: { studentId: string }) {
     };
   }, [studentId]);
 
+  // One row per subject, chapters nested. The read already returns them ordered
+  // (subject name, grade, chapter ordinal), so Map insertion order IS the render
+  // order — no second sort, and no second query for the note counts.
+  const subjects = useMemo(() => {
+    const bySubject = new Map<
+      string,
+      { subjectId: string; subjectName: string; grade: string; chapters: ChapterPreferenceRow[] }
+    >();
+    for (const r of rows ?? []) {
+      let s = bySubject.get(r.subjectId);
+      if (!s) {
+        s = { subjectId: r.subjectId, subjectName: r.subjectName, grade: r.grade, chapters: [] };
+        bySubject.set(r.subjectId, s);
+      }
+      s.chapters.push(r);
+    }
+    return [...bySubject.values()];
+  }, [rows]);
+
   if (!rows || rows.length === 0) return null;
   return (
     <section className="tut-section">
       <h3 className="tut-section-title">How to teach this student</h3>
       <p className="tut-pref-lede">
         Your own note to the question author — what lands, what to avoid. It shapes the
-        FORM of what gets authored, not what gets tested.
+        FORM of what gets authored, not what gets tested. Written on a chapter; read
+        when authoring anywhere in that subject.
       </p>
-      <div className="tut-prefs">
-        {rows.map((r) => (
-          <AuthoringPreferenceCard
-            key={r.subjectId}
-            studentId={studentId}
-            row={r}
-            onSaved={setRows}
-          />
-        ))}
+      <div className="tut-drill">
+        {subjects.map((s) => {
+          const noted = s.chapters.filter((c) => c.preference != null).length;
+          const isOpen = openSubject === s.subjectId;
+          return (
+            <div className="tut-drill-subject" key={s.subjectId}>
+              <button
+                type="button"
+                className="tut-drill-row tut-drill-row--subject"
+                aria-expanded={isOpen}
+                onClick={() => {
+                  setOpenSubject(isOpen ? null : s.subjectId);
+                  setOpenChapter(null); // collapsing a subject must not leave its chapter's editor open
+                }}
+              >
+                <span className="tut-drill-caret">{isOpen ? "▾" : "▸"}</span>
+                {/* Grade beside the name — Physics-9 and Physics-10 are different
+                    subjects, and the name alone draws them as two identical rows. */}
+                <span className="tut-drill-name">
+                  {s.subjectName} <span className="tut-drill-grade">{s.grade}</span>
+                </span>
+                <span className="tut-drill-count">
+                  {s.chapters.length} chapter{s.chapters.length === 1 ? "" : "s"}
+                  {noted > 0 && <span className="tut-drill-noted"> · {noted} noted</span>}
+                </span>
+              </button>
+
+              {isOpen && (
+                <div className="tut-drill-chapters">
+                  {s.chapters.map((c) => {
+                    const chapOpen = openChapter === c.chapterId;
+                    return (
+                      <div className="tut-drill-chapter" key={c.chapterId}>
+                        <button
+                          type="button"
+                          className="tut-drill-row tut-drill-row--chapter"
+                          aria-expanded={chapOpen}
+                          onClick={() => setOpenChapter(chapOpen ? null : c.chapterId)}
+                        >
+                          <span className="tut-drill-name">{c.chapterName}</span>
+                          {/* Without this the list looks identical annotated or
+                              blank, and the tutor has to open all 74 to find
+                              their own note. */}
+                          <span
+                            className={
+                              c.preference != null
+                                ? "tut-drill-dot tut-drill-dot--on"
+                                : "tut-drill-dot"
+                            }
+                          >
+                            {c.preference != null ? "● note" : ""}
+                          </span>
+                        </button>
+                        {chapOpen && (
+                          <div className="tut-drill-note">
+                            {/* Keyed on the chapter: the card seeds its textarea
+                                from the prop at MOUNT, so without a changing key
+                                React reconciles it in place and the previous
+                                chapter's text stays on screen (M103). */}
+                            <AuthoringPreferenceCard
+                              key={c.chapterId}
+                              studentId={studentId}
+                              row={c}
+                              onSaved={setRows}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
 }
 
 /**
- * Write surface 2 — a finalized sitting's done phase, narrowed to the subject(s)
- * that sitting actually spans (a catch-all sitting can cross subjects, so this
+ * Write surface 2 — a finalized sitting's done phase, narrowed to the chapter(s)
+ * that sitting actually spans (a catch-all sitting can cross chapters, so this
  * is a list, not a single card).
+ *
+ * No drill-down here: a sitting names its chapters, so the tutor is already
+ * "inside" them and the editors render directly.
  */
 function SessionAuthoringPreferences({
   sessionId,
@@ -1744,10 +1902,10 @@ function SessionAuthoringPreferences({
   sessionId: string;
   studentId: string;
 }) {
-  const [rows, setRows] = useState<AuthoringPreferenceRow[] | null>(null);
+  const [rows, setRows] = useState<ChapterPreferenceRow[] | null>(null);
   useEffect(() => {
     let live = true;
-    trpc.tutor.getSessionAuthoringPreferences
+    trpc.tutor.getSessionChapterPreferences
       .query({ sessionId })
       .then((r) => live && setRows(r))
       .catch(() => live && setRows([]));
@@ -1761,7 +1919,7 @@ function SessionAuthoringPreferences({
     <div className="tut-prefs tut-prefs--sitting">
       {rows.map((r) => (
         <AuthoringPreferenceCard
-          key={r.subjectId}
+          key={r.chapterId}
           studentId={studentId}
           row={r}
           onSaved={setRows}
@@ -1839,18 +1997,17 @@ function PendingList({
 }) {
   const [open, setOpen] = useState<string | null>(null);
   if (pending === null) return <p className="tut-muted">Loading…</p>;
+  // NOTES-TAB: the cross-concept worklist used to render above this in BOTH
+  // branches. It moved to the Notes tab, so an empty Assess tab is now just this
+  // one sentence — which is the honest reading of "nothing waiting to assess".
   if (pending.length === 0)
     return (
-      <>
-        <CrossConceptFlags studentId={student.studentId} />
-        <p className="tut-muted">
-          Nothing waiting - no new practice evidence since the last assessment.
-        </p>
-      </>
+      <p className="tut-muted">
+        Nothing waiting - no new practice evidence since the last assessment.
+      </p>
     );
   return (
     <div className="tut-pending-list">
-      <CrossConceptFlags studentId={student.studentId} />
       {pending.map((p) => {
         const key = p.assignmentId ?? "catch_all";
         return (
@@ -3615,15 +3772,23 @@ function AuthorChat({
   // "lets not make it complicate in chat give a toggle option") — the tutor says
   // what they want with a control, not by phrasing.
   //
-  // Derived from the chat on open/resume rather than persisted: interleaved has
-  // always offered a set, so it stays ON there (a tutor doesn't lose a button they
-  // have today); blocked starts on the single flow and the tutor turns it on. It's
-  // a choice for this sitting, not a property of the chat — and because it
-  // re-derives on every open, navigating away and back is not lossy.
-  const [setModeOn, setSetModeOn] = useState(false);
-  useEffect(() => {
-    setSetModeOn(chat?.mode === "interleaved");
-  }, [chat?.chatId, chat?.mode]);
+  // ⚠️ SEVERAL-THREAD REVERSES COVERAGE-1's "not a property of the chat".
+  //
+  // It was a per-sitting toggle, re-derived from `mode` on every open. That is what
+  // made it invisible to the model: the conversational system prompt is fixed when
+  // the thread is created, so a per-turn toggle could never be in it — and the model,
+  // told only about a single `subTopicNumber`, confidently told a tutor with Several
+  // selected that the system "can only handle one sub-topic per batch" while the
+  // routing stood ready to fan out. The prompt cannot be made per-turn either: the
+  // resume fingerprint is sha256(systemPrompt + slot).
+  //
+  // So the grain is now a property OF THE CHAT (`author_grain`), read here rather
+  // than held in local state, and flipping it starts a new thread — the same
+  // contract vendor and chapter have always had.
+  const chatGrain: "one" | "several" = chat?.authorGrain === "several" ? "several" : "one";
+  const setModeOn = chatGrain === "several";
+  // Which grain the tutor asked to switch TO, awaiting their confirm (null = none).
+  const [grainConfirm, setGrainConfirm] = useState<"one" | "several" | null>(null);
 
   // COMPOSER-1: the actions + the plan-first preference now live in a menu rather
   // than side by side in the bar (founder, 2026-07-29) — four controls in one row
@@ -3935,6 +4100,7 @@ function AuthorChat({
         vendor: launch.vendor,
         mode: launch.mode,
         chapterIds: launch.chapterIds,
+        authorGrain: launch.authorGrain,
       });
       return;
     }
@@ -4037,6 +4203,8 @@ function AuthorChat({
     mode?: "blocked" | "interleaved";
     chapterId?: string;
     chapterIds?: string[];
+    authorGrain?: "one" | "several";
+    carryFromChatId?: string;
   }) {
     setError(null);
     setStarting(true);
@@ -4056,6 +4224,35 @@ function AuthorChat({
     doStart({ vendor, mode: "blocked", chapterId: startChapterId });
   }
 
+  // ── SEVERAL-THREAD — flipping the grain starts a NEW thread ──────────────
+  //
+  // The grain picks the conversational system prompt, and the resume fingerprint
+  // is sha256(systemPrompt + slot) — so a thread cannot change grain in place
+  // without refusing `--resume` on the very next turn. Rather than eat that, the
+  // grain joins vendor and chapter as thread-locked, and flipping it does what
+  // switching model already does: starts a new chat.
+  //
+  // The transcript carries over so the tutor doesn't lose the conversation that
+  // led them to want several in the first place — but the SERVER copies it from
+  // the source chat (the client sends only an id), and it strips the vendor
+  // session identity, so the new thread stitches its history as text under the
+  // new grain's prompt instead of resuming a session built under the old one.
+  function applyGrainSwitch(next: "one" | "several") {
+    setGrainConfirm(null);
+    if (!chat) return;
+    const carryFromChatId = chat.chatId;
+    localStorage.removeItem(storeKey);
+    resetAll();
+    doStart({
+      // Everything else about the thread is preserved — only the grain moves.
+      vendor: chat.vendor,
+      mode: chat.mode,
+      chapterIds: chat.chapterIds,
+      authorGrain: next,
+      carryFromChatId,
+    });
+  }
+
   // New chat = the ONLY way to switch model/chapter (vendor is thread-locked;
   // D-AUTH2-1). Clears the stored handle. In launch mode it re-starts a fresh chat
   // with the SAME launched scope; otherwise it returns to the internal start gate.
@@ -4067,6 +4264,9 @@ function AuthorChat({
         vendor: launch.vendor,
         mode: launch.mode,
         chapterIds: launch.chapterIds,
+        // SEVERAL-THREAD: New chat re-starts the LAUNCHED scope, so the grain
+        // chosen at the launcher rides along with model and chapters.
+        authorGrain: launch.authorGrain,
       });
     } else {
       setStartChapterId("");
@@ -4115,11 +4315,11 @@ function AuthorChat({
     setChat({ ...chat, messages: [...chat.messages, optimistic] });
     pinBoard(); // BOARD-PIN — this is the call the founder saw fail as "thread not found"
     trpc.tutor.sendAuthoringChatTurn
-      // CHAT-SET-ROUTE: the One/Several toggle rides along with the turn. It is a
-      // choice for this sitting (COVERAGE-1 deliberately does not persist it), so the
-      // server cannot read it off the chat row — sending it per-turn is what makes a
-      // chat go-ahead honour the toggle at all.
-      .mutate({ chatId: chat.chatId, text, planFirst, setMode: setModeOn })
+      // SEVERAL-THREAD: `setMode` is no longer sent. The grain is a property of the
+      // thread now (`author_grain`), so the server reads it off the row — which is
+      // what guarantees the routing and the system prompt agree. The server still
+      // ACCEPTS the old field and ignores it, for bundles older than this one.
+      .mutate({ chatId: chat.chatId, text, planFirst })
       .then((c) => {
         setChat(c); // authoritative list replaces the optimistic turn
         // TWOWAY-FIX: the server refused to start new work because a gate is already
@@ -4873,6 +5073,15 @@ function AuthorChat({
           <span className="tut-chat-vendorchip">
             {VENDOR_LABEL[chat.vendor as VendorChoice]}
           </span>
+          {/* SEVERAL-THREAD: the grain is thread-locked like the vendor beside it,
+              so it belongs in the same read-only strip. Shown only for "several" —
+              "one" is the default every thread has always had, and a chip saying so
+              on every chat would be noise. */}
+          {chatGrain === "several" && (
+            <span className="tut-chat-vendorchip" title="This thread authors several sub-topics at once">
+              Several
+            </span>
+          )}
           {chapterName && <span className="tut-chat-scopechap">{chapterName}</span>}
         </div>
         <div className="tut-chat-actions">
@@ -5367,13 +5576,50 @@ function AuthorChat({
                 role="tab"
                 aria-selected={setModeOn === on}
                 className={`tut-chat-vendoropt${setModeOn === on ? " is-on" : ""}`}
-                onClick={() => setSetModeOn(on)}
-                disabled={proposingSet || authoringSet || !!proposalSet}
+                // SEVERAL-THREAD: the grain is thread-locked, so this no longer
+                // flips a local flag — it ASKS, and a confirm starts a new thread
+                // carrying the transcript. Clicking the grain you're already in is
+                // a no-op rather than a pointless confirm.
+                onClick={() => {
+                  const next = on ? "several" : "one";
+                  if (next !== chatGrain) setGrainConfirm(next);
+                }}
+                disabled={proposingSet || authoringSet || !!proposalSet || starting}
               >
                 {label}
               </button>
             ))}
           </div>
+
+          {/* SEVERAL-THREAD — the confirm. Says what is actually about to happen:
+              a NEW thread, with this conversation carried over. Both facts matter —
+              "new thread" alone reads as "you're about to lose this". */}
+          {grainConfirm && (
+            <div className="tut-grain-confirm" role="dialog" aria-modal="true">
+              <div className="tut-grain-confirm-box">
+                <div className="tut-grain-confirm-title">
+                  Switch to {grainConfirm === "several" ? "Several" : "One"}?
+                </div>
+                <p className="tut-grain-confirm-body">
+                  {grainConfirm === "several"
+                    ? "Authoring several sub-topics at once needs a new thread, so the assistant knows about it from the start."
+                    : "Going back to one sub-topic at a time needs a new thread, so the assistant knows about it from the start."}{" "}
+                  This conversation carries over as context.
+                </p>
+                <div className="tut-grain-confirm-actions">
+                  <button className="tut-back" onClick={() => setGrainConfirm(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    className="btn-solid"
+                    onClick={() => applyGrainSwitch(grainConfirm)}
+                  >
+                    OK, start it
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="tut-chat-spacer" />
 

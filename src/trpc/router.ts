@@ -131,14 +131,14 @@ import { env } from "../config/env";
 import {
   getObservations,
   getUnassessedAttempts,
-  getAuthoringPreferences,
+  getChapterPreferences,
   getProgressTree,
-  getSessionAuthoringPreferences,
+  getSessionChapterPreferences,
   getStudentInsights,
   getStudentMastery,
-  setAuthoringPreference,
+  setChapterPreference,
   SittingNotFoundError,
-  SubjectNotOnBoardError,
+  ChapterNotOnBoardError,
   getStudentPacePlan,
   getSubTopicQuestions,
   FlagNotFoundError,
@@ -1676,13 +1676,14 @@ export const appRouter = router({
       }),
 
     // ─────────── Slice AUTHOR-PREF — walkthrough item 10 ───────────
-    // "How to teach this student", per subject. Tutor-owned and optional; every
-    // subject on the board comes back, unwritten ones with `preference: null`.
-    getAuthoringPreferences: tutorProcedure
+    // "How to teach this student", per CHAPTER (D-CHAPTER-PREF, S185). Tutor-owned
+    // and optional; every chapter on the board comes back with its subject,
+    // unwritten ones with `preference: null` — the drill-down's whole tree.
+    getChapterPreferences: tutorProcedure
       .input(z.object({ studentId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
         try {
-          return await getAuthoringPreferences(ctx.tx, {
+          return await getChapterPreferences(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             studentId: input.studentId,
           });
@@ -1694,14 +1695,14 @@ export const appRouter = router({
         }
       }),
 
-    // The same, narrowed to the subject(s) one sitting spans — the editor on the
+    // The same, narrowed to the chapter(s) one sitting spans — the editor on the
     // sitting's done phase (founder ruling: the second write surface goes there,
     // the moment the tutor has just read the synthesis).
-    getSessionAuthoringPreferences: tutorProcedure
+    getSessionChapterPreferences: tutorProcedure
       .input(z.object({ sessionId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
         try {
-          return await getSessionAuthoringPreferences(ctx.tx, {
+          return await getSessionChapterPreferences(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             sessionId: input.sessionId,
           });
@@ -1713,26 +1714,26 @@ export const appRouter = router({
         }
       }),
 
-    // Write or CLEAR one subject's note. An empty/whitespace `preference` deletes
+    // Write or CLEAR one chapter's note. An empty/whitespace `preference` deletes
     // the row (the service's rule) — the editor's "clear" is the same call.
-    setAuthoringPreference: tutorProcedure
+    setChapterPreference: tutorProcedure
       .input(
         z.object({
           studentId: z.string().uuid(),
-          subjectId: z.string().uuid(),
+          chapterId: z.string().uuid(),
           preference: z.string().max(4000).nullable(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
         try {
-          return await setAuthoringPreference(ctx.tx, {
+          return await setChapterPreference(ctx.tx, {
             tutorUserId: ctx.membership.userId,
             studentId: input.studentId,
-            subjectId: input.subjectId,
+            chapterId: input.chapterId,
             preference: input.preference,
           });
         } catch (e) {
-          if (e instanceof StudentNotFoundError || e instanceof SubjectNotOnBoardError) {
+          if (e instanceof StudentNotFoundError || e instanceof ChapterNotOnBoardError) {
             throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;
@@ -1914,10 +1915,28 @@ export const appRouter = router({
           // interleaved = N chapters (grounded across the set). Defaults to blocked.
           mode: z.enum(["blocked", "interleaved"]).optional(),
           chapterIds: z.array(z.string().uuid()).optional(),
+          // Slice SEVERAL-THREAD: the thread-locked authoring grain. Defaults to
+          // "one" in startChat — a missing value must never mean "spend N".
+          authorGrain: z.enum(["one", "several"]).optional(),
+          // Slice SEVERAL-THREAD: when the tutor flips the grain mid-chat, the FE
+          // starts a NEW thread and hands the old transcript over as seed text.
+          // Read off the SOURCE CHAT SERVER-SIDE, never trusted from the client —
+          // a client-supplied transcript would let a tutor inject arbitrary text
+          // as prior assistant turns into a thread the model then treats as its
+          // own history. The client names the chat; the server copies it.
+          carryFromChatId: z.string().uuid().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
         try {
+          const carryMessages = input.carryFromChatId
+            ? (
+                await getChat(ctx.tx, {
+                  tutorUserId: ctx.membership.userId,
+                  chatId: input.carryFromChatId,
+                })
+              ).messages
+            : undefined;
           return await startChat(ctx.tx, {
             boardId: ctx.board.id,
             tutorUserId: ctx.membership.userId,
@@ -1926,6 +1945,8 @@ export const appRouter = router({
             mode: input.mode,
             chapterId: input.chapterId ?? null,
             chapterIds: input.chapterIds,
+            authorGrain: input.authorGrain,
+            carryMessages,
           });
         } catch (e) {
           if (e instanceof StudentNotFoundError) {

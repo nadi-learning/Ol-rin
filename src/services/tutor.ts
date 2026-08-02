@@ -1137,71 +1137,99 @@ export async function getStudentInsights(
 
 // ─────────────── Slice AUTHOR-PREF — walkthrough item 10 ───────────────
 //
-// "How to teach this student", per subject. TUTOR-OWNED: synthesis writes the
-// insight tables above and must never touch this one (see the table's comment
-// for why they are separate rows and not one).
+// "How to teach this student", per CHAPTER (D-CHAPTER-PREF, S185 — the founder
+// re-grained it from subject after seeing the surface render). TUTOR-OWNED:
+// synthesis writes the insight tables above and must never touch this one (see
+// the table's comment for why they are separate rows and not one).
 //
-// The read is a LEFT JOIN from `subject`, not from the preference table, and
-// that direction is the point: a tutor cannot write the first note for a subject
-// that a preference-first read would never return. An unwritten subject comes
+// The read is a LEFT JOIN from `chapter`, not from the preference table, and
+// that direction is the point: a tutor cannot write the first note for a chapter
+// that a preference-first read would never return. An unwritten chapter comes
 // back with `preference: null` — the editor's empty state — and is the normal
-// case, not an error.
+// case, not an error. (Same M11 shape the subject-grain version had; the grain
+// changed, the reason for the join direction did not.)
+//
+// NOTE the deliberate asymmetry with the AUTHORING read: this surface is the
+// WRITE side and is strictly per-chapter, but `assembleGrounding` reads every
+// chapter note under the subject in scope. Chapter-grain writes with
+// subject-wide reads is the ruling — see the table comment in schema.ts.
 
-export type AuthoringPreferenceRow = {
+export type ChapterPreferenceRow = {
   subjectId: string;
   subjectName: string;
+  /**
+   * Rendered BESIDE the subject name by the drill-down. Physics-9 and
+   * Physics-10 are legitimately different subjects and the name alone draws
+   * them as two identical rows — the lie S184 §3 found on the old surface.
+   */
   grade: string;
-  /** null = nobody has written one. NOT "" — see setAuthoringPreference. */
+  chapterId: string;
+  chapterName: string;
+  chapterOrdinal: number;
+  /** null = nobody has written one. NOT "" — see setChapterPreference. */
   preference: string | null;
   updatedAt: Date | null;
 };
 
-/** Shared read. `subjectIds` null = every subject on the board. */
-async function readAuthoringPreferences(
+/** Shared read. `chapterIds` null = every chapter on the board. */
+async function readChapterPreferences(
   tx: Tx,
   studentId: string,
-  subjectIds: string[] | null,
-): Promise<AuthoringPreferenceRow[]> {
-  if (subjectIds != null && subjectIds.length === 0) return [];
+  chapterIds: string[] | null,
+): Promise<ChapterPreferenceRow[]> {
+  if (chapterIds != null && chapterIds.length === 0) return [];
   return await tx
     .select({
       subjectId: subject.id,
       subjectName: subject.name,
       grade: subject.grade,
+      chapterId: chapter.id,
+      chapterName: chapter.name,
+      chapterOrdinal: chapter.ordinal,
       preference: studentAuthoringPreference.preference,
       updatedAt: studentAuthoringPreference.updatedAt,
     })
-    .from(subject)
+    .from(chapter)
+    .innerJoin(subject, eq(subject.id, chapter.subjectId))
     .leftJoin(
       studentAuthoringPreference,
       and(
-        eq(studentAuthoringPreference.subjectId, subject.id),
+        eq(studentAuthoringPreference.chapterId, chapter.id),
         eq(studentAuthoringPreference.studentId, studentId),
       ),
     )
-    .where(subjectIds == null ? undefined : inArray(subject.id, subjectIds))
-    .orderBy(asc(subject.name));
-}
-
-/** Every subject on the board, with this student's note or null. */
-export async function getAuthoringPreferences(
-  tx: Tx,
-  args: { tutorUserId: string; studentId: string },
-): Promise<AuthoringPreferenceRow[]> {
-  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
-  return await readAuthoringPreferences(tx, args.studentId, null);
+    .where(chapterIds == null ? undefined : inArray(chapter.id, chapterIds))
+    .orderBy(asc(subject.name), asc(subject.grade), asc(chapter.ordinal));
 }
 
 /**
- * Only the subjects THIS SITTING spans, for the editor on its done phase.
- * A catch-all sitting pools whatever evidence was waiting, so its sub-topics can
- * cross subjects — hence a set, resolved from the frozen `subTopicIds`, and one
- * editor per subject rather than a guess at the dominant one.
+ * Every chapter on the board, with this student's note or null — the drill-down's
+ * whole tree in one read, so a chapter's "has a note" indicator needs no second
+ * query.
  */
-export async function getSessionAuthoringPreferences(
+export async function getChapterPreferences(
+  tx: Tx,
+  args: { tutorUserId: string; studentId: string },
+): Promise<ChapterPreferenceRow[]> {
+  await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
+  return await readChapterPreferences(tx, args.studentId, null);
+}
+
+/**
+ * Only the chapters THIS SITTING spans, for the editor on its done phase.
+ * A catch-all sitting pools whatever evidence was waiting, so its sub-topics can
+ * cross chapters (and subjects) — hence a set, resolved from the frozen
+ * `subTopicIds`, and one editor per chapter rather than a guess at the dominant
+ * one.
+ *
+ * This is the second WRITE surface, so it stays at chapter grain like the first:
+ * the founder's rule is that a note is only writable from inside a chapter, and
+ * a finalized sitting names its chapters exactly.
+ */
+export async function getSessionChapterPreferences(
   tx: Tx,
   args: { tutorUserId: string; sessionId: string },
-): Promise<AuthoringPreferenceRow[]> {
+): Promise<ChapterPreferenceRow[]> {
   const [sitting] = await tx
     .select({ studentId: assessmentSession.studentId, subTopicIds: assessmentSession.subTopicIds })
     .from(assessmentSession)
@@ -1213,16 +1241,16 @@ export async function getSessionAuthoringPreferences(
     sitting.subTopicIds.length === 0
       ? []
       : await tx
-          .selectDistinct({ subjectId: chapter.subjectId })
+          .selectDistinct({ chapterId: chapter.id })
           .from(subTopic)
           .innerJoin(topic, eq(topic.id, subTopic.topicId))
           .innerJoin(chapter, eq(chapter.id, topic.chapterId))
           .where(inArray(subTopic.id, sitting.subTopicIds));
 
-  return await readAuthoringPreferences(
+  return await readChapterPreferences(
     tx,
     sitting.studentId,
-    rows.map((r) => r.subjectId),
+    rows.map((r) => r.chapterId),
   );
 }
 
@@ -1242,7 +1270,7 @@ export class SittingNotFoundError extends Error {
 }
 
 /**
- * Write (or clear) one subject's note. Returns the same shape the read does, so
+ * Write (or clear) one CHAPTER's note. Returns the same shape the read does, so
  * the two write surfaces — the student's page and the sitting's done phase —
  * render from one contract.
  *
@@ -1252,21 +1280,21 @@ export class SittingNotFoundError extends Error {
  * nothing to say about her" instead of "nobody has written this yet" — the same
  * null-vs-zero distinction the mastery bound holds elsewhere.
  */
-export async function setAuthoringPreference(
+export async function setChapterPreference(
   tx: Tx,
-  args: { tutorUserId: string; studentId: string; subjectId: string; preference: string | null },
-): Promise<AuthoringPreferenceRow[]> {
+  args: { tutorUserId: string; studentId: string; chapterId: string; preference: string | null },
+): Promise<ChapterPreferenceRow[]> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
 
-  // The subject must exist ON THIS BOARD. RLS scopes the read, so a subject from
+  // The chapter must exist ON THIS BOARD. RLS scopes the read, so a chapter from
   // another board simply isn't found — the insert would otherwise create a row
-  // whose board_id (below) disagrees with the subject it points at (M61's
+  // whose board_id (below) disagrees with the chapter it points at (M61's
   // cross-board FK, manufactured deliberately instead of by accident).
-  const [subj] = await tx
-    .select({ id: subject.id, boardId: subject.boardId })
-    .from(subject)
-    .where(eq(subject.id, args.subjectId));
-  if (!subj) throw new SubjectNotOnBoardError(args.subjectId);
+  const [chap] = await tx
+    .select({ id: chapter.id, boardId: chapter.boardId })
+    .from(chapter)
+    .where(eq(chapter.id, args.chapterId));
+  if (!chap) throw new ChapterNotOnBoardError(args.chapterId);
 
   const trimmed = args.preference?.trim() || null;
 
@@ -1276,37 +1304,40 @@ export async function setAuthoringPreference(
       .where(
         and(
           eq(studentAuthoringPreference.studentId, args.studentId),
-          eq(studentAuthoringPreference.subjectId, args.subjectId),
+          eq(studentAuthoringPreference.chapterId, args.chapterId),
         ),
       );
   } else {
     await tx
       .insert(studentAuthoringPreference)
       .values({
-        boardId: subj.boardId,
+        boardId: chap.boardId,
         studentId: args.studentId,
-        subjectId: args.subjectId,
+        chapterId: args.chapterId,
         preference: trimmed,
         updatedBy: args.tutorUserId,
       })
       .onConflictDoUpdate({
-        target: [studentAuthoringPreference.studentId, studentAuthoringPreference.subjectId],
+        target: [studentAuthoringPreference.studentId, studentAuthoringPreference.chapterId],
         set: { preference: trimmed, updatedBy: args.tutorUserId, updatedAt: new Date() },
       });
   }
 
-  return await readAuthoringPreferences(tx, args.studentId, null);
+  return await readChapterPreferences(tx, args.studentId, null);
 }
 
 /**
- * Raised when the subject isn't visible on this board. Distinct from
- * `admin_ingest`'s `SubjectNotFoundError` (same wire code, different module) so
- * neither `instanceof` can silently catch the other's throw.
+ * Raised when the chapter isn't visible on this board. Distinct from any other
+ * module's chapter-not-found (same wire code, different module) so neither
+ * `instanceof` can silently catch the other's throw.
+ *
+ * Replaced `SubjectNotOnBoardError` at D-CHAPTER-PREF — the guard it performs is
+ * the same M61 cross-board-FK block, one grain down.
  */
-export class SubjectNotOnBoardError extends Error {
-  code = "SUBJECT_NOT_FOUND";
+export class ChapterNotOnBoardError extends Error {
+  code = "CHAPTER_NOT_FOUND";
   constructor(id: string) {
-    super(`subject ${id} not found`);
-    this.name = "SubjectNotOnBoardError";
+    super(`chapter ${id} not found`);
+    this.name = "ChapterNotOnBoardError";
   }
 }

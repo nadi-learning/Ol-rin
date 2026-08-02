@@ -226,8 +226,49 @@ const CHAT_SYSTEM_GEMINI = `${CHAT_SYSTEM_BASE}
 
 HOW AUTHORING HAPPENS (so you guide it correctly): you do NOT write the questions yourself, and you have NO tool or function to call. When you and the tutor have converged and the tutor gives a clear go-ahead ("author 3", "go ahead", "let's do it", "make those"), reply with ONE short natural sentence handing off (e.g. "On it — handing this to the author now." / "On it — let me work out how I'd approach these.") and put the exact token [[AUTHOR_NOW]] on its OWN line at the END of that reply. That token hands off to a specialist authoring worker that works to the full craft bar. By default that worker first comes back with a PLAN (its read of the student + one line per question it intends to write) which the tutor approves or amends before anything is written; if the tutor has turned that off, it drafts immediately. Either way the finished drafts appear in a review form where the tutor edits and saves them (nothing goes live to a student without that). Keep your handoff sentence NEUTRAL about what comes next — do NOT promise finished questions ("drafting 3 now"), because a plan may be what comes back. Emit [[AUTHOR_NOW]] ONLY after a clear go-ahead — until then, keep discussing and NEVER emit it. Do not explain the token, quote it, wrap it in backticks, or emit any pseudocode / tool_code / print(...) — just place [[AUTHOR_NOW]] on its own line when it's time to author.`;
 
-function chatSystemFor(vendor: VendorChoice): string {
-  return vendor === "gemini_api" ? CHAT_SYSTEM_GEMINI : CHAT_SYSTEM_CLAUDE;
+// ───────────────────────── SEVERAL-THREAD ─────────────────────────
+//
+// THE BUG THIS EXISTS FOR. The conversational prompt above describes exactly one
+// `subTopicNumber`, and nothing ever told the model the One/Several toggle exists
+// — `chatSystemFor` took only the vendor. So a tutor with "Several" selected who
+// ASKED "can we author two sub-topics now?" was told the system is "strictly
+// hardwired to handle only one sub-topic per batch", and that sending two "breaks
+// the authoring workflow and degrades question quality". Both sentences are the
+// model's own invention; neither appears anywhere in this codebase. Meanwhile
+// CHAT-SET-ROUTE (below, ~line 1440) would have fanned the go-ahead out correctly.
+// The model talked the tutor out of a feature that was ready to run — and only
+// when the tutor ASKED rather than instructed, which is why the routing probe
+// never caught it: the routing was never wrong.
+//
+// WHY THIS IS THREAD-LOCKED RATHER THAN PER-TURN. The resume fingerprint is
+// sha256(systemPrompt + slot), so a system prompt that varies with a per-turn
+// toggle would refuse `--resume` on every flip and re-stitch the whole thread.
+// The grain therefore joins `vendor` and the chapter scope as a property chosen
+// when the thread is BORN (schema.ts `author_grain`), which is the pattern the
+// start gate already uses — "New chat = the ONLY way to switch model/chapter".
+//
+// APPENDED ONLY WHEN SEVERAL. The 'one' prompt stays byte-identical to what
+// shipped, so no existing thread's fingerprint moves and no resume regresses.
+const CHAT_SYSTEM_SEVERAL_TAIL = `
+
+AUTHORING GRAIN FOR THIS THREAD — SEVERAL. This thread is set to author SEVERAL sub-topics at once, and you should plan with the tutor on that basis. Do NOT tell the tutor the system can only handle one sub-topic at a time, or that authoring several at once harms question quality — in this thread neither is true. When the tutor gives a go-ahead, what comes back is a BLUEPRINT covering several sub-topics — one line per question per sub-topic — which the tutor approves or amends, and only THEN are all of them drafted in parallel. So do not promise finished questions, and do not ask the tutor to pick just one sub-topic to start with: proposing a set spanning several is the point of this thread.`;
+
+/**
+ * The conversational role for a thread. `several` appends the grain block; false
+ * returns the exact string that shipped before SEVERAL-THREAD.
+ *
+ * Exported so the rule is assertable with NO AI in the loop (M101): a leg that can
+ * only observe what the model happened to say proves nothing about the prompt.
+ */
+export function chatSystemFor(vendor: VendorChoice, several = false): string {
+  const base = vendor === "gemini_api" ? CHAT_SYSTEM_GEMINI : CHAT_SYSTEM_CLAUDE;
+  return several ? `${base}${CHAT_SYSTEM_SEVERAL_TAIL}` : base;
+}
+
+/** The stored grain, normalised. Null/unknown → "one" — the safe polarity (a
+ *  missing value must never silently mean "spend N sub-topics of AI"). */
+export function grainOf(row: { authorGrain?: string | null }): "one" | "several" {
+  return row.authorGrain === "several" ? "several" : "one";
 }
 
 // Iter-3.5 layer C — sanitise persisted assistant text: cut at the first leak
@@ -379,11 +420,16 @@ export type InsightGroundingRows = {
   }>;
   /**
    * Slice AUTHOR-PREF (item 10) — the TUTOR'S OWN instruction on how to teach
-   * this student, per subject. Unlike the three above it is not synthesis
-   * output: a human wrote it by hand and owns it. Only subjects with a note
-   * appear; an unwritten subject is absent, never an empty line.
+   * this student, per CHAPTER (D-CHAPTER-PREF, S185). Unlike the three above it
+   * is not synthesis output: a human wrote it by hand and owns it. Only chapters
+   * with a note appear; an unwritten chapter is absent, never an empty line.
+   *
+   * `chapterName` is NOT optional and is NOT gated on `multiSubject`: these rows
+   * span the whole subject, so most of them describe a chapter this chat is not
+   * about. Dropping the name would present a note written about Thermodynamics
+   * as though it were about the chapter being authored.
    */
-  preferences: Array<{ subjectName: string; preference: string }>;
+  preferences: Array<{ subjectName: string; chapterName: string; preference: string }>;
   /** Name the subject per line only when the chat actually spans several. */
   multiSubject: boolean;
 };
@@ -437,14 +483,18 @@ export function renderInsightBlocks(rows: InsightGroundingRows): string[] {
   // instruction rather than as evidence. It says how to SHAPE the question; it
   // never says what to test (that stays with mastery + the coverage map), so a
   // preference must not talk the author out of an under-covered sub-topic.
+  //
+  // Every line carries its chapter name unconditionally (D-CHAPTER-PREF): the
+  // read spans the subject, so most lines are about a DIFFERENT chapter than the
+  // one being authored, and the header above tells the model how to weigh that.
   if (rows.preferences.length > 0) {
     out.push(
       "",
-      "HOW TO TEACH THIS STUDENT (written BY THE TUTOR, by hand, about this specific student — not inferred by any model. Treat it as an INSTRUCTION about the FORM of what you author: question style, framing, what has been landing. It does NOT change WHAT to test — coverage and mastery decide that. Where it conflicts with your own inference, the tutor is right):",
+      "HOW TO TEACH THIS STUDENT (written BY THE TUTOR, by hand, about this specific student — not inferred by any model. Treat it as an INSTRUCTION about the FORM of what you author: question style, framing, what has been landing. It does NOT change WHAT to test — coverage and mastery decide that. Where it conflicts with your own inference, the tutor is right. Each note is labelled with the CHAPTER the tutor wrote it against — that chapter is often NOT the one you are authoring, because a tutor's read on how a student learns carries across a subject. Apply a note from another chapter as general guidance; apply one labelled with your own chapter as specific):",
       rows.preferences
         .map(
           (p) =>
-            `  - ${rows.multiSubject ? `${p.subjectName}: ` : ""}${p.preference}`,
+            `  - ${rows.multiSubject ? `${p.subjectName} · ` : ""}${p.chapterName}: ${p.preference}`,
         )
         .join("\n"),
     );
@@ -587,23 +637,38 @@ export async function assembleGrounding(
                 ),
               )
               .orderBy(asc(subject.name), asc(horizontalSkillState.slug)),
-            // Item 10 — the tutor's teaching note. Subject grain, resolved to the
-            // same subject(s) as the SUBJECT INSIGHT block above (S181's ruling:
-            // each block at the grain its own table is keyed on).
+            // Item 10 — the tutor's teaching note. CHAPTER grain since
+            // D-CHAPTER-PREF (S185), and this read is the half of that ruling
+            // that makes chapter grain affordable: it filters on the note's
+            // chapter's SUBJECT, not on this chat's chapters. So a note the
+            // tutor wrote on any chapter of the subject reaches the authoring of
+            // every other chapter in it.
+            //
+            // Deliberately UNLIKE the CHAPTER INSIGHT block above, which is
+            // scoped to this chat's chapters exactly. That block is synthesis
+            // output with a subject-grain sibling carrying the wider claims; this
+            // one has no sibling — a per-chapter-only read would leave the author
+            // with nothing for the ~73 of 74 chapters nobody annotated.
+            //
+            // The chapter name comes back with every row because the render MUST
+            // print it (see renderInsightBlocks): a note from a chapter the chat
+            // is not about is otherwise indistinguishable from one about it.
             tx
               .select({
                 subjectName: subject.name,
+                chapterName: chapter.name,
                 preference: studentAuthoringPreference.preference,
               })
               .from(studentAuthoringPreference)
-              .innerJoin(subject, eq(subject.id, studentAuthoringPreference.subjectId))
+              .innerJoin(chapter, eq(chapter.id, studentAuthoringPreference.chapterId))
+              .innerJoin(subject, eq(subject.id, chapter.subjectId))
               .where(
                 and(
                   eq(studentAuthoringPreference.studentId, args.studentId),
-                  inArray(studentAuthoringPreference.subjectId, subjectIds),
+                  inArray(chapter.subjectId, subjectIds),
                 ),
               )
-              .orderBy(asc(subject.name)),
+              .orderBy(asc(subject.name), asc(chapter.ordinal)),
           ]);
 
           // Chapter order, not insert order — the grounding reads as the syllabus runs.
@@ -759,6 +824,20 @@ export type ChatView = {
   chapterId: string | null; // the blocked-mode single chapter (Slice AUTH-v2.1)
   chapterIds: string[]; // effective chapter scope (Slice QA3-d): [one] blocked, N interleaved
   mode: AuthoringMode; // 'blocked' | 'interleaved' (legacy rows read as 'blocked')
+  // SEVERAL-THREAD: how many sub-topics a go-ahead in this thread authors. Thread-
+  // locked (it picks the system prompt), so the FE renders it read-only in the
+  // context strip and flipping it starts a new chat.
+  //
+  // ⚠️ REQUIRED, and that is the whole point. It was optional first — "so the many
+  // builders need not each be touched" — and the render walk caught what that
+  // bought: the FE does `setChat(response)` after EVERY turn, so the moment a
+  // builder omitted the grain the UI silently reverted to One. The chip vanished,
+  // the composer flipped, and the confirm then fired against the wrong grain — on
+  // a thread whose system prompt still said SEVERAL. That is precisely the
+  // state/prompt disagreement this slice exists to remove, reintroduced by the
+  // type. Required means the compiler enumerates every builder; a builder that
+  // forgets cannot compile.
+  authorGrain: "one" | "several";
   subTopicId: string | null; // resolved authoring focus (set by proposeTarget)
   vendor: VendorChoice;
   messages: ChatMessage[];
@@ -849,6 +928,12 @@ export async function startChat(
     chapterId?: string | null;
     // The selected chapter set (Slice QA3-d launcher). Blocked = 1, interleaved = N.
     chapterIds?: string[];
+    /** SEVERAL-THREAD: how many sub-topics a go-ahead authors. Thread-locked —
+     *  it selects the system prompt, so it cannot change without a new thread. */
+    authorGrain?: "one" | "several";
+    /** SEVERAL-THREAD: the transcript to seed this thread with, when it was
+     *  created by flipping the grain on an existing chat. */
+    carryMessages?: ChatMessage[];
   },
 ): Promise<ChatView> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
@@ -881,6 +966,28 @@ export async function startChat(
     }
   }
 
+  // 🔑 SEVERAL-THREAD — STRIP THE VENDOR SESSION IDENTITY FROM CARRIED MESSAGES.
+  //
+  // A ChatMessage carries `aiSessionId` and `sessionFingerprint`, and sendTurn
+  // resumes on exactly those. Copying a transcript verbatim would hand the NEW
+  // thread the OLD thread's session id, whose fingerprint was computed from the
+  // OLD system prompt — so the first turn would try to `--resume` a session built
+  // under the other grain. That is the precise prompt/session mismatch this whole
+  // slice exists to prevent, re-introduced by the carry-over meant to be free of
+  // it. Stripped here rather than at the call site: a second caller must not be
+  // able to reintroduce it, and the invariant belongs beside the insert it guards.
+  //
+  // Consequence, and it is the correct one: the new thread has no resumable
+  // session, so its first turn stitches the carried history as text — under the
+  // new grain's prompt. Exactly what a fresh thread does.
+  const seeded: ChatMessage[] = (args.carryMessages ?? []).map((m) => ({
+    id: m.id,
+    role: m.role,
+    text: m.text,
+    createdAt: m.createdAt,
+    // aiSessionId / sessionFingerprint / vendorId deliberately NOT copied.
+  }));
+
   const [created] = await tx
     .insert(authoringChat)
     .values({
@@ -888,10 +995,11 @@ export async function startChat(
       tutorId: args.tutorUserId,
       studentId: args.studentId,
       mode,
+      authorGrain: args.authorGrain ?? "one",
       chapterId: storedChapterId,
       chapterIds: storedChapterIds,
       vendor: args.vendor,
-      messages: [],
+      messages: seeded,
     })
     .returning();
   return {
@@ -900,9 +1008,10 @@ export async function startChat(
     chapterId: created!.chapterId ?? null,
     chapterIds: chatChapterIds(created!),
     mode: (created!.mode as AuthoringMode) ?? "blocked",
+    authorGrain: grainOf(created!),
     subTopicId: created!.subTopicId ?? null,
     vendor: created!.vendor as VendorChoice,
-    messages: [],
+    messages: seeded,
   };
 }
 
@@ -934,6 +1043,7 @@ export async function getChat(
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
+    authorGrain: grainOf(row),
     subTopicId: row.subTopicId ?? null,
     vendor: row.vendor as VendorChoice,
     messages: parseMessages(row.messages),
@@ -1085,6 +1195,7 @@ function buildDraftingView(
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
+    authorGrain: grainOf(row),
     subTopicId: chosen.subTopicId,
     vendor,
     messages,
@@ -1168,6 +1279,7 @@ function buildProposedSetView(
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
+    authorGrain: grainOf(row),
     subTopicId: row.subTopicId ?? null,
     vendor,
     messages,
@@ -1193,16 +1305,16 @@ export async function sendTurn(
      *  tutor explicitly skipped it — a missing flag must never silently mean "skip
      *  the review the founder asked for". */
     planFirst?: boolean;
-    /** Slice CHAT-SET-ROUTE: the tutor's One/Several toggle for THIS sitting. Sent
-     *  per-turn rather than read off the chat row, because the toggle is explicitly
-     *  NOT a property of the chat — COVERAGE-1 derives it from `mode` on open and
-     *  then lets the tutor flip it, so a blocked chat can legitimately be in
-     *  "Several" and an interleaved one in "One". Branching on `row.mode` here would
-     *  fan out for interleaved chats where the tutor chose One, and never fire for
-     *  the blocked+Several case the toggle exists for.
+    /** Slice CHAT-SET-ROUTE sent the One/Several toggle per-turn. SEVERAL-THREAD
+     *  moved it onto the chat row (`author_grain`), so this is now ACCEPTED AND
+     *  IGNORED: the thread's own grain wins.
      *
-     *  Defaults to FALSE — the opposite polarity to planFirst, and for the same
-     *  reason: a missing flag must never silently mean "spend N sub-topics of AI". */
+     *  Deliberately not removed. The grain decides which system prompt the thread
+     *  was BORN under, and a client that still sends the old field — a stale tab,
+     *  an in-flight request across a deploy — must not be able to contradict that.
+     *  Honouring it would fan out a thread whose prompt says "one", which is the
+     *  precise mismatch this slice exists to remove. Drop the field only once no
+     *  deployed bundle sends it. */
     setMode?: boolean;
   },
 ): Promise<ChatView> {
@@ -1214,8 +1326,12 @@ export async function sendTurn(
   const history = parseMessages(row.messages);
   // TWOWAY-1: default TRUE — the gate is what you get unless the tutor skipped it.
   const planFirst = args.planFirst !== false;
-  // CHAT-SET-ROUTE: default FALSE — absent means the single path, never a fan-out.
-  const setMode = args.setMode === true;
+  // SEVERAL-THREAD: the GRAIN, off the row — never args.setMode (see above). This
+  // is the single source for both the system prompt and the go-ahead routing, so
+  // the two cannot disagree: a thread that was told "several" fans out, and a
+  // thread that was told "one" never does.
+  const grain = grainOf(row);
+  const setMode = grain === "several";
 
   const userMsg: ChatMessage = {
     id: randomUUID(),
@@ -1262,6 +1378,7 @@ export async function sendTurn(
       chapterId: row.chapterId ?? null,
       chapterIds: chatChapterIds(row),
       mode: (row.mode as AuthoringMode) ?? "blocked",
+      authorGrain: grainOf(row),
       subTopicId: row.subTopicId ?? null,
       vendor,
       messages,
@@ -1358,7 +1475,7 @@ export async function sendTurn(
 
   const call = (resumeId: string | undefined, msg: string) =>
     complete({
-      systemPrompt: chatSystemFor(vendor),
+      systemPrompt: chatSystemFor(vendor, grain === "several"),
       userMessage: msg,
       endpoint: AUTHORING_CHAT_ENDPOINT,
       userId: args.tutorUserId,
@@ -1578,6 +1695,7 @@ export async function sendTurn(
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
+    authorGrain: grainOf(row),
     subTopicId: row.subTopicId ?? null,
     vendor,
     messages,
