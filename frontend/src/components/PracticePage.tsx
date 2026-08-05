@@ -26,7 +26,14 @@ type AnswerFeedback = Awaited<
 >;
 type Review = Awaited<ReturnType<typeof trpc.practice.reviewSession.query>>;
 
-type Picker = { id: string; name: string; topicName: string; available: boolean };
+type Picker = {
+  id: string;
+  name: string;
+  topicName: string;
+  available: boolean;
+  // Slice NEWONLY — every authored question here is already answered.
+  done: boolean;
+};
 type Phase = "picking" | "answering" | "revealed" | "completed" | "reviewing";
 
 const VERDICT_LABEL: Record<AnswerFeedback["verdict"], string> = {
@@ -54,7 +61,12 @@ export function PracticePage({ pet }: { pet: string | null }) {
   // Slice AVAIL — sub_topic ids this student can actually practise (sparse: the
   // BE returns only the non-empty ones). `null` = not loaded yet → render every
   // topic as normal so a slow read can't flash "Coming soon" across the list.
-  const [availIds, setAvailIds] = useState<Set<string> | null>(null);
+  // Slice NEWONLY — was a Set of "has something". It has to carry the two counts
+  // now, because "nothing left" and "nothing yet" are different sentences.
+  const [availIds, setAvailIds] = useState<Map<
+    string,
+    { count: number; total: number }
+  > | null>(null);
   const [phase, setPhase] = useState<Phase>("picking");
   const [error, setError] = useState<string | null>(null);
 
@@ -104,7 +116,13 @@ export function PracticePage({ pet }: { pet: string | null }) {
             topicName: tp.name,
             // availIds null (still loading) → assume available; the chip appears
             // once the real answer lands.
-            available: availIds === null || availIds.has(st.id),
+            available: availIds === null || (availIds.get(st.id)?.count ?? 0) > 0,
+            // Slice NEWONLY — total>0 with count 0 means the student has ANSWERED
+            // everything authored here. Distinct from absent (never authored):
+            // folding the two together would file finished work under
+            // "coming soon".
+            done: availIds !== null && (availIds.get(st.id)?.total ?? 0) > 0
+              && (availIds.get(st.id)?.count ?? 0) === 0,
           });
     return out;
   }, [nav, availIds]);
@@ -137,7 +155,11 @@ export function PracticePage({ pet }: { pet: string | null }) {
     // must not paint the whole syllabus "Coming soon".
     trpc.practice.listAvailability
       .query()
-      .then((rows) => setAvailIds(new Set(rows.map((r) => r.subTopicId))))
+      .then((rows) =>
+        setAvailIds(
+          new Map(rows.map((r) => [r.subTopicId, { count: r.count, total: r.total }])),
+        ),
+      )
       .catch(() => setAvailIds(null));
     loadAssignments();
   }, []);
@@ -797,7 +819,10 @@ function PickList({
   // into ONE Pikachu banner. Hiding is safe under G3 (that rule bans GATING
   // self-serve; there is nothing behind these rows to gate).
   const ready = subTopics.filter((st) => st.available);
-  const soonCount = subTopics.length - ready.length;
+  // Slice NEWONLY — finished topics leave `ready` too, so they must be taken OUT
+  // of the soon count or the banner counts completed work as unwritten.
+  const doneCount = subTopics.filter((st) => st.done).length;
+  const soonCount = subTopics.length - ready.length - doneCount;
   // Slice ASG-FOCUS — while the tutor's assignment is still open, the browse list
   // is NOT offered. Two reasons, and the second is the load-bearing one:
   //
@@ -854,6 +879,17 @@ function PickList({
             </li>
           ))}
         </ul>
+      )}
+      {/* Slice NEWONLY — the finished topics say so in their own words. Gated on
+          `browsable` like the list above: while a tutor assignment is open the
+          browse surface is deliberately suppressed, and a progress line there
+          would be exactly the competing entry point ASG-FOCUS removed. */}
+      {browsable && doneCount > 0 && (
+        <p className="prac-done-note">
+          {doneCount === 1
+            ? "1 topic fully practised — new questions show up here when your tutor adds them."
+            : `${doneCount} topics fully practised — new questions show up here when your tutor adds them.`}
+        </p>
       )}
       {soonCount > 0 && (
         <SoonBanner count={soonCount} showTutorLine={hasAssignedBlock} pet={pet} />

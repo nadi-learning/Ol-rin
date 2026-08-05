@@ -203,7 +203,7 @@ function viewOf(s: typeof practiceSession.$inferSelect, q: PublicQuestion | null
  *
  * Board scoping is NOT here — every caller runs inside the board-scoped tx (RLS).
  */
-export function availableQuestionWhere(appUserId: string, subTopicId?: string) {
+export function visibleQuestionWhere(appUserId: string, subTopicId?: string) {
   return and(
     subTopicId ? eq(question.subTopicId, subTopicId) : undefined,
     eq(question.status, "approved"),
@@ -212,24 +212,81 @@ export function availableQuestionWhere(appUserId: string, subTopicId?: string) {
 }
 
 /**
+ * Slice NEWONLY — "this caller has not already answered it."
+ *
+ * ANSWERED, NOT TOUCHED. The clause keys on `skip_reason IS NULL`, because a
+ * skip and an answer are the SAME write: `skip()` and `submitAttempt()` both go
+ * through recordAndAdvance and both insert an `attempt` row. Keying on the row's
+ * existence alone would retire a question the student explicitly said "not now"
+ * to — they would never see it again, which is the opposite of a skip's meaning.
+ * (ai-build-miss, the "define the predicate from the WRITE the real action
+ * performs" trap: the table name says `attempt`, the domain word is `answered`,
+ * and they are not the same set.)
+ *
+ * A photo answer carries answer_text NULL with attempt_image rows, so it is NOT
+ * detectable via answer_text — skip_reason is the only field that separates the
+ * three cases in one predicate.
+ *
+ * RLS: `attempt` is tenant-scoped + FORCE RLS and this runs inside the caller's
+ * board-scoped tx, so the subquery sees only this board's rows. That is wanted —
+ * an attempt in another board must not retire a question here.
+ */
+export function unansweredExpr(appUserId: string) {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM ${attempt} a
+     WHERE a.question_id = ${question.id}
+       AND a.app_user_id = ${appUserId}
+       AND a.skip_reason IS NULL
+  )`;
+}
+
+/**
+ * Slice NEWONLY — what Practice will actually SERVE: visible AND not yet
+ * answered. Founder ruling 2026-08-05: re-authoring into a sub_topic the student
+ * has already worked must surface only the NEW questions, never replay the
+ * finished ones. Before this, `startSession` re-froze the whole approved set on
+ * every new session, so Monday's two answered questions came back on Wednesday
+ * at currentIndex 0.
+ *
+ * Still ONE predicate for the two callers (see above) — `listAvailability` now
+ * composes the same two pieces rather than duplicating them.
+ */
+export function availableQuestionWhere(appUserId: string, subTopicId?: string) {
+  return and(visibleQuestionWhere(appUserId, subTopicId), unansweredExpr(appUserId));
+}
+
+/**
  * Slice AVAIL — per-sub_topic count of questions this caller can actually
- * practise. SPARSE: only sub_topics with >=1 available question are returned, so
+ * practise. SPARSE: only sub_topics with >=1 VISIBLE question are returned, so
  * the payload stays small (the empty ones are the majority — the canonical bank
  * is still the seed stand-in). The FE treats "absent" as Coming-soon.
+ *
+ * Slice NEWONLY — TWO numbers, and the difference between them is the point.
+ * `count` is what Practice will serve (unanswered); `total` is everything
+ * visible. Sparseness deliberately keys on `total`, NOT on `count`: once the
+ * NEWONLY predicate exists, a sub_topic the student has FINISHED would otherwise
+ * drop out of this list entirely and the FE — which reads absence as
+ * "Coming soon" — would tell a student that work they just completed has not
+ * been written yet. count=0 with total>0 is the "done" state; absent still means
+ * genuinely unauthored.
  *
  * Read-only; runs inside the caller's board-scoped tx.
  */
 export async function listAvailability(
   tx: Tx,
   args: { appUserId: string },
-): Promise<{ subTopicId: string; count: number }[]> {
+): Promise<{ subTopicId: string; count: number; total: number }[]> {
   return await tx
     .select({
       subTopicId: question.subTopicId,
-      count: sql<number>`count(*)::int`,
+      // what Practice will serve right now — the NEWONLY predicate, as a FILTER
+      // rather than a WHERE so the row survives when it reaches zero.
+      count: sql<number>`count(*) FILTER (WHERE ${unansweredExpr(args.appUserId)})::int`,
+      // everything visible to this caller, answered or not.
+      total: sql<number>`count(*)::int`,
     })
     .from(question)
-    .where(availableQuestionWhere(args.appUserId))
+    .where(visibleQuestionWhere(args.appUserId))
     .groupBy(question.subTopicId);
 }
 

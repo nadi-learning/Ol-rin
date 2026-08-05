@@ -41,6 +41,15 @@
   font-size: 14px;
   margin: 0 0 14px;
 }
+/* Slice NEWONLY — the finished-topics line. Quieter than .prac-note on purpose:
+   this is a progress statement, not something the student must act on, and it
+   sits directly above the Coming-soon banner it exists to be distinguished
+   from. */
+.prac-done-note {
+  color: var(--muted, #667085);
+  font-size: 13px;
+  margin: 4px 0 14px;
+}
 .prac-error {
   color: #b42318;
   font-size: 14px;
