@@ -79,6 +79,8 @@
     "probe:assignment": "bun scripts/probe_assignment.ts",
     "probe:assignonapprove": "bun scripts/probe_assign_on_approve.ts",
     "probe:mixed": "bun scripts/probe_mixed_delivery.ts",
+    "probe:qauth": "bun scripts/probe_qauth_context.ts",
+    "probe:qscope": "bun scripts/probe_qauth_scope.ts",
     "probe:moveboard": "bun scripts/probe_move_student_board.ts",
     "probe:availability": "bun scripts/probe_practice_availability.ts",
     "probe:report": "bun scripts/probe_report_signoff.ts",

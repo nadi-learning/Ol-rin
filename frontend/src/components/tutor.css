@@ -3279,6 +3279,36 @@
   color: var(--primary, #2f63ff);
   font-size: 12px;
 }
+
+/* Slice QAUTH-B, item 11 — the scheduler-driven sub-topic scope picker.
+   Reuses .tut-launch-chopt/.tut-launch-chmark wholesale; only the hint line, the
+   taller list and the due tags are new. */
+.tut-launch-field-col { display: block; }
+.tut-launch-subhint {
+  margin-bottom: 8px;
+  color: var(--ink-muted, #6b6f80);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.tut-launch-sublist { max-height: 260px; }
+.tut-launch-subtag {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary, #2f63ff) 12%, transparent);
+  color: var(--primary, #2f63ff);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+/* Due but below the ≥L3-both-axes interleave gate: offered, never pre-ticked.
+   Amber rather than the primary so "due" and "due but don't mix it" cannot be
+   mistaken for each other at a glance. */
+.tut-launch-subtag.is-warn {
+  background: color-mix(in srgb, #d97706 14%, transparent);
+  color: #b45309;
+}
 .tut-launch-actions {
   display: flex;
   align-items: center;

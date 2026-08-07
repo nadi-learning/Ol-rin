@@ -1521,6 +1521,17 @@ export const authoringChat = pgTable("authoring_chat", {
   // polarity: a missing value must never silently mean "spend N sub-topics of AI".
   authorGrain: text("author_grain"), // 'one' | 'several' | null (legacy → one)
   chapterIds: jsonb("chapter_ids"), // string[] of selected chapter ids
+  // Slice QAUTH-B (item 11): the sub-topic set the TUTOR picked at launch, with
+  // the scheduler's due/interleave-eligible ones pre-ticked. Mirrors chapterIds
+  // exactly — jsonb string[], nullable, legacy rows read null.
+  //
+  // ⚠️ NOT the same as `subTopicId` below. That one is the resolved AUTHORING
+  // FOCUS, written by proposeTarget mid-conversation (one sub-topic, the thing
+  // about to be authored). This is the SCOPE the chat may choose within, fixed
+  // before the first turn. Null → the scope falls back to every sub-topic of
+  // `chapterIds`, which is exactly today's behaviour, so a pre-slice chat and a
+  // blocked chat that never used the picker both keep working unchanged.
+  subTopicIds: jsonb("sub_topic_ids"), // string[] of tutor-picked sub-topic ids
   subTopicId: uuid("sub_topic_id").references(() => subTopic.id), // resolved focus; set by proposeTarget
   vendor: text("vendor").notNull(), // per-thread lock: 'claude_cli' | 'gemini_api'
   messages: jsonb("messages").notNull().default([]), // ChatMessage[]

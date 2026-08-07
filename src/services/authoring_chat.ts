@@ -72,7 +72,16 @@ import {
   spawnAuthoringWorker,
 } from "./authoring_worker";
 import { SubTopicNotFoundError } from "./assessment";
+import {
+  normalizePlannedKind,
+  PALETTE_INDEX,
+  renderInsightBlocks,
+  renderServedSummary,
+} from "./authoring_grounding";
 import { assertTutorsStudent, getStudentMastery } from "./tutor";
+// Slice QAUTH-B (item 9/11) — the chat reads the spiral scheduler. No cycle:
+// scheduler.ts imports only drizzle + ./tutor.
+import { computeDueQueue } from "./scheduler";
 import { jsonlExists } from "./cli_session";
 import { withBoard } from "../db/with-board";
 import { enqueueAuthoring, type AuthoringPhase } from "../worker/queue";
@@ -181,6 +190,22 @@ function chatChapterIds(row: {
     : [];
   if (many.length > 0) return many;
   return row.chapterId ? [row.chapterId] : [];
+}
+
+/**
+ * Slice QAUTH-B (item 11) — the sub-topic SCOPE the tutor picked at launch.
+ *
+ * Empty is a real and common answer, and it means "no picker was used": legacy
+ * rows, blocked chats, and any chat started before this slice. Every reader
+ * treats empty as "the whole of `chatChapterIds`", so the fallback is today's
+ * behaviour rather than an empty scope — a chat that accidentally read as
+ * scope-of-nothing would ground the model on no sub-topics at all and quietly
+ * stop being able to author.
+ */
+function chatSubTopicIds(row: { subTopicIds: unknown }): string[] {
+  return Array.isArray(row.subTopicIds)
+    ? row.subTopicIds.filter((x): x is string => typeof x === "string")
+    : [];
 }
 
 // The conversational agent's role. STATIC (no per-student data) so the resume
@@ -393,125 +418,46 @@ function isStaleInteractionError(err: unknown): boolean {
 
 // Slice INSIGHT-GROUND (assess-walkthrough item 11) — THE INSIGHT LAYER.
 //
-// Everything a tutor records ABOVE sub-topic grain — the chapter view, the
-// subject view, the student's standing on the subject-wide horizontal skills —
-// is written by Stage-2b synthesis at finalize and was then read by nobody here.
-// `assembleGrounding` built its entire picture from certified sub-topic mastery
-// plus the last 20 Stage-1 observations, so authoring-level guidance went unread
-// by the one surface that generates the student's NEXT questions.
-//
-// Each block sits at the grain its TABLE is keyed on (founder ruling, S181):
-// chapter insight follows this chat's chapter scope exactly as CHAPTER COVERAGE
-// and CHAPTER BREAKDOWN do; `student_subject_insight` and `horizontal_skill_state`
-// are per-SUBJECT rows, so they resolve to the subject(s) those chapters belong
-// to. Sibling chapters are deliberately NOT walked: the synthesis contract puts
-// subject-wide claims in the SUBJECT insight, which is carried here in full.
-export type InsightGroundingRows = {
-  /** Chapter-grain insight for THIS chat's chapters, in chapter order. */
-  chapters: Array<{ chapterName: string; insight: string }>;
-  /** Subject-grain insight for the subject(s) those chapters belong to. */
-  subjects: Array<{ subjectName: string; insight: string }>;
-  horizontals: Array<{
-    subjectName: string;
-    slug: string;
-    /** NULL = never observed. NOT level 1 — see below. */
-    level: number | null;
-    prose: string;
-  }>;
-  /**
-   * Slice AUTHOR-PREF (item 10) — the TUTOR'S OWN instruction on how to teach
-   * this student, per CHAPTER (D-CHAPTER-PREF, S185). Unlike the three above it
-   * is not synthesis output: a human wrote it by hand and owns it. Only chapters
-   * with a note appear; an unwritten chapter is absent, never an empty line.
-   *
-   * `chapterName` is NOT optional and is NOT gated on `multiSubject`: these rows
-   * span the whole subject, so most of them describe a chapter this chat is not
-   * about. Dropping the name would present a note written about Thermodynamics
-   * as though it were about the chapter being authored.
-   */
-  preferences: Array<{ subjectName: string; chapterName: string; preference: string }>;
-  /** Name the subject per line only when the chat actually spans several. */
-  multiSubject: boolean;
-};
-
-/**
- * Render the insight layer into grounding sections. PURE — no tx, no AI — so the
- * rule it encodes can be gated deterministically instead of through a
- * nondeterministic model read (M101: assert the rule, not an instance of it).
- *
- * The rule that matters: a horizontal with a NULL level renders "not yet
- * observed", NEVER "L1". Null means the student was never given a chance to show
- * the skill — a coverage gap, not a weakness (`horizontal_skill_state.level`'s
- * own bound, and the null≠1 note item 8 put in front of the tutor). Collapsing
- * the two would tell the author to drill a weakness the student never displayed.
- */
-export function renderInsightBlocks(rows: InsightGroundingRows): string[] {
-  const out: string[] = [];
-
-  if (rows.chapters.length > 0) {
-    out.push(
-      "",
-      "STUDENT INSIGHT — CHAPTER VIEW (the tutor's standing view of this student in this chat's chapter(s), written at Stage-2 certification. This is a HUMAN-REVIEWED judgement about the student and outranks any inference you would draw from the observation list):",
-      rows.chapters.map((c) => `  - ${c.chapterName}: ${c.insight}`).join("\n"),
-    );
-  }
-
-  if (rows.subjects.length > 0) {
-    out.push(
-      "",
-      "STUDENT INSIGHT — SUBJECT VIEW (the same, one level up: how this student works across the whole subject, including chapters outside this chat. Use it for the shape of a question — framing, scaffolding, what to assume — not for what to test):",
-      rows.subjects.map((s) => `  - ${s.subjectName}: ${s.insight}`).join("\n"),
-    );
-  }
-
-  if (rows.horizontals.length > 0) {
-    out.push(
-      "",
-      "HORIZONTAL SKILLS (subject-wide skills that cut across chapters — 1–5, pooled from every sitting. \"not yet observed\" means the student has never been given a chance to show it: a coverage GAP, never a weakness, and never the same as level 1):",
-      rows.horizontals
-        .map(
-          (h) =>
-            `  - ${h.slug}${rows.multiSubject ? ` (${h.subjectName})` : ""}: ` +
-            `${h.level == null ? "not yet observed" : `L${h.level}`} — ${h.prose}`,
-        )
-        .join("\n"),
-    );
-  }
-
-  // Item 10. Last of the four, i.e. closest to the task the author is about to
-  // do — and the only one written BY A HUMAN, which is why it is framed as an
-  // instruction rather than as evidence. It says how to SHAPE the question; it
-  // never says what to test (that stays with mastery + the coverage map), so a
-  // preference must not talk the author out of an under-covered sub-topic.
-  //
-  // Every line carries its chapter name unconditionally (D-CHAPTER-PREF): the
-  // read spans the subject, so most lines are about a DIFFERENT chapter than the
-  // one being authored, and the header above tells the model how to weigh that.
-  if (rows.preferences.length > 0) {
-    out.push(
-      "",
-      "HOW TO TEACH THIS STUDENT (written BY THE TUTOR, by hand, about this specific student — not inferred by any model. Treat it as an INSTRUCTION about the FORM of what you author: question style, framing, what has been landing. It does NOT change WHAT to test — coverage and mastery decide that. Where it conflicts with your own inference, the tutor is right. Each note is labelled with the CHAPTER the tutor wrote it against — that chapter is often NOT the one you are authoring, because a tutor's read on how a student learns carries across a subject. Apply a note from another chapter as general guidance; apply one labelled with your own chapter as specific):",
-      rows.preferences
-        .map(
-          (p) =>
-            `  - ${rows.multiSubject ? `${p.subjectName} · ` : ""}${p.chapterName}: ${p.preference}`,
-        )
-        .join("\n"),
-    );
-  }
-
-  return out;
-}
+// MOVED to ./authoring_grounding in Slice QAUTH-A. The scoped WORKER now renders
+// the same four blocks (items 1+10), and this file already imports the worker —
+// so a worker→chat import to reach the renderer would close a cycle. Re-exported
+// here so existing importers (probe_authoring_chat) keep working unchanged; the
+// same move question_access.ts made in Slice MIXED.
+export { renderInsightBlocks };
+export type { InsightGroundingRows } from "./authoring_grounding";
 
 /**
  * Build the student-grounding block for the chat's first (stitched) user turn.
  * Reuses the tutor read surface (getStudentMastery + the ownership guard) and a
  * recent-observations read. NEVER includes any answer key — observations carry
  * the AI's reasoning + levels only (the M11 boundary, same as the tutor surface).
+ *
+ * 🔑 Slice QAUTH-B (item 9) — THE CHAT NO LONGER CARRIES `topics.md`.
+ *
+ * It used to append every in-scope chapter's VERBATIM topics.md. Measured on the
+ * live cbse board that is 15k–35k tokens PER CHAPTER (Journey Inside the Atom
+ * 35,324; Quadratic Equations 32,981), so a two-chapter interleaved chat shipped
+ * ~68k tokens of breakdown — re-sent on EVERY turn, because Gemini never resumes
+ * (lastResumableSessionId below). In its place: the LOs of the in-scope
+ * sub-topics (~2k tokens for the same chapters, a ~90% cut) plus what the
+ * SCHEDULER says is due now.
+ *
+ * The trade is deliberate and is D-QAUTH-5's ruling: TRIM THE CHAT, NEVER THE
+ * WORKER. The chat's job is to CHOOSE which sub-topics to author; the worker's
+ * job is to WRITE, and it still receives its chapter's topics.md IN FULL
+ * (`authoring_worker.ts` basePrompt) precisely because craft §8 says the
+ * bounding contrast breaks the moment you hand an author a slice. Nothing here
+ * may be reused to trim the worker.
  */
 export async function assembleGrounding(
   tx: Tx,
-  args: { tutorUserId: string; studentId: string; chapterIds?: string[] },
+  args: {
+    tutorUserId: string;
+    studentId: string;
+    chapterIds?: string[];
+    /** Slice QAUTH-B (item 11): the tutor's picked scope. Empty = whole chapters. */
+    subTopicIds?: string[];
+  },
 ): Promise<string> {
   const mastery = await getStudentMastery(tx, args); // asserts ownership
 
@@ -697,91 +643,207 @@ export async function assembleGrounding(
   // — Slice QA3-d). When more than one chapter is in scope, each line is prefixed
   // with its chapter name so cross-chapter targets are unambiguous.
   const groundChapterIds = args.chapterIds ?? [];
+
+  // Slice QAUTH-B (item 11) — the tutor's picked sub-topic scope. Hoisted out of
+  // the coverage block below because THREE sections now read the same scope
+  // (coverage, the LOs that replace topics.md, and the due queue), and computing
+  // it three times is how they drift apart.
+  //
+  // Empty = no picker was used (blocked chats, legacy rows, pre-slice chats) and
+  // the scope is every sub-topic of the chosen chapters — today's behaviour.
+  const pickedSubTopicIds = new Set((args.subTopicIds ?? []).filter(Boolean));
+  const allScopeRows =
+    groundChapterIds.length > 0
+      ? await tx
+          .select({
+            chapterName: chapter.name,
+            chapterOrdinal: chapter.ordinal,
+            topicName: topic.name,
+            topicOrdinal: topic.ordinal,
+            subTopicId: subTopic.id,
+            subTopicName: subTopic.name,
+            subTopicOrdinal: subTopic.ordinal,
+          })
+          .from(subTopic)
+          .innerJoin(topic, eq(topic.id, subTopic.topicId))
+          .innerJoin(chapter, eq(chapter.id, topic.chapterId))
+          .where(inArray(topic.chapterId, groundChapterIds))
+          .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal))
+      : [];
+
+  // The picked set NARROWS what the chat is shown, so it proposes inside the
+  // tutor's choice instead of anywhere in the chapter.
+  //
+  // ⚠️ Deliberately NOT narrowed: proposeTarget's sub_topic allowlist, which
+  // stays on the whole chapter (chatChapterIds). The two disagree only in the
+  // benign direction — the allowlist is a SUPERSET of what the model can see, so
+  // every proposal it can make still validates. Narrowing both would make a
+  // picker bug a hard authoring failure instead of a wider-than-ideal allowlist.
+  const scopeRows =
+    pickedSubTopicIds.size > 0
+      ? allScopeRows.filter((r) => pickedSubTopicIds.has(r.subTopicId))
+      : allScopeRows;
+  const scopeNarrowed = pickedSubTopicIds.size > 0 && scopeRows.length < allScopeRows.length;
+
   const coverageLines =
     groundChapterIds.length > 0
       ? await (async () => {
-          const rows = await tx
-            .select({
-              chapterName: chapter.name,
-              chapterOrdinal: chapter.ordinal,
-              topicName: topic.name,
-              topicOrdinal: topic.ordinal,
-              subTopicId: subTopic.id,
-              subTopicName: subTopic.name,
-              subTopicOrdinal: subTopic.ordinal,
-            })
-            .from(subTopic)
-            .innerJoin(topic, eq(topic.id, subTopic.topicId))
-            .innerJoin(chapter, eq(chapter.id, topic.chapterId))
-            .where(inArray(topic.chapterId, groundChapterIds))
-            .orderBy(asc(chapter.ordinal), asc(topic.ordinal), asc(subTopic.ordinal));
+          const rows = scopeRows;
 
           if (rows.length === 0) return null;
 
+          // Slice QAUTH-A / D-QAUTH-4 — the counts split three ways instead of
+          // one. Previously this was a single `count(*)` over everything visible
+          // to the student INCLUDING unapproved drafts, so the chat said "3
+          // authored" where the worker (which drops drafts, item 3) sees 1 — the
+          // exact disagreement D-QAUTH-3 is written to prevent.
+          //
+          // `answered`/`skipped` are the CHAT's compact copy of the worker's
+          // served history: counts, not the annotated list. The chat re-sends its
+          // whole grounding on EVERY turn (Gemini never resumes,
+          // lastResumableSessionId below), so it pays this per turn while the
+          // worker pays once. Three states, because "authored" and "the student
+          // has met it" are different facts and collapsing them is what made the
+          // author treat never-served questions as covered ground.
+          const stIds = rows.map((r) => r.subTopicId);
+          const visible = or(
+            isNull(question.targetStudentId),
+            eq(question.targetStudentId, args.studentId),
+          );
           const counts = await tx
             .select({
               subTopicId: question.subTopicId,
-              n: sql<number>`count(*)::int`,
+              approved: sql<number>`count(*) filter (where ${question.status} = 'approved')::int`,
+              drafts: sql<number>`count(*) filter (where ${question.status} <> 'approved')::int`,
+              answered: sql<number>`count(*) filter (where ${question.status} = 'approved' and exists (
+                select 1 from attempt a
+                 where a.question_id = ${question.id}
+                   and a.app_user_id = ${args.studentId}
+                   and a.skip_reason is null))::int`,
+              skipped: sql<number>`count(*) filter (where ${question.status} = 'approved' and not exists (
+                select 1 from attempt a
+                 where a.question_id = ${question.id}
+                   and a.app_user_id = ${args.studentId}
+                   and a.skip_reason is null) and exists (
+                select 1 from attempt a
+                 where a.question_id = ${question.id}
+                   and a.app_user_id = ${args.studentId}))::int`,
             })
             .from(question)
-            .where(
-              and(
-                inArray(
-                  question.subTopicId,
-                  rows.map((r) => r.subTopicId),
-                ),
-                or(
-                  isNull(question.targetStudentId),
-                  eq(question.targetStudentId, args.studentId),
-                ),
-              ),
-            )
+            .where(and(inArray(question.subTopicId, stIds), visible))
             .groupBy(question.subTopicId);
-          const byId = new Map(counts.map((c) => [c.subTopicId, c.n]));
+          const byId = new Map(counts.map((c) => [c.subTopicId, c]));
 
           const multi = groundChapterIds.length > 1;
           return rows
             .map((r) => {
-              const n = byId.get(r.subTopicId) ?? 0;
+              const c = byId.get(r.subTopicId);
+              const approved = c?.approved ?? 0;
+              const drafts = c?.drafts ?? 0;
+              const answered = c?.answered ?? 0;
+              const skipped = c?.skipped ?? 0;
+              const summary = renderServedSummary({
+                answered,
+                skipped,
+                unserved: approved - answered - skipped,
+              });
               const tag =
-                n === 0
+                approved === 0
                   ? "NONE authored yet"
-                  : `${n} question${n === 1 ? "" : "s"} authored`;
+                  : `${approved} approved (${summary})`;
+              const pending = drafts > 0 ? `, ${drafts} awaiting your review` : "";
               const path = multi
                 ? `${r.chapterName} › ${r.topicName} › ${r.subTopicName}`
                 : `${r.topicName} › ${r.subTopicName}`;
-              return `  - ${path}: ${tag}`;
+              return `  - ${path}: ${tag}${pending}`;
             })
             .join("\n");
         })()
       : null;
 
-  // Raw topics.md (D-QA3-5): the VERBATIM authored breakdown for the chat's
-  // chapter(s) — the full pedagogical map (sub-topics, LOs, misconceptions,
-  // teaching notes) the tutor decides against. Stored at
-  // chapter.metadata->>'topicsMd' by the admin ingest (QA3-b, the sole write
-  // path); null for chapters seeded via content-pull, in which case this section
-  // is omitted and the AI falls back to the CHAPTER COVERAGE sub-topic names.
-  const topicsMdBlock =
-    groundChapterIds.length > 0
+  // Slice QAUTH-B (item 9) — WHAT REPLACED topics.md.
+  //
+  // The LEARNING OBJECTIVES of the in-scope sub-topics. This is the part of the
+  // breakdown the chat actually needs to choose between sub-topics: what each one
+  // covers, per axis. Measured on cbse it is ~2k tokens where the same chapters'
+  // topics.md was 15k–35k EACH. The prose map (misconceptions, teaching notes,
+  // worked examples, the bounding contrast) goes on reaching the WORKER in full —
+  // D-QAUTH-5, and craft §8 is explicit that authoring off a slice is what breaks.
+  const loLines =
+    scopeRows.length > 0
       ? await (async () => {
-          const rows = await tx
+          const stIds = scopeRows.map((r) => r.subTopicId);
+          const los = await tx
             .select({
-              chapterName: chapter.name,
-              chapterOrdinal: chapter.ordinal,
-              topicsMd: sql<string | null>`${chapter.metadata} ->> 'topicsMd'`,
+              subTopicId: learningObjective.subTopicId,
+              axis: learningObjective.axis,
+              code: learningObjective.code,
+              description: learningObjective.description,
             })
-            .from(chapter)
-            .where(inArray(chapter.id, groundChapterIds))
-            .orderBy(asc(chapter.ordinal));
-          const withMd = rows.filter((r) => r.topicsMd && r.topicsMd.trim());
-          if (withMd.length === 0) return null;
+            .from(learningObjective)
+            .where(inArray(learningObjective.subTopicId, stIds))
+            .orderBy(asc(learningObjective.axis), asc(learningObjective.code));
+          if (los.length === 0) return null;
+
+          const bySt = new Map<string, { axis: string; code: string | null; description: string }[]>();
+          for (const lo of los) {
+            const list = bySt.get(lo.subTopicId) ?? [];
+            list.push({ axis: lo.axis, code: lo.code, description: lo.description });
+            bySt.set(lo.subTopicId, list);
+          }
+
           const multi = groundChapterIds.length > 1;
-          return withMd
-            .map((r) => (multi ? `----- ${r.chapterName} -----\n${r.topicsMd}` : r.topicsMd!))
-            .join("\n\n");
+          const blocks: string[] = [];
+          for (const r of scopeRows) {
+            const list = bySt.get(r.subTopicId);
+            if (!list || list.length === 0) continue; // silent = no LOs on record
+            const path = multi
+              ? `${r.chapterName} › ${r.topicName} › ${r.subTopicName}`
+              : `${r.topicName} › ${r.subTopicName}`;
+            const body = list
+              .map((lo) => `      - [${lo.axis}]${lo.code ? ` ${lo.code}:` : ""} ${lo.description}`)
+              .join("\n");
+            blocks.push(`  ${path}\n${body}`);
+          }
+          return blocks.length > 0 ? blocks.join("\n") : null;
         })()
       : null;
+
+  // Slice QAUTH-B (item 9) — WHAT IS DUE NOW, straight from the scheduler.
+  //
+  // The chat has never read the scheduler: the tutor did the spacing arithmetic
+  // from memory while the system already knew the answer. `computeDueQueue` is
+  // the same computation the tutor's due-queue surface and the student's revision
+  // landing both run, so the chat cannot disagree with what the rest of the app
+  // says is owed.
+  //
+  // ⚠️ `computeDueQueue`, not `getDueQueue`: ownership is already asserted by
+  // getStudentMastery at the top of this function, and getDueQueue would re-run
+  // assertTutorsStudent on every turn for nothing.
+  const dueLines = await (async () => {
+    if (scopeRows.length === 0) return null;
+    const inScope = new Set(scopeRows.map((r) => r.subTopicId));
+    const groups = await computeDueQueue(tx, { studentId: args.studentId });
+    const items = groups
+      .flatMap((g) => g.items)
+      .filter((it) => inScope.has(it.subTopicId));
+    if (items.length === 0) return null;
+    return items
+      .map((it) => {
+        const why =
+          it.climbDue && it.climbDue <= it.effectiveDue ? "climb" : "retention";
+        const when =
+          it.overdueDays === 0 ? "due today" : `${it.overdueDays} day(s) overdue`;
+        // interleaveEligible = both axes ≥3, the SAME gate the assignment
+        // composer uses to decide what may be mixed. Surfaced so the chat can
+        // tell a genuine mixed candidate from one that must be served alone.
+        const mix = it.interleaveEligible
+          ? "safe to mix"
+          : "NOT safe to mix yet (needs ≥L3 on both axes)";
+        return `  - ${it.chapterName} › ${it.subTopicName}: ${when} (${why}) — ${mix}`;
+      })
+      .join("\n");
+  })();
 
   return [
     "===== STUDENT GROUNDING (read this before responding) =====",
@@ -795,18 +857,28 @@ export async function assembleGrounding(
     // curriculum map (coverage + breakdown) — it describes who you are authoring
     // for, not what there is to author.
     ...insightSections,
+    ...(dueLines
+      ? [
+          "",
+          "DUE NOW (what the SPIRAL SCHEDULER says is owed today for the sub-topics in scope — the same computation the tutor's due-queue and the student's revision landing read. Most-overdue first. Prefer these when choosing what to author; \"safe to mix\" is the ≥L3-on-both-axes gate that decides whether a sub-topic may go into an interleaved set at all):",
+          dueLines,
+        ]
+      : []),
     ...(coverageLines
       ? [
           "",
-          "CHAPTER COVERAGE (every sub-topic in this chat's chapter(s) + how many questions already exist for THIS student — canonical + private. Use this to answer what's left to author):",
+          (scopeNarrowed
+            ? "CHAPTER COVERAGE — NARROWED TO THE SUB-TOPICS THE TUTOR PICKED for this chat (they chose this scope in the launcher; author within it and say so if you think something outside it is needed). For each: "
+            : "CHAPTER COVERAGE (every sub-topic in this chat's chapter(s) + ") +
+            "how many APPROVED questions already exist for THIS student — canonical + private — and how many of those the student has actually MET. \"authored\" is not \"covered\": a question marked not-yet-served has taught this student nothing, and a skipped one was read but not answered. Use this to answer what's left to author):",
           coverageLines,
         ]
       : []),
-    ...(topicsMdBlock
+    ...(loLines
       ? [
           "",
-          "CHAPTER BREAKDOWN (the VERBATIM authored topics.md — the full pedagogical map: sub-topics, learning objectives, misconceptions, and teaching notes. This is the AUTHORITATIVE source for what each sub-topic actually covers and where students struggle; ground your authoring decisions in it, not in general knowledge):",
-          topicsMdBlock,
+          "LEARNING OBJECTIVES for the sub-topics above, per axis — what each one actually covers. This is your map for CHOOSING what to author. You are NOT being given the chapter's full prose breakdown (topics.md): the WORKER that writes each question receives it in full, which is where the misconceptions, teaching notes and worked examples are needed. Choose the sub-topic and say what you want probed; do not try to write the question's content from these lines alone:",
+          loLines,
         ]
       : []),
     "",
@@ -838,6 +910,14 @@ export type ChatView = {
   // type. Required means the compiler enumerates every builder; a builder that
   // forgets cannot compile.
   authorGrain: "one" | "several";
+  // Slice QAUTH-B (item 11): the sub-topic scope the tutor picked at launch.
+  // REQUIRED for the same reason `authorGrain` above is — the FE does
+  // `setChat(response)` after every turn, so an optional field that one builder
+  // forgets silently empties the scope mid-thread and the chat starts grounding
+  // on the whole chapter again. `[]` is the honest "no picker was used" value
+  // and every reader falls back to chapterIds for it; it must be written, not
+  // defaulted by omission.
+  subTopicIds: string[];
   subTopicId: string | null; // resolved authoring focus (set by proposeTarget)
   vendor: VendorChoice;
   messages: ChatMessage[];
@@ -934,6 +1014,11 @@ export async function startChat(
     /** SEVERAL-THREAD: the transcript to seed this thread with, when it was
      *  created by flipping the grain on an existing chat. */
     carryMessages?: ChatMessage[];
+    /** Slice QAUTH-B (item 11): the sub-topic scope the tutor ticked in the
+     *  launcher, pre-filled from the scheduler's due queue. Omitted / empty =
+     *  no picker was used, and the scope falls back to every sub-topic of the
+     *  chosen chapters (today's behaviour). */
+    subTopicIds?: string[];
   },
 ): Promise<ChatView> {
   await assertTutorsStudent(tx, args.tutorUserId, args.studentId);
@@ -964,6 +1049,31 @@ export async function startChat(
     for (const cid of storedChapterIds) {
       if (!visibleIds.has(cid)) throw new ChapterNotInBoardError(cid);
     }
+  }
+
+  // Slice QAUTH-B (item 11) — the picked sub-topics must live INSIDE the chosen
+  // chapters. RLS already bounds them to the board, but not to this chat: without
+  // this a launcher bug (or a hand-made request) could scope a Maths chat to a
+  // Physics sub-topic, and the grounding would then hand the model a scope its
+  // own CHAPTER COVERAGE block never mentions. Dropped rather than thrown —
+  // the picker is pre-filled from the scheduler, which reads the whole spiral,
+  // so a due sub-topic outside the chosen chapters is an ordinary race (the
+  // tutor narrowed the chapters after ticking), not a caller error.
+  let storedSubTopicIds: string[] = [];
+  const requestedSubTopicIds = [...new Set((args.subTopicIds ?? []).filter(Boolean))];
+  if (requestedSubTopicIds.length > 0 && storedChapterIds.length > 0) {
+    const inScope = await tx
+      .select({ id: subTopic.id })
+      .from(subTopic)
+      .innerJoin(topic, eq(topic.id, subTopic.topicId))
+      .where(
+        and(
+          inArray(subTopic.id, requestedSubTopicIds),
+          inArray(topic.chapterId, storedChapterIds),
+        ),
+      );
+    const ok = new Set(inScope.map((s) => s.id));
+    storedSubTopicIds = requestedSubTopicIds.filter((s) => ok.has(s));
   }
 
   // 🔑 SEVERAL-THREAD — STRIP THE VENDOR SESSION IDENTITY FROM CARRIED MESSAGES.
@@ -998,6 +1108,7 @@ export async function startChat(
       authorGrain: args.authorGrain ?? "one",
       chapterId: storedChapterId,
       chapterIds: storedChapterIds,
+      subTopicIds: storedSubTopicIds,
       vendor: args.vendor,
       messages: seeded,
     })
@@ -1007,6 +1118,7 @@ export async function startChat(
     studentId: created!.studentId,
     chapterId: created!.chapterId ?? null,
     chapterIds: chatChapterIds(created!),
+    subTopicIds: chatSubTopicIds(created!),
     mode: (created!.mode as AuthoringMode) ?? "blocked",
     authorGrain: grainOf(created!),
     subTopicId: created!.subTopicId ?? null,
@@ -1042,6 +1154,7 @@ export async function getChat(
     studentId: row.studentId,
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
+    subTopicIds: chatSubTopicIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
     authorGrain: grainOf(row),
     subTopicId: row.subTopicId ?? null,
@@ -1194,6 +1307,7 @@ function buildDraftingView(
     studentId: row.studentId,
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
+    subTopicIds: chatSubTopicIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
     authorGrain: grainOf(row),
     subTopicId: chosen.subTopicId,
@@ -1278,6 +1392,7 @@ function buildProposedSetView(
     studentId: row.studentId,
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
+    subTopicIds: chatSubTopicIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
     authorGrain: grainOf(row),
     subTopicId: row.subTopicId ?? null,
@@ -1377,6 +1492,7 @@ export async function sendTurn(
       studentId: row.studentId,
       chapterId: row.chapterId ?? null,
       chapterIds: chatChapterIds(row),
+      subTopicIds: chatSubTopicIds(row),
       mode: (row.mode as AuthoringMode) ?? "blocked",
       authorGrain: grainOf(row),
       subTopicId: row.subTopicId ?? null,
@@ -1392,6 +1508,7 @@ export async function sendTurn(
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
     chapterIds: chatChapterIds(row),
+    subTopicIds: chatSubTopicIds(row),
   });
 
   const buildStitched = (): string => {
@@ -1694,6 +1811,7 @@ export async function sendTurn(
     studentId: row.studentId,
     chapterId: row.chapterId ?? null,
     chapterIds: chatChapterIds(row),
+    subTopicIds: chatSubTopicIds(row),
     mode: (row.mode as AuthoringMode) ?? "blocked",
     authorGrain: grainOf(row),
     subTopicId: row.subTopicId ?? null,
@@ -2354,6 +2472,7 @@ export async function proposeTarget(
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
     chapterIds: chatChapterIds(row),
+    subTopicIds: chatSubTopicIds(row),
   });
   const history = parseMessages(row.messages);
   const convo = history
@@ -2468,7 +2587,9 @@ const geminiProposedItems = {
   },
 } as const;
 
-const PROPOSE_SET_SYSTEM = `You help a tutor assemble an INTERLEAVED practice set for a specific student — a MIX of sub-topics (from possibly different chapters) that are worth practising together so the student must DISCRIMINATE between them, not just drill one skill. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics across the chosen chapters. Pick 2–${PROPOSE_SET_MAX} sub-topics that (a) target genuine weaknesses and (b) are close enough to be confusable / benefit from being mixed. For EACH pick, list the exact ITEMS you will write — one entry per question, in the order you'd write them, each with its axis, the conceptual-question KIND (from the palette), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count, so keep sets short (1–4 per sub-topic — a mix is for contrast, not volume; 2 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why this MIX.`;
+const PROPOSE_SET_SYSTEM = `You help a tutor assemble an INTERLEAVED practice set for a specific student — a MIX of sub-topics (from possibly different chapters) that are worth practising together so the student must DISCRIMINATE between them, not just drill one skill. You are given the student's grounding (two-axis mastery + Stage-1 observations), the conversation so far, and a NUMBERED list of candidate sub-topics across the chosen chapters. Pick 2–${PROPOSE_SET_MAX} sub-topics that (a) target genuine weaknesses and (b) are close enough to be confusable / benefit from being mixed. For EACH pick, list the exact ITEMS you will write — one entry per question, in the order you'd write them, each with its axis, the conceptual-question KIND (from the palette below), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count, so keep sets short (1–4 per sub-topic — a mix is for contrast, not volume; 2 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why this MIX.
+
+${PALETTE_INDEX}`;
 
 // CHAT-SET-ROUTE (S179 §8 finding): `items` was `.min(1)` PER PICK, so a single
 // malformed pick threw at .parse() and — since proposeAuthoringSet maps only
@@ -2559,6 +2680,20 @@ export function clampSetCount(count: number, intent: ProposeSetIntent = "discrim
  * and renumber 1..N. Pure — so the "count is DERIVED from items.length, capped, and
  * n is sequential" rule is assertable WITHOUT an AI call (same reason clampSetCount
  * is pure; a probe that only sees whatever the model proposed passes vacuously).
+ *
+ * Slice QAUTH-A / D-QAUTH-8: this IS the parse boundary, so the `kind` allowlist
+ * lands here. Every path from a planner proposal to a worker instruction runs
+ * through this function, and it runs BEFORE the tutor's consent card is rendered —
+ * so the card shows the corrected kind rather than one the drafter will silently
+ * be told something else about. A LOCKED (POE) or unrecognised kind is
+ * NEUTRALISED to KIND_UNPINNED, never rejected: throwing would 500 an entire
+ * proposal over one bad pick, which is the outlier this resolver was already
+ * fixed away from once (S179 §8).
+ *
+ * ⚠️ `lo` is deliberately NOT filled here and cannot be — the master holds no LOs
+ * at sub-topic grain, which is precisely the planning asymmetry D-QAUTH-10 exists
+ * to close. A fan-out item reaches the worker with no LO named; a single-mode item
+ * (planned BY the worker) carries one.
  */
 export function clampProposedItems(
   rawItems: z.infer<typeof proposedItemSchema>[],
@@ -2566,7 +2701,7 @@ export function clampProposedItems(
 ): WorkerPlanItem[] {
   return rawItems
     .slice(0, clampSetCount(rawItems.length, intent))
-    .map((it, i) => ({ n: i + 1, ...it }));
+    .map((it, i) => ({ ...it, n: i + 1, kind: normalizePlannedKind(it.kind) }));
 }
 
 // NOTE: the set-size cap is PROPOSE_SET_MAX (5) for BOTH intents — founder ruled
@@ -2579,7 +2714,9 @@ Pick the sub-topics to author, in this order of preference:
 1. Any the tutor has NAMED or clearly pointed at in the conversation — honour those first.
 2. Where the tutor has not been specific, fill toward the genuine weaknesses and the least-covered sub-topics (thin or no observations, lower mastery).
 
-Pick 2–${PROPOSE_SET_MAX} sub-topics (never more than ${PROPOSE_SET_MAX}). For EACH, list the exact ITEMS you will write — one entry per question, in order, each with its axis, the conceptual-question KIND (from the palette), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count (1–${PROPOSE_COVERAGE_COUNT_MAX}; ~3 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why THESE sub-topics.`;
+Pick 2–${PROPOSE_SET_MAX} sub-topics (never more than ${PROPOSE_SET_MAX}). For EACH, list the exact ITEMS you will write — one entry per question, in order, each with its axis, the conceptual-question KIND (from the palette below), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY in words. The NUMBER of items IS the count (1–${PROPOSE_COVERAGE_COUNT_MAX}; ~3 is a sensible default). You MUST pick by the list's number — never invent a sub-topic; never repeat a number. Return ONLY {picks:[{choice,items:[{axis,kind,intent,difficulty}]}], rationale} where rationale is one sentence on why THESE sub-topics.
+
+${PALETTE_INDEX}`;
 
 const geminiProposeCoverageSchema = {
   type: Type.OBJECT,
@@ -2676,6 +2813,7 @@ export async function proposeTargetSet(
     tutorUserId: args.tutorUserId,
     studentId: row.studentId,
     chapterIds: scopeChapterIds,
+    subTopicIds: chatSubTopicIds(row),
   });
   const history = parseMessages(row.messages);
   const convo = history
@@ -2881,7 +3019,24 @@ export async function authorSetFromChat(
     // approved exactly those N items, so drafting a different N would draft
     // something never approved (single-mode's approveAuthoringPlan rule). Only a
     // plan-less target honours the caller's raw count.
-    const plan = t.plan && t.plan.items.length > 0 ? t.plan : null;
+    //
+    // Slice QAUTH-A / D-QAUTH-8: re-apply the kind allowlist HERE too. This plan
+    // came from `proposeTargetSet` (the MASTER planner, which does not hold the
+    // palette doc) and round-tripped through the client on the way back, so
+    // clamping it once at propose time does not bind what actually arrives. The
+    // worker's own single-mode plans are deliberately NOT normalised anywhere —
+    // that component holds the full palette, so blanking a kind it named in its
+    // own words would discard good information rather than protect anything.
+    const plan =
+      t.plan && t.plan.items.length > 0
+        ? {
+            ...t.plan,
+            items: t.plan.items.map((i) => ({
+              ...i,
+              kind: normalizePlannedKind(i.kind),
+            })),
+          }
+        : null;
     resolved.push({
       id: st.id,
       name: st.name,
@@ -2915,6 +3070,15 @@ export async function authorSetFromChat(
           // is no episode row on this path, so spawnAuthoringWorker can't read it
           // from prior turns — it must be passed in.
           approvedPlan: r.plan,
+          // Slice QAUTH-A / item 12 / D-QAUTH-7 — a fan-out over MORE THAN ONE
+          // sub_topic produces questions that will be served interleaved: an
+          // interleaved chat always mixes, and after Slice MIXED a blocked-mode
+          // coverage batch mixes too unless the tutor picks `separate` at approve
+          // time. That choice happens AFTER authoring, so the trigger has to be
+          // the composition. A single-sub_topic fan-out is not a mix and does not
+          // get the instruction (the chat's own mode can still turn it on inside
+          // buildScopedWorld).
+          mixed: resolved.length > 1,
         });
         const persisted = await persistDrafts(wtx, {
           boardId: args.boardId,

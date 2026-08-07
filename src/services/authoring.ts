@@ -196,6 +196,44 @@ export const geminiQuestionSchema = {
   required: ["questions"],
 } as const;
 
+/**
+ * Slice QAUTH-A — the SINGLE-question variant, for the Gemini per-question draft
+ * loop (`runWorkerCall`). Identical to the batch schema except the array is
+ * BOUNDED to exactly one element.
+ *
+ * 🔴 THIS EXISTS BECAUSE A PROSE GUARANTEE FAILED. The loop's prompt has always
+ * said "write EXACTLY ONE question". Measured this session: a call meant to
+ * produce one question returned **62,348 output tokens / 343k chars**, truncated
+ * at the model's output ceiling and therefore unparseable — twice on the same
+ * prompt. The likely mechanism is the method pack telling the author to think the
+ * whole scaffolded sequence through before writing (item 6's ordered protocol)
+ * with nowhere to put that but the output.
+ *
+ * ⚠️ The runaway is NOT this slice's doing — it reproduced on unmodified
+ * pre-slice code (1 in 6 draft calls). Slice A may aggravate it (3 in 7) but the
+ * sample is far too small to claim that. What IS measured: **0 in 7 with this
+ * bound in place**, at the full larger prompt size.
+ *
+ * Per M28 the fix is NOT `maxOutputTokens` — on a thinking model that bounds
+ * thinking + answer together and starves the JSON out of the response.
+ *
+ * Kept as a derived spread rather than a second literal so the item shape cannot
+ * drift from the batch schema.
+ */
+export const geminiSingleQuestionSchema = {
+  ...geminiQuestionSchema,
+  properties: {
+    questions: {
+      ...geminiQuestionSchema.properties.questions,
+      description:
+        "EXACTLY ONE authored question — this array has one element, never more",
+      // The SDK types these as strings (Schema.maxItems?: string), not numbers.
+      minItems: "1",
+      maxItems: "1",
+    },
+  },
+} as const;
+
 export const QUESTION_AUTHOR_SYSTEM = `You are the question-authoring agent for an exam-prep tutoring system. You write a SHORT, ORDERED set of SUBJECTIVE questions for ONE sub-topic, aimed at its learning objectives. The tutor reviews and edits each before it goes live — write to the bar below so little editing is needed.
 
 §1 AIM AT THE LOs / THRESHOLDS. Every question is FOR something specific — name the target LO before writing the stem. Weight toward the hardest conceptual leaps; a question that is merely on-topic is wasted. Probe the leap, don't enumerate it.

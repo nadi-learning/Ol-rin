@@ -189,14 +189,30 @@ async function main() {
       check("brief SCOPED: carries the raw topics.md blob (D-QA3-5)", brief.includes(TOPICSMD_MARKER));
       check("brief SCOPED: carries the sub_topic + LEARNING OBJECTIVES", brief.includes("Acceleration") && brief.includes("LEARNING OBJECTIVES"));
       check("brief SCOPED: carries the existing bank stem (D-QA3-9)", brief.includes(BANK_STEM_MARKER));
-      check("brief SCOPED: NOT the master's broad grounding (no STUDENT GROUNDING block)", !brief.includes("STUDENT GROUNDING"));
+      // Slice QAUTH-A REVISED this leg rather than leaving it green on a
+      // technicality. It used to read "NOT the master's broad grounding", and the
+      // worker now DOES get a student block (items 1+10) — the assertion would
+      // have gone on passing (the header string differs) while asserting the
+      // opposite of what the code does, which is exactly M76.
+      //
+      // What is still true, and is the real boundary: the worker gets THIS
+      // student scoped to THIS sub-topic, never the master's multi-chapter
+      // CHAPTER COVERAGE map. Its context stays one job wide.
+      check(
+        "brief SCOPED: the worker's own student block, NOT the master's coverage map",
+        brief.includes("THE STUDENT YOU ARE AUTHORING FOR") &&
+          !brief.includes("CHAPTER COVERAGE") &&
+          !brief.includes("STUDENT GROUNDING"),
+      );
       check("brief: NO answer key leak (bank reference answer absent)", !brief.includes(BANK_KEY_MARKER));
     }
   }
 
   // ── SOFT (real Claude): session capture + D-QA3-8 resume ──
   try {
-    // A bare chat row to hang worker rows on (spawnAuthoringWorker doesn't read it).
+    // The chat row the worker resolves its STUDENT from. It used to be a bare row
+    // "spawnAuthoringWorker doesn't read" — D-QAUTH-2 ended that: buildScopedWorld
+    // now reads student_id off it, so this row is load-bearing, not scaffolding.
     const [cchat] = await withBoard(P.id, (tx) =>
       tx.insert(authoringChat).values({ boardId: P.id, tutorId: tut.id, studentId: stu.id, vendor: "claude_cli", chapterId: fx.chapterId, messages: [] }).returning({ id: authoringChat.id }),
     );

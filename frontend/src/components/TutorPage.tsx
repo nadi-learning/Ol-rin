@@ -707,6 +707,7 @@ function AuthorTab({ student, nav }: { student: Student; nav: Nav | null }) {
       {launcherOpen && (
         <AuthorLauncher
           chapters={nav ?? []}
+          studentId={student.studentId}
           onClose={() => setLauncherOpen(false)}
           onConfirm={(cfg) => {
             setLauncherOpen(false);
@@ -728,16 +729,23 @@ type LaunchConfig = {
   // chapter for the same reason those are — it selects the conversational system
   // prompt, and the resume fingerprint is derived from that prompt.
   authorGrain: "one" | "several";
+  // Slice QAUTH-B (item 11): the sub-topics the tutor ticked, pre-filled from the
+  // scheduler. Interleaved only — a blocked chat is one chapter and proposeTarget
+  // resolves its sub-topic from the conversation, so there is nothing to narrow.
+  // Empty = no narrowing, i.e. exactly today's whole-chapter scope.
+  subTopicIds: string[];
 };
 
 // The L0 "Author questions" modal (QA3-d): model → mode → chapter(s). Blocked =
 // single-select (one chapter); interleaved = multi-select (grounded across the set).
 function AuthorLauncher({
   chapters,
+  studentId,
   onClose,
   onConfirm,
 }: {
   chapters: Nav;
+  studentId: string;
   onClose: () => void;
   onConfirm: (cfg: LaunchConfig) => void;
 }) {
@@ -745,6 +753,20 @@ function AuthorLauncher({
   const [mode, setMode] = useState<"blocked" | "interleaved">("blocked");
   const [authorGrain, setAuthorGrain] = useState<"one" | "several">("one");
   const [picked, setPicked] = useState<string[]>([]);
+  // ── Slice QAUTH-B, item 11: the scheduler drives the sub-topic pre-tick ──
+  //
+  // The launcher has never read the scheduler; the tutor did this spacing
+  // arithmetic from memory. `due` is the set the spiral says is owed, and
+  // `dueMixable` the subset that clears the ≥L3-both-axes interleave gate —
+  // only the latter is pre-ticked, because ticking a sub-topic that is NOT safe
+  // to mix would have the launcher recommending the one composition the
+  // scheduler says to avoid.
+  const [dueMixable, setDueMixable] = useState<Set<string> | null>(null);
+  const [dueOther, setDueOther] = useState<Set<string>>(new Set());
+  const [pickedSubs, setPickedSubs] = useState<string[]>([]);
+  // Which chapter selection the pre-tick was last computed for. Changing the
+  // chapters re-suggests; editing the ticks does not get clobbered in between.
+  const autoTickedFor = useRef<string | null>(null);
   // Chapter picker is now a searchable dropdown: `ddOpen` toggles the panel,
   // `query` filters the option list by chapter name.
   const [ddOpen, setDdOpen] = useState(false);
@@ -766,6 +788,52 @@ function AuthorLauncher({
       setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
     }
   }
+
+  // Item 11 — read the due queue once per launcher open. Failure is NON-FATAL and
+  // deliberately so: the picker degrades to "nothing pre-ticked, tick your own"
+  // rather than blocking the launch, because the scheduler is an ASSIST here, not
+  // a gate. `dueMixable === null` means "not loaded yet" and suppresses the
+  // pre-tick entirely; an empty Set means "loaded, nothing due".
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const groups = await trpc.tutor.getDueQueue.query({ studentId });
+        if (!alive) return;
+        const mixable = new Set<string>();
+        const other = new Set<string>();
+        for (const g of groups) {
+          for (const it of g.items) {
+            (it.interleaveEligible ? mixable : other).add(it.subTopicId);
+          }
+        }
+        setDueMixable(mixable);
+        setDueOther(other);
+      } catch {
+        if (alive) setDueMixable(new Set());
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [studentId]);
+
+  // Item 11 — pre-tick when the chapter selection changes (interleaved only).
+  // Keyed on the chapter set so the tutor's own add/remove survives every render
+  // until they change chapters again, which is the one moment a fresh suggestion
+  // is what they want.
+  useEffect(() => {
+    if (mode !== "interleaved" || dueMixable === null) return;
+    const key = [...picked].sort().join(",");
+    if (autoTickedFor.current === key) return;
+    autoTickedFor.current = key;
+    const inPicked = new Set<string>();
+    for (const c of chapters) {
+      if (!picked.includes(c.id)) continue;
+      for (const t of c.topics) for (const s of t.subTopics) inPicked.add(s.id);
+    }
+    setPickedSubs([...inPicked].filter((id) => dueMixable.has(id)));
+  }, [mode, picked, chapters, dueMixable]);
 
   // Close the dropdown on outside-click / Escape (without closing the modal).
   useEffect(() => {
@@ -951,6 +1019,65 @@ function AuthorLauncher({
           </div>
         </div>
 
+        {/* Slice QAUTH-B, item 11 — the sub-topic scope, pre-ticked from the
+            scheduler. Interleaved only: a blocked chat is one chapter and its
+            sub-topic is resolved from the conversation, so there is nothing here
+            to narrow. Reuses the existing chapter-option markup rather than
+            introducing a new UI kind (the founder's standing note). */}
+        {mode === "interleaved" && picked.length > 0 && (
+          <div className="tut-launch-field tut-launch-field-col">
+            <span className="tut-chat-vendorlabel">Sub-topics</span>
+            <div className="tut-launch-subhint">
+              {dueMixable === null
+                ? "Reading the spiral…"
+                : pickedSubs.length > 0
+                  ? `${pickedSubs.length} ticked — the spiral says these are due and safe to mix. Add or remove before you start.`
+                  : "Nothing in these chapters is both due and safe to mix right now — tick what you want to author."}
+            </div>
+            <div className="tut-launch-chlist tut-launch-sublist">
+              {chapters
+                .filter((c) => picked.includes(c.id))
+                .flatMap((c) =>
+                  c.topics.flatMap((t) =>
+                    t.subTopics.map((s) => {
+                      const on = pickedSubs.includes(s.id);
+                      // Three states worth distinguishing: due AND mixable (the
+                      // pre-tick), due but below the interleave gate (offered,
+                      // labelled, never auto-ticked), and not due at all.
+                      const mixable = dueMixable?.has(s.id) ?? false;
+                      const dueOnly = dueOther.has(s.id);
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          className={`tut-launch-chopt${on ? " is-on" : ""}`}
+                          onClick={() =>
+                            setPickedSubs((p) =>
+                              p.includes(s.id)
+                                ? p.filter((x) => x !== s.id)
+                                : [...p, s.id],
+                            )
+                          }
+                        >
+                          <span className="tut-launch-chmark" aria-hidden>
+                            {on ? "✓" : ""}
+                          </span>
+                          {picked.length > 1 ? `${c.name} › ${s.name}` : s.name}
+                          {mixable && <span className="tut-launch-subtag">due</span>}
+                          {dueOnly && (
+                            <span className="tut-launch-subtag is-warn">
+                              due · not safe to mix
+                            </span>
+                          )}
+                        </button>
+                      );
+                    }),
+                  ),
+                )}
+            </div>
+          </div>
+        )}
+
         <div className="tut-launch-actions">
           <button className="tut-back" onClick={onClose}>
             Cancel
@@ -958,7 +1085,16 @@ function AuthorLauncher({
           <button
             className="btn-solid"
             disabled={!ready}
-            onClick={() => onConfirm({ vendor, mode, chapterIds: picked, authorGrain })}
+            onClick={() =>
+              onConfirm({
+                vendor,
+                mode,
+                chapterIds: picked,
+                authorGrain,
+                // Blocked never narrows (see LaunchConfig).
+                subTopicIds: mode === "interleaved" ? pickedSubs : [],
+              })
+            }
           >
             Start authoring →
           </button>
@@ -4105,6 +4241,7 @@ function AuthorChat({
         vendor: launch.vendor,
         mode: launch.mode,
         chapterIds: launch.chapterIds,
+        subTopicIds: launch.subTopicIds,
         authorGrain: launch.authorGrain,
       });
       return;
@@ -4208,6 +4345,8 @@ function AuthorChat({
     mode?: "blocked" | "interleaved";
     chapterId?: string;
     chapterIds?: string[];
+    // Slice QAUTH-B (item 11): the launcher's ticked sub-topic scope.
+    subTopicIds?: string[];
     authorGrain?: "one" | "several";
     carryFromChatId?: string;
   }) {
@@ -4270,7 +4409,9 @@ function AuthorChat({
         mode: launch.mode,
         chapterIds: launch.chapterIds,
         // SEVERAL-THREAD: New chat re-starts the LAUNCHED scope, so the grain
-        // chosen at the launcher rides along with model and chapters.
+        // chosen at the launcher rides along with model and chapters — and
+        // QAUTH-B's sub-topic scope with them, for the same reason.
+        subTopicIds: launch.subTopicIds,
         authorGrain: launch.authorGrain,
       });
     } else {

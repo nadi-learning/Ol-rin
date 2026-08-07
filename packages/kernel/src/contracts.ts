@@ -296,6 +296,22 @@ export const WorkerPlanItem = z.object({
   kind: z.string(),
   intent: z.string(), // what this question probes / which misconception it targets
   difficulty: z.string(),
+  // Slice QAUTH-A (item 6 / D-QAUTH-6): the LO this item aims at, named BEFORE the
+  // stem exists. Step 1 of the fixed thinking order — "a question with no named
+  // target lands on-topic but generic" (craft §1).
+  //
+  // ⚠️ OPTIONAL ON THE CONTRACT, REQUIRED IN THE VENDOR SCHEMAS — and the
+  // asymmetry is deliberate, not laziness. Plans are persisted inside
+  // `authoring_worker.messages` as WorkerTurn jsonb, and `parseTurns` DROPS any
+  // turn the current contract rejects (so a malformed history can't strand a
+  // tutor mid-gate). A required `lo` would therefore make every pre-slice plan
+  // turn silently vanish from its episode — the history would not error, it would
+  // just be gone. Both vendor response schemas mark it required, so every NEW
+  // plan carries one; only stored rows are allowed to lack it.
+  //
+  // The SET planner (proposeTargetSet) cannot fill this at all — the master holds
+  // no LOs at sub-topic grain. That gap IS D-QAUTH-10, left visible on purpose.
+  lo: z.string().optional(),
 });
 export type WorkerPlanItem = z.infer<typeof WorkerPlanItem>;
 

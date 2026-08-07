@@ -51,6 +51,7 @@ import {
   enqueueAuthoring,
   getActiveAuthoringJob,
 } from "../src/worker/queue";
+import { KIND_UNPINNED } from "../src/services/authoring_grounding";
 import {
   authorSetFromChat,
   clampProposedItems,
@@ -282,11 +283,26 @@ async function main() {
     capDisc.every((it, i) => it.n === i + 1) &&
       capCov.every((it, i) => it.n === i + 1),
   );
+  // Slice QAUTH-A SPLIT this leg. It used to assert `kind === "kind-0"` — i.e.
+  // that a FABRICATED kind survives the cap verbatim — which is precisely the
+  // behaviour D-QAUTH-8 removed. Left alone it would have gone red for the right
+  // reason and read as a regression; deleted, the slice would have quietly
+  // dropped a guarantee. So: the fields that are still verbatim are asserted
+  // verbatim, and `kind` is asserted against its NEW rule, here at this probe's
+  // own boundary as well as in probe:qauth.
   check(
-    "SET-PLAN-GATE: the item fields (axis/kind/intent) are preserved through the cap",
-    capDisc[0]!.axis === "conceptual" &&
-      capDisc[0]!.kind === "kind-0" &&
-      capDisc[0]!.intent === "intent-0",
+    "SET-PLAN-GATE: axis / intent / difficulty are preserved verbatim through the cap",
+    capDisc[0]?.axis === "conceptual" &&
+      capDisc[0]?.intent === "intent-0" &&
+      capDisc[0]?.difficulty === "medium",
+  );
+  check(
+    "D-QAUTH-8: an invented kind is NEUTRALISED at the cap, a real one survives it",
+    capDisc[0]?.kind === KIND_UNPINNED &&
+      clampProposedItems(
+        [{ axis: "conceptual", kind: "Contrasting Cases", intent: "i", difficulty: "d" }],
+        "discriminate",
+      )[0]?.kind === "Contrasting Cases",
   );
   check(
     "SET-PLAN-GATE: an empty blueprint yields an empty plan (fallback self-derives)",
@@ -377,9 +393,17 @@ async function main() {
   const tutorPageCode = tutorPageSrc
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
+  // ⚠️ THIS LEG WAS RED FOR FIVE DAYS. It was written 2026-07-31 (`2a36c93`)
+  // asserting `setMode: setModeOn` travels with every turn; `64a6b9b` (2026-08-02,
+  // SEVERAL-THREAD) DELETED that — the grain became a property of the THREAD
+  // (`author_grain`), read off the row so the routing and the system prompt cannot
+  // disagree. Nobody updated the leg, so every probe:set run since has carried a
+  // red that reads as expected background noise (M86). Repointed at the rule that
+  // actually holds now, and at the one that replaced it.
   check(
-    "CHAT-SET-ROUTE (FE): the toggle is SENT with the turn (`setMode: setModeOn`)",
-    /setMode:\s*setModeOn/.test(tutorPageCode),
+    "SEVERAL-THREAD (FE): the per-turn toggle is GONE — the grain is not sent with the turn",
+    !/setMode:\s*setModeOn/.test(tutorPageCode) &&
+      /\.mutate\(\{\s*chatId:\s*chat\.chatId,\s*text,\s*planFirst\s*\}\)/.test(tutorPageCode),
   );
   check(
     "CHAT-SET-ROUTE (FE): a returned proposal routes into the EXISTING set card",
@@ -387,16 +411,44 @@ async function main() {
       /setProposalSet\(c\.proposedSet\)/.test(tutorPageCode),
   );
 
-  // ── SOFT + GATE: a REAL go-ahead in a BLOCKED chat with the toggle on ──────────
-  // Deliberately the blocked chat: that is the founder's case and the one `chat.mode`
+  // ── SOFT + GATE: a REAL go-ahead in a BLOCKED chat whose GRAIN is 'several' ────
+  // Deliberately the blocked mode: that is the founder's case and the one `chat.mode`
   // could never have selected (interleaved+One and blocked+Several both exist, which
-  // is why the toggle has to travel with the turn). ~2 real Gemini calls.
+  // is why the grain has to be carried independently of the mode). ~2 real Gemini calls.
+  //
+  // ⚠️ THESE TWO LEGS WERE RED SINCE 2026-08-02, for the SAME reason as the FE leg
+  // ~20 lines above. They were written 2026-07-31 (`2a36c93`) driving the route with a
+  // per-turn `setMode: true`; `64a6b9b` (SEVERAL-THREAD) DELETED that — `sendTurn` now
+  // reads the grain off the ROW (`authoring_chat.ts:1449`, `grainOf(row)`) and IGNORES
+  // `args.setMode` on purpose, so a stale tab cannot contradict the system prompt the
+  // thread was born under. Slice QAUTH-A repaired the leg that greps FE source and
+  // missed these two — the ones that actually call `sendTurn` — so the fixture kept
+  // asserting the pre-`64a6b9b` contract and `picks: null` was the CORRECT answer.
+  //
+  // A SEPARATE thread, not `blocked` with its grain flipped: `blocked` is the subject
+  // of the negative control below, which must stay grain 'one'. Same mode, same chapter,
+  // differing ONLY in `authorGrain` — so the pair is now a real control on the grain
+  // itself rather than on a per-turn flag the server no longer reads.
+  const several = await rows(P.id, (tx) =>
+    startChat(tx, {
+      boardId: P.id,
+      tutorUserId: tut.id,
+      studentId: stu.id,
+      vendor: "gemini_api",
+      mode: "blocked",
+      chapterIds: [fx.chA.chapterId],
+      authorGrain: "several",
+    }),
+  );
+  check(
+    "SEVERAL-THREAD: the thread is born 'several' and reports it back",
+    several.authorGrain === "several" && several.mode === "blocked",
+  );
   let setTurn = await rows(P.id, (tx) =>
     sendTurn(tx, {
       tutorUserId: tut.id,
-      chatId: blocked.chatId,
+      chatId: several.chatId,
       text: "Go ahead — author across several sub-topics of this chapter now, in parallel.",
-      setMode: true,
     }),
   );
   if (!setTurn.proposedSet) {
@@ -406,15 +458,14 @@ async function main() {
     setTurn = await rows(P.id, (tx) =>
       sendTurn(tx, {
         tutorUserId: tut.id,
-        chatId: blocked.chatId,
+        chatId: several.chatId,
         text: "This is the go-ahead. Author several sub-topics of this chapter now.",
-        setMode: true,
       }),
     );
   }
   soft("set-route picks", setTurn.proposedSet?.picks?.map((p) => p.subTopicName) ?? null);
   check(
-    "CHAT-SET-ROUTE: a go-ahead with setMode ON returns a SET PROPOSAL",
+    "CHAT-SET-ROUTE: a go-ahead on a 'several' THREAD returns a SET PROPOSAL",
     (setTurn.proposedSet?.picks?.length ?? 0) >= 1,
   );
   check(
@@ -431,28 +482,48 @@ async function main() {
     setTurn.draftJobId === undefined && setTurn.planJobId === undefined,
   );
 
-  // ── NEGATIVE CONTROL: the SAME chat + go-ahead with setMode OFF ────────────────
-  // M104: a control whose subject is produced by a fallible live call can pass by the
-  // subject never being produced. So this REQUIRES the subject to exist — a job id
-  // must actually come back. If the call fails or emits no go-ahead, the leg REDS
-  // rather than passing on an absent `proposedSet`.
+  // ── NEGATIVE CONTROL: the SAME mode + chapter, but a grain-'one' THREAD ────────
+  // `blocked` differs from `several` above in exactly ONE field (`authorGrain`), so
+  // this pair isolates the grain as the cause. M104: a control whose subject is
+  // produced by a fallible live call can pass by the subject never being produced. So
+  // this REQUIRES the subject to exist — a job id must actually come back. If the call
+  // fails or emits no go-ahead, the leg REDS rather than passing on an absent
+  // `proposedSet`.
   const noSetTurn = await rows(P.id, (tx) =>
     sendTurn(tx, {
       tutorUserId: tut.id,
       chatId: blocked.chatId,
       text: "This is the go-ahead. Author 2 questions on sub-topic 1 now.",
-      // setMode deliberately OMITTED — proves the default is the single path.
+      // A grain-'one' thread — proves the default is the single path.
+      // `setMode` is deliberately NOT passed: the server ignores it (see above), so
+      // sending it here would imply a lever that does not exist.
     }),
   );
   const singleJobId = noSetTurn.planJobId ?? noSetTurn.draftJobId ?? "";
   soft("negative control jobId", singleJobId || null);
   check(
-    "CHAT-SET-ROUTE (NEG): setMode OMITTED → a real job id came back (subject EXISTS)",
+    "CHAT-SET-ROUTE (NEG): a grain-'one' thread → a real job id came back (subject EXISTS)",
     typeof singleJobId === "string" && singleJobId.length > 0,
   );
   check(
     "CHAT-SET-ROUTE (NEG): that same turn produced NO set proposal",
     noSetTurn.proposedSet === undefined,
+  );
+  // The lever the server no longer reads: the SAME grain-'one' thread, now sending the
+  // dead `setMode: true`. It must STILL take the single path. This is the leg that
+  // pins `authoring_chat.ts:1449` — if anyone re-honours `args.setMode`, a stale tab
+  // starts fanning out a thread whose system prompt says "one", and this reds.
+  const staleFlagTurn = await rows(P.id, (tx) =>
+    sendTurn(tx, {
+      tutorUserId: tut.id,
+      chatId: blocked.chatId,
+      text: "This is the go-ahead. Author 2 questions on sub-topic 1 now.",
+      setMode: true, // dead field, deliberately sent
+    }),
+  );
+  check(
+    "SEVERAL-THREAD: a stale per-turn `setMode: true` CANNOT fan out a grain-'one' thread",
+    staleFlagTurn.proposedSet === undefined,
   );
 
   const geminiConfigured = !!env.GEMINI_API_KEY;

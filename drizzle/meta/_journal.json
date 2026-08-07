@@ -365,6 +365,13 @@
       "when": 1785603875148,
       "tag": "0051_neat_butterfly",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1786102355853,
+      "tag": "0052_steady_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

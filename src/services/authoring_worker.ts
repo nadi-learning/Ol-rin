@@ -2,10 +2,19 @@
 //
 // The master chat (authoring_chat.ts) orchestrates the tutor dialogue with broad
 // context. When it authors, it SPAWNS a fresh, scoped worker session for ONE
-// sub_topic via `spawnAuthoringWorker`. The worker gets ONLY its slice — the
-// chapter's raw topics.md blob, the sub_topic's LOs, the existing bank questions,
-// and the tutor's brief — NOT the master's full multi-chapter grounding. "One
-// job, clean context" (the front-load-cognitive-work / federated-agent principle).
+// sub_topic via `spawnAuthoringWorker`. The worker gets ONLY its slice — its own
+// chapter's raw topics.md blob, the sub_topic's LOs, the bank questions THIS
+// student can see, and the tutor's brief — never the master's multi-chapter
+// coverage map. "One job, clean context" (the front-load-cognitive-work /
+// federated-agent principle).
+//
+// Slice QAUTH-A (items 1+10, D-QAUTH-2/3/4) widened "its slice" WITHOUT widening
+// the context: the worker now also gets THE STUDENT — two-axis mastery on this
+// sub-topic, the chapter/subject insight, the horizontals, the tutor's
+// hand-written note, and which bank questions this student has actually been
+// served. All of it was already read by the master chat and stopped there, so the
+// one call that actually writes questions was authoring blind. Scope is unchanged:
+// one student, one sub_topic, one chapter.
 //
 // Method delivery (D-QA3-7 refinement, Option A — user-approved QA3-e):
 //   ONE method body, read at fire-time from the LOCAL method-pack file
@@ -27,15 +36,23 @@
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { Type } from "@google/genai";
 import {
+  attempt,
+  authoringChat,
   authoringWorker,
   board,
   chapter,
+  horizontalSkillState,
   learningObjective,
+  masteryState,
+  observation,
   question,
+  studentAuthoringPreference,
+  studentChapterInsight,
+  studentSubjectInsight,
   subject,
   subTopic,
   topic,
@@ -50,8 +67,15 @@ import { complete, computeSessionFingerprint, extractJsonObject } from "./ai_cli
 import { geminiJson } from "./ai/gemini";
 import { SubTopicNotFoundError } from "./assessment";
 import {
+  renderBankWithHistory,
+  renderInsightBlocks,
+  type BankRowForPrompt,
+  type ServedState,
+} from "./authoring_grounding";
+import { visibleQuestionWhere } from "./question_access";
+import {
   draftBatchSchema,
-  geminiQuestionSchema,
+  geminiSingleQuestionSchema,
   type DraftItem,
 } from "./authoring";
 
@@ -59,6 +83,10 @@ type Tx = PgTransaction<any, any, any>;
 
 const WORKER_ENDPOINT = "authoring.worker";
 const WORKER_TIMEOUT_SEC = 600;
+// The blind machine read of a submitted answer. Same literal as assessment.ts /
+// authoring_chat.ts / assignment.ts — a local const in each, per this repo's
+// existing shape.
+const STAGE1_SOURCE = "stage1_scorer";
 
 /**
  * The Claude model question authoring runs on — PINNED, not the `opus` alias.
@@ -244,14 +272,57 @@ type ScopedWorld = {
     subjectSlug: string;
     boardSlug: string;
   };
+  /** Slice QAUTH-A — resolved from the chat, not passed in (D-QAUTH-2). */
+  studentId: string;
   pack: string;
   /** The scoped prompt MINUS any "how many" / "what to do" instruction. */
   basePrompt: string;
 };
 
-async function buildScopedWorld(
+/**
+ * Slice QAUTH-A (item 12 / D-QAUTH-7) — the worker is told when its output can be
+ * served to the student MIXED with other sub-topics, because that changes what a
+ * good question IS (craft §7 → the pack's §9).
+ *
+ * TWO triggers, and both are needed after Slice MIXED landed:
+ *   - the chat's own mode is 'interleaved' (always served mixed), OR
+ *   - the caller says so, which the SET fan-out does whenever it resolved more
+ *     than one sub_topic. A blocked-mode coverage batch merges into ONE assignment
+ *     by default (item 13's default ruling), and Slice MIXED serves a multi-
+ *     sub_topic assignment interleaved — so a coverage fan-out's output lands in a
+ *     mix just as an interleaved chat's does.
+ *
+ * ⚠️ It can be wrong in ONE direction, on purpose: the tutor may later choose
+ * `separate` at approve time, in which case these questions were authored not to
+ * signpost their method for a set that turned out blocked. That costs nothing —
+ * craft §7's first bullet is a strictly better question either way — whereas the
+ * reverse (a genuine mix authored with signposts) cannot be fixed afterwards,
+ * because the questions are already in the bank. D-QAUTH-7's own reasoning.
+ */
+function mixedDeliveryBlock(): string {
+  return `
+
+===== THIS SET WILL BE SERVED MIXED =====
+The questions you write here will be delivered INTERLEAVED with questions from OTHER sub-topics — the student meets each one without being told which sub-topic it came from. Apply §9 of your brief: do not signpost the method, do not name the sub-topic or chapter in the stem, build the look-alike contrast deliberately from the neighbouring material in your own topics.md, and state the discrimination intent in \`intent\`.
+===== END =====`;
+}
+
+/**
+ * Exported ONLY so the slice's gate can assert what the worker actually sees with
+ * NO vendor in the loop — the assembled prompt is the deliverable of this slice,
+ * and a leg that could only observe it through a model's answer would pass
+ * vacuously (M101). Not a call site: the two real callers are in this file.
+ */
+export async function buildScopedWorld(
   tx: Tx,
-  args: { subTopicId: string; brief: string },
+  args: {
+    /** Slice QAUTH-A (D-QAUTH-2): the student is resolved from HERE, not passed. */
+    chatId: string;
+    subTopicId: string;
+    brief: string;
+    /** Item 12 — the caller's half of the mixed trigger; see mixedDeliveryBlock. */
+    mixed?: boolean;
+  },
 ): Promise<ScopedWorld> {
   // 1. Resolve the sub_topic + its chapter (for identity + the raw topics.md blob)
   //    + the (board, subject) slugs that select the difficulty-dials catalog.
@@ -263,6 +334,8 @@ async function buildScopedWorld(
       chapterId: chapter.id,
       chapterName: chapter.name,
       chapterMetadata: chapter.metadata,
+      subjectId: chapter.subjectId,
+      subjectName: subject.name,
       subjectSlug: subject.slug,
       boardSlug: board.slug,
     })
@@ -273,6 +346,25 @@ async function buildScopedWorld(
     .innerJoin(board, eq(board.id, chapter.boardId))
     .where(eq(subTopic.id, args.subTopicId));
   if (!st) throw new SubTopicNotFoundError(args.subTopicId);
+
+  // 1b. WHO the student is (D-QAUTH-2). `spawnAuthoringWorker`/`planAuthoringWork`
+  //     already carry `chatId` and `authoring_chat.student_id` is NOT NULL, so this
+  //     costs ZERO changes at the three call sites and — the load-bearing half —
+  //     ZERO change to the BullMQ job payload. A job enqueued by pre-slice code and
+  //     still sitting in Redis at deploy time must still run.
+  const [chatRow] = await tx
+    .select({ studentId: authoringChat.studentId, mode: authoringChat.mode })
+    .from(authoringChat)
+    .where(eq(authoringChat.id, args.chatId));
+  // Not a soft fallback: without the student there is no bank scoping and no
+  // student picture, so authoring would silently revert to the pre-slice
+  // everyone's-questions behaviour. Every real caller resolves the chat through
+  // `ownedChat` first, so reaching this is a bug and must read as one.
+  if (!chatRow) {
+    throw new Error(`authoring worker: no authoring_chat ${args.chatId} in this board`);
+  }
+  const studentId = chatRow.studentId;
+  const mixed = args.mixed === true || chatRow.mode === "interleaved";
 
   // 2. LOs for the sub_topic, split by axis.
   const los = await tx
@@ -289,15 +381,257 @@ async function buildScopedWorld(
   // 3. Existing bank questions for this sub_topic (D-QA3-9: coherence + dedup).
   //    Stem + axis + difficulty only — no reference answers (not needed, and the
   //    worker authors NEW questions, it doesn't grade).
+  //
+  //    Slice QAUTH-A / item 3 / D-QAUTH-3 — SCOPED. This used to filter on
+  //    `sub_topic_id` ALONE, so authoring 2.1 for one student showed the worker 14
+  //    questions: 7 hers, 4 another student's, 3 from a test account. It then read
+  //    another student's ground as covered for this one.
+  //
+  //    `visibleQuestionWhere` is the SAME predicate practice serves from — the
+  //    canonical bank plus this student's own targeted questions, drafts excluded.
+  //    Reused rather than re-written so "what the author thinks exists" and "what
+  //    the student can actually be given" cannot drift apart.
+  //
+  //    🔑 NOT the literal `target_student_id = me` item 3 asked for (D-QAUTH-3):
+  //    strict equality would hide every CANONICAL question — including ones this
+  //    student has actually answered, the worst kind to hide — and would make the
+  //    worker's bank disagree with the chat's CHAPTER COVERAGE count. It is only
+  //    safe to keep canonical questions in view because step 3b annotates each one
+  //    with whether this student has ever met it.
   const bank = await tx
     .select({
+      id: question.id,
       stem: question.stem,
       axis: question.axis,
       difficulty: question.difficulty,
     })
     .from(question)
-    .where(eq(question.subTopicId, args.subTopicId))
+    .where(visibleQuestionWhere(studentId, args.subTopicId))
     .orderBy(question.ordinal);
+
+  // 3b. D-QAUTH-4 — the SERVED HISTORY. Item 3's own rationale ("avoids
+  //     duplicating work she never saw") is not served by item 3's own fix: her
+  //     approved-but-never-served questions survive the scoping above and still
+  //     read as covered ground. Only `attempt` separates them.
+  //
+  //     Both reads are keyed to THIS student, and the Stage-1 read carries the
+  //     scorer's reasoning + level only — never a reference answer (the M11
+  //     boundary the whole worker brief is built on).
+  const bankIds = bank.map((b) => b.id);
+  const [attemptRows, obsRows] = await Promise.all([
+    bankIds.length
+      ? tx
+          .select({
+            questionId: attempt.questionId,
+            skipReason: attempt.skipReason,
+            confidence: attempt.confidence,
+            submittedAt: attempt.submittedAt,
+          })
+          .from(attempt)
+          .where(
+            and(
+              inArray(attempt.questionId, bankIds),
+              eq(attempt.appUserId, studentId),
+            ),
+          )
+          .orderBy(asc(attempt.submittedAt))
+      : Promise.resolve([]),
+    bankIds.length
+      ? tx
+          .select({
+            questionId: observation.questionId,
+            axis: observation.axis,
+            observationLevel: observation.observationLevel,
+            tutorLevel: observation.tutorLevel,
+            reasoning: observation.reasoning,
+            createdAt: observation.createdAt,
+          })
+          .from(observation)
+          .where(
+            and(
+              inArray(observation.questionId, bankIds),
+              eq(observation.studentId, studentId),
+              eq(observation.source, STAGE1_SOURCE),
+            ),
+          )
+          .orderBy(asc(observation.createdAt))
+      : Promise.resolve([]),
+  ]);
+
+  const servedById = new Map<string, ServedState>();
+  for (const a of attemptRows) {
+    const at = a.submittedAt.toISOString().slice(0, 10);
+    const prior = servedById.get(a.questionId);
+    if (a.skipReason === null) {
+      // ANSWERED always wins over SKIPPED: a question can be skipped on Monday
+      // and answered on Wednesday (Slice NEWONLY re-serves a skip), and the
+      // strongest thing that happened is what the author needs to know.
+      servedById.set(a.questionId, { state: "answered", at, confidence: a.confidence });
+    } else if (!prior || prior.state !== "answered") {
+      servedById.set(a.questionId, { state: "skipped", at });
+    }
+  }
+  // ONE read per (question, axis) — the latest, and a tutor-corrected one always
+  // wins over an uncorrected one whatever its date.
+  //
+  // 🔴 Found by READING a real assembled prompt, not by any probe leg. Stage-1 can
+  // leave SEVERAL rows for the same question and axis (a re-score, and the surplus
+  // observation rows already on the backlog), and rendering them all put FOUR
+  // reads on one question — two of them near-identical procedural L4 paragraphs.
+  // On a 6-question bank that is a few thousand tokens of duplicated prose
+  // crowding out the material the worker is supposed to be reasoning over, and it
+  // reads to the model as corroboration ("procedural L4, twice") when it is one
+  // observation counted twice.
+  const bestObs = new Map<string, (typeof obsRows)[number]>();
+  for (const o of obsRows) {
+    if (!o.questionId) continue;
+    if (o.tutorLevel == null && o.observationLevel == null) continue;
+    const key = `${o.questionId}:${o.axis}`;
+    const prior = bestObs.get(key);
+    // obsRows is ordered by createdAt ASC, so a later row replaces an earlier one
+    // — unless the earlier one carries a tutor's correction and this one does not.
+    if (prior && prior.tutorLevel != null && o.tutorLevel == null) continue;
+    bestObs.set(key, o);
+  }
+  const stage1ById = new Map<string, BankRowForPrompt["stage1"]>();
+  for (const o of bestObs.values()) {
+    const qid = o.questionId;
+    if (!qid) continue;
+    const level = o.tutorLevel ?? o.observationLevel;
+    if (level == null) continue;
+    const list = stage1ById.get(qid) ?? [];
+    // The EFFECTIVE level, never the raw machine read (Slice ASSESS-SEE): a tutor
+    // who corrected an observation overruled the scorer on the evidence, and this
+    // is the surface generating the student's NEXT questions.
+    list.push({
+      axis: o.axis + (o.tutorLevel != null ? " (tutor-corrected)" : ""),
+      level,
+      reasoning: o.reasoning,
+    });
+    // Stable render order: conceptual before procedural, whatever the write order.
+    list.sort((a, b) => a.axis.localeCompare(b.axis));
+    stage1ById.set(qid, list);
+  }
+  const bankRows: BankRowForPrompt[] = bank.map((b) => {
+    const served = servedById.get(b.id) ?? { state: "unserved" as const };
+    return {
+      stem: b.stem,
+      axis: b.axis,
+      difficulty: b.difficulty,
+      served,
+      // Only for ANSWERED rows — a Stage-1 read cannot exist without an answer,
+      // and printing one against a skip would be a contradiction on its face.
+      stage1: served.state === "answered" ? (stage1ById.get(b.id) ?? []) : [],
+    };
+  });
+
+  // 3c. Items 1+10 — the STUDENT's own picture, which reached the master chat and
+  //     stopped there. Four reads, each at the grain its table is keyed on:
+  //     mastery for THIS sub_topic exactly (item 10's words), chapter insight for
+  //     THIS chapter, subject insight + horizontals for its subject, and the
+  //     tutor's hand-written note (item 8 — see below).
+  const [masteryRow] = await tx
+    .select({
+      conceptualLevel: masteryState.conceptualLevel,
+      proceduralLevel: masteryState.proceduralLevel,
+      description: masteryState.description,
+      updatedAt: masteryState.updatedAt,
+    })
+    .from(masteryState)
+    .where(
+      and(
+        eq(masteryState.studentId, studentId),
+        eq(masteryState.subTopicId, args.subTopicId),
+      ),
+    );
+
+  const [chapterInsightRows, subjectInsightRows, horizontalRows, preferenceRows] =
+    await Promise.all([
+      tx
+        .select({ insight: studentChapterInsight.insight })
+        .from(studentChapterInsight)
+        .where(
+          and(
+            eq(studentChapterInsight.studentId, studentId),
+            eq(studentChapterInsight.chapterId, st.chapterId),
+          ),
+        ),
+      tx
+        .select({ insight: studentSubjectInsight.insight })
+        .from(studentSubjectInsight)
+        .where(
+          and(
+            eq(studentSubjectInsight.studentId, studentId),
+            eq(studentSubjectInsight.subjectId, st.subjectId),
+          ),
+        ),
+      tx
+        .select({
+          slug: horizontalSkillState.slug,
+          level: horizontalSkillState.level,
+          prose: horizontalSkillState.prose,
+        })
+        .from(horizontalSkillState)
+        .where(
+          and(
+            eq(horizontalSkillState.studentId, studentId),
+            eq(horizontalSkillState.subjectId, st.subjectId),
+          ),
+        )
+        .orderBy(asc(horizontalSkillState.slug)),
+      // Item 8 — resolved from the sub_topic's OWN chapter, not the chat's. In a
+      // fan-out each worker runs this against its own chapter, so a two-chapter
+      // interleaved batch no longer hands both workers the same note. The read
+      // stays SUBJECT-wide (D-CHAPTER-PREF) and `ownChapterName` marks which line
+      // is this worker's own — see authoring_grounding.ts for why dropping the
+      // others was rejected.
+      tx
+        .select({
+          chapterName: chapter.name,
+          chapterOrdinal: chapter.ordinal,
+          preference: studentAuthoringPreference.preference,
+        })
+        .from(studentAuthoringPreference)
+        .innerJoin(chapter, eq(chapter.id, studentAuthoringPreference.chapterId))
+        .where(
+          and(
+            eq(studentAuthoringPreference.studentId, studentId),
+            eq(chapter.subjectId, st.subjectId),
+          ),
+        )
+        .orderBy(asc(chapter.ordinal)),
+    ]);
+
+  const insightSections = renderInsightBlocks({
+    chapters: chapterInsightRows.map((r) => ({
+      chapterName: st.chapterName,
+      insight: r.insight,
+    })),
+    subjects: subjectInsightRows.map((r) => ({
+      subjectName: st.subjectName,
+      insight: r.insight,
+    })),
+    horizontals: horizontalRows.map((h) => ({
+      subjectName: st.subjectName,
+      slug: h.slug,
+      level: h.level,
+      prose: h.prose,
+    })),
+    preferences: preferenceRows.map((p) => ({
+      subjectName: st.subjectName,
+      chapterName: p.chapterName,
+      preference: p.preference,
+    })),
+    // The worker is always inside ONE subject, so never name it per line.
+    multiSubject: false,
+    ownChapterName: st.chapterName,
+  });
+
+  const masteryLine = masteryRow
+    ? `  conceptual ${masteryRow.conceptualLevel == null ? "not yet assessed" : `L${masteryRow.conceptualLevel}`}, ` +
+      `procedural ${masteryRow.proceduralLevel == null ? "not yet assessed" : `L${masteryRow.proceduralLevel}`} ` +
+      `(certified ${masteryRow.updatedAt.toISOString().slice(0, 10)}). ${masteryRow.description}`
+    : "  (not yet certified on this sub-topic — no Stage-2 mastery exists. Author to the LOs at a sensible default depth; do NOT invent a weakness.)";
 
   // 4. The method pack (fire-time read; kinds palette + subject-selected dials).
   const pack = await loadMethodPack({
@@ -310,18 +644,17 @@ async function buildScopedWorld(
     (st.chapterMetadata as { topicsMd?: string } | null)?.topicsMd ?? null;
   const loList = (ls: string[]) =>
     ls.length ? ls.map((d, n) => `  ${n + 1}. ${d}`).join("\n") : "  (none recorded)";
-  const bankList = bank.length
-    ? bank
-        .map(
-          (q, n) =>
-            `  ${n + 1}. [${q.axis}${q.difficulty ? `/${q.difficulty}` : ""}] ${q.stem}`,
-        )
-        .join("\n")
-    : "  (none authored yet)";
 
-  const basePrompt = `===== SOURCE MATERIAL (the chapter's topics.md — human-authored prose; read this) =====
+  // The whole chapter's topics.md, never a slice (D-QAUTH-5). Craft §8's boundary
+  // derivation requires reading the NEIGHBOURING LOs — §8 says so in its own
+  // words: "if you are ever handed a slice of topics.md instead, say so, because
+  // this is the piece that breaks." Item 9 trims the CHAT's copy; this one stays
+  // whole. The worker is the only call that actually writes questions.
+  const basePrompt = `===== SOURCE MATERIAL (the chapter's topics.md IN FULL — human-authored prose; read this) =====
 ${rawTopicsMd ?? "(no topics.md on record for this chapter — author from the LOs below)"}
 ===== END SOURCE MATERIAL =====
+
+⚠️ The worked numbers and examples in the SOURCE MATERIAL above are ALREADY SPENT — the student has most likely worked through them. Do not build a question on them; pick your own values or a different question type (§10).
 
 CHAPTER: ${st.chapterName}
 TOPIC: ${st.topicName}
@@ -333,12 +666,20 @@ ${loList(conceptualLos)}
 PROCEDURAL LEARNING OBJECTIVES:
 ${loList(proceduralLos)}
 
-EXISTING QUESTIONS IN THE BANK FOR THIS SUB-TOPIC (for coherence + to avoid near-duplicates):
-${bankList}
+===== THE STUDENT YOU ARE AUTHORING FOR =====
+You are writing for ONE named student. Everything below is about them specifically.
+
+CERTIFIED TWO-AXIS MASTERY ON THIS SUB-TOPIC (conceptual = reasoning/why; procedural = execution; 1–5):
+${masteryLine}${insightSections.join("\n")}
+===== END STUDENT =====
+
+THIS STUDENT'S BANK FOR THIS SUB-TOPIC — every approved question they can be given, and whether they have actually MET it. Use it for coherence, to avoid near-duplicates, and to see what ground is genuinely covered:
+  ⚠️ "authored" and "covered" are not the same thing. A question marked NOT YET SERVED has taught this student nothing yet — it is not covered ground, and re-probing that idea is duplication only if THEY have met it. A SKIPPED question was READ, so its probe is spent even though practice may serve it again.
+${renderBankWithHistory(bankRows)}
 
 ===== BRIEF FROM THE TUTOR =====
-${args.brief.trim() || "(no specific brief — author to this sub-topic's LOs at a sensible default depth, applying the spiral default)"}
-===== END BRIEF =====`;
+${args.brief.trim() || "(no specific brief — author to this sub-topic's LOs at a sensible default depth, applying the spiral default, aimed at the student picture above)"}
+===== END BRIEF =====${mixed ? mixedDeliveryBlock() : ""}`;
 
   return {
     st: {
@@ -350,6 +691,7 @@ ${args.brief.trim() || "(no specific brief — author to this sub-topic's LOs at
       subjectSlug: st.subjectSlug,
       boardSlug: st.boardSlug,
     },
+    studentId,
     pack,
     basePrompt,
   };
@@ -369,12 +711,27 @@ ${args.brief.trim() || "(no specific brief — author to this sub-topic's LOs at
 
 const PLAN_ENDPOINT = "authoring.worker.plan";
 
+// Slice QAUTH-A / item 6 / D-QAUTH-6. The premise item 6 states — "the worker
+// goes straight to output today" — was true on two of three paths, not all three:
+// with `planFirst` ON (the default) this phase already did 4 of its 6 steps. What
+// was genuinely missing is here: the named LO (step 1), the student read as an
+// explicit step rather than a by-product (step 2), the ZPD framing on the
+// difficulty call (step 3), and the coherence check (step 6). The SAME ordered
+// protocol also went into the pack's "order of work" section, which is what makes
+// it bind the DRAFT call — so the ordering survives `planFirst: false`, the path
+// with no plan phase at all.
 const PLAN_SYSTEM_TAIL = `
 ===== YOUR TASK THIS TURN: PLAN, DO NOT WRITE =====
-Do NOT write any questions this turn. Instead produce a PLAN the tutor will approve or amend:
-  - "read": your read of THIS student on THIS sub-topic, grounded in the tutor's brief and the source material — where they are weak, what the bank already covers, and what you therefore think is worth probing. 2–4 sentences, specific, no hedging.
-  - "items": ONE entry per question you intend to write, in the order you'd write them, each with its axis, the conceptual-question KIND you'd use (from the palette), the specific INTENT (which misconception or skill it probes), and the DIFFICULTY setting in words (per the dial catalog).
+Do NOT write any questions this turn. Work steps 1–6 of the order of work, and return them as a PLAN the tutor will approve or amend:
+  - "read": steps 1–2 — WHO this student is and WHERE they are on this sub-topic, grounded in their mastery, the tutor's note, the Stage-1 observations, what they have ALREADY BEEN SERVED from the bank, and the tutor's brief. Say what is worth probing and why. 2–4 sentences, specific, no hedging. If the student picture is empty, say that plainly instead of inventing a weakness.
+  - "items": ONE entry per question you intend to write, in the order you'd write them. Each carries:
+      · "lo"         — the exact learning objective (or threshold) this question aims at, quoted or closely paraphrased from the list above. Name the target BEFORE the stem exists; a question with no named target lands on-topic but generic.
+      · "axis"       — conceptual, procedural, or both.
+      · "kind"       — the conceptual-question kind from the palette.
+      · "intent"     — what it probes: the BOUNDARY you derived for it (§8), in one clause, plus the misconception or skill it targets.
+      · "difficulty" — the dial setting in words, chosen INSIDE THIS STUDENT'S ZONE OF PROXIMAL DEVELOPMENT: neither so easy they can already do it nor so hard they cannot reach it. Justify it against their levels, not against the topic in the abstract.
   - "questions": anything you genuinely need the tutor to decide before you draft. Usually EMPTY — only ask when the brief is actually ambiguous in a way that would change what you write. Never ask to be polite.
+Before you return the plan, run step 6 over it: the items must form an ORDERED scaffold that builds on itself (if two swap with no loss it is a pile, not a sequence), no two may be the same question twice, none may give another away, and none may repeat what this student has already been asked. Fix the list before returning it, not after.
 The tutor reads this in a few seconds and either approves it or tells you what to change. Be concrete enough that approving it is a real decision.
 ===== END TASK =====`;
 
@@ -393,6 +750,14 @@ const geminiPlanSchema = {
         type: Type.OBJECT,
         properties: {
           n: { type: Type.INTEGER, description: "1-based position in the set" },
+          // Item 6 step 1. REQUIRED here even though the contract has it optional
+          // — see WorkerPlanItem: optional exists only so stored pre-slice plans
+          // survive parseTurns, never so a new plan may omit it.
+          lo: {
+            type: Type.STRING,
+            description:
+              "the exact learning objective or threshold this question aims at, quoted or closely paraphrased from the list given",
+          },
           axis: {
             type: Type.STRING,
             enum: ["conceptual", "procedural", "both"],
@@ -404,14 +769,16 @@ const geminiPlanSchema = {
           },
           intent: {
             type: Type.STRING,
-            description: "the specific misconception or skill this question probes",
+            description:
+              "the boundary this question presses, plus the specific misconception or skill it probes",
           },
           difficulty: {
             type: Type.STRING,
-            description: "the difficulty setting in words, per the dial catalog",
+            description:
+              "the difficulty setting in words, per the dial catalog, inside THIS student's zone of proximal development",
           },
         },
-        required: ["n", "axis", "kind", "intent", "difficulty"],
+        required: ["n", "lo", "axis", "kind", "intent", "difficulty"],
       },
     },
     questions: {
@@ -447,7 +814,10 @@ export function renderPlanText(plan: WorkerPlan): string {
   const items = plan.items
     .map(
       (i) =>
-        `  ${i.n}. [${i.axis}] ${i.kind} — ${i.intent} (difficulty: ${i.difficulty})`,
+        `  ${i.n}. [${i.axis}] ${i.kind} — ${i.intent} (difficulty: ${i.difficulty})` +
+        // Item 6: absent on every plan stored before this slice, so it is rendered
+        // conditionally rather than as an empty "LO: " line.
+        (i.lo ? `\n     LO: ${i.lo}` : ""),
     )
     .join("\n");
   const asks =
@@ -484,11 +854,15 @@ export async function planAuthoringWork(
     brief: string;
     /** An existing episode to append this plan to (a re-plan); absent = first plan. */
     workerRowId?: string;
+    /** Item 12 — this plan's questions will be served MIXED. See mixedDeliveryBlock. */
+    mixed?: boolean;
   },
 ): Promise<PlanWorkResult> {
   const world = await buildScopedWorld(tx, {
+    chatId: args.chatId,
     subTopicId: args.subTopicId,
     brief: args.brief,
+    ...(args.mixed === undefined ? {} : { mixed: args.mixed }),
   });
 
   // The episode's prior turns (empty on a first plan). Read BEFORE the AI call so
@@ -562,8 +936,8 @@ async function runPlanCall(opts: {
   const claudeSystem = `${opts.pack}
 
 OUTPUT FORMAT (STRICT): respond with ONLY a single JSON object, no prose, no markdown fences, of the exact shape:
-{"read":"...","items":[{"n":1,"axis":"conceptual|procedural|both","kind":"...","intent":"...","difficulty":"..."}],"questions":["..."]}
-"questions" MUST be present — use [] when you have nothing to ask.`;
+{"read":"...","items":[{"n":1,"lo":"...","axis":"conceptual|procedural|both","kind":"...","intent":"...","difficulty":"..."}],"questions":["..."]}
+Every item MUST carry "lo" — the learning objective it aims at. "questions" MUST be present — use [] when you have nothing to ask.`;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -705,11 +1079,15 @@ export async function spawnAuthoringWorker(
      * plan; absent falls back to the episode's last plan turn (single-mode).
      */
     approvedPlan?: WorkerPlan | null;
+    /** Item 12 — this draft's questions will be served MIXED. See mixedDeliveryBlock. */
+    mixed?: boolean;
   },
 ): Promise<SpawnWorkerResult> {
   const world = await buildScopedWorld(tx, {
+    chatId: args.chatId,
     subTopicId: args.subTopicId,
     brief: args.brief,
+    ...(args.mixed === undefined ? {} : { mixed: args.mixed }),
   });
   const st = world.st;
   const pack = world.pack;
@@ -850,7 +1228,7 @@ async function runWorkerCall(
         opts.plan?.items.find((x) => x.n === i + 1) ?? opts.plan?.items[i] ?? null;
       const itemBlock = item
         ? `\n\nTHE APPROVED ITEM FOR THIS QUESTION (write exactly this one):
-  axis: ${item.axis}
+${item.lo ? `  LO: ${item.lo}\n` : ""}  axis: ${item.axis}
   kind: ${item.kind}
   intent: ${item.intent}
   difficulty: ${item.difficulty}`
@@ -870,7 +1248,10 @@ Apply the bar and the palette, and self-score on the rubric (honest low on at le
         label: `authoring-worker:${opts.subTopicId}:${i + 1}/${opts.count}`,
         systemInstruction: opts.pack,
         prompt: perQuestionPrompt,
-        responseSchema: geminiQuestionSchema as never,
+        // Slice QAUTH-A: BOUNDED to one element. The prose "write EXACTLY ONE
+        // question" below is no longer the only thing holding this — see
+        // geminiSingleQuestionSchema for the measured runaway that changed it.
+        responseSchema: geminiSingleQuestionSchema as never,
         // Bounds + rationale at AUTHORING_TIMEOUT_MS above. A single question is a
         // small output; this timeout is a backstop, not the working bound. Runs on
         // the global GEMINI_MODEL (= gemini-3.5-flash). geminiJson retries once on a

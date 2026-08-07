@@ -1957,6 +1957,12 @@ export const appRouter = router({
           // interleaved = N chapters (grounded across the set). Defaults to blocked.
           mode: z.enum(["blocked", "interleaved"]).optional(),
           chapterIds: z.array(z.string().uuid()).optional(),
+          // Slice QAUTH-B (item 11): the sub-topic scope the tutor ticked in the
+          // launcher, pre-filled from the scheduler's due queue. Optional — a
+          // chat started without the picker (blocked, or any older client) keeps
+          // today's whole-chapter scope. startChat drops any id that does not
+          // belong to the chosen chapters.
+          subTopicIds: z.array(z.string().uuid()).optional(),
           // Slice SEVERAL-THREAD: the thread-locked authoring grain. Defaults to
           // "one" in startChat — a missing value must never mean "spend N".
           authorGrain: z.enum(["one", "several"]).optional(),
@@ -1987,6 +1993,7 @@ export const appRouter = router({
             mode: input.mode,
             chapterId: input.chapterId ?? null,
             chapterIds: input.chapterIds,
+            subTopicIds: input.subTopicIds,
             authorGrain: input.authorGrain,
             carryMessages,
           });
