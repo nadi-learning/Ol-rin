@@ -22,7 +22,7 @@
  * This REVERSES D-L-2 (practice was self-serve only): a tutor-assigned path now
  * exists (D-ASG-1). Self-serve is unchanged and still works.
  */
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import {
   appUser,
@@ -37,6 +37,7 @@ import {
   subject,
   topic,
 } from "@b2c/kernel/schema";
+import { availableQuestionWhere } from "./question_access";
 import { assertTutorsStudent } from "./tutor";
 
 type Tx = PgTransaction<any, any, any>;
@@ -69,6 +70,18 @@ export type SubTopicProgress = {
    *  count). 0 = opened but nothing done yet — the FE reads this to show 'start →'
    *  instead of a misleading 'continue →' for an untouched active session. */
   currentIndex: number;
+  /**
+   * Slice MIXED — how many questions THIS student actually gets here: the frozen
+   * count once a session exists, else what is available to freeze right now.
+   *
+   * A sub_topic in the composition can contribute NOTHING to a given student —
+   * every question in it may be privately targeted at someone else, or (NEWONLY)
+   * already answered. The frozen composition does not know that.
+   */
+  questionCount: number;
+  /** questionCount > 0 — this sub_topic is real work for this student. The FE
+   *  must not offer a row that would dead-end on NO_QUESTIONS. */
+  hasWork: boolean;
 };
 
 export type AssignmentView = {
@@ -82,6 +95,40 @@ export type AssignmentView = {
   total: number;
   completedCount: number;
   completed: boolean; // derived: every sub_topic has a completed session (D-ASG-3)
+
+  // ── Slice MIXED (item 7 / D-QAUTH-9) ──────────────────────────────────────
+  /**
+   * Serve this as ONE mixed practice rather than a list of sub_topics to work
+   * one after another. Item 13's together/separate choice decides how many
+   * sub_topics an assignment carries, so the COMPOSITION carries the intent and
+   * nothing extra is stored.
+   *
+   * 🔴 But intent is not delivery: this is TRUE only when more than one sub_topic
+   * actually CONTRIBUTES QUESTIONS TO THIS STUDENT (`hasWork`), not merely when
+   * the composition holds more than one. Found by rendering it — a 2-sub_topic
+   * assignment whose second sub_topic was privately targeted at another student
+   * served four questions from ONE sub_topic under the label "mixed order". The
+   * same lie arrives on prod through NEWONLY the moment a student finishes one
+   * side of a mix. A composition is a plan; only the bank says what gets served.
+   */
+  mixed: boolean;
+  /** The student-facing name of the mixed entry; null when `mixed` is false.
+   *  Deliberately says nothing about WHICH sub_topics are inside — being told
+   *  what is coming is the one thing a mixed set exists to prevent (craft §7). */
+  mixedLabel: string | null;
+  /**
+   * QUESTION-grained progress, for the mixed card (the sub_topic-grained
+   * `completedCount / total` above is meaningless once the sub_topics are no
+   * longer shown separately).
+   *
+   * `questionDone` / `questionTotal` are computed by exactly the rule
+   * practice.pickStep uses for the in-run counter, so the card and the stepper
+   * cannot disagree. Sub_topics with no ACTIVE session contribute their
+   * currently-AVAILABLE count instead — that is a live preview of what a start
+   * would freeze, so a not-yet-started assignment can still say how big it is.
+   */
+  questionTotal: number;
+  questionDone: number;
 };
 
 /** sub_topic rows for a set of ids, with their chapter + subject (RLS-scoped). */
@@ -211,6 +258,22 @@ export async function assignApprovedQuestions(
     tutorUserId: string;
     mode: AssignmentMode;
     questionIds: string[];
+    /**
+     * Slice MIXED, item 13 — split a BLOCKED batch into one assignment per
+     * sub_topic instead of merging it into a single chapter assignment.
+     *
+     * The choice IS the composition: an assignment holding >1 sub_topic is served
+     * as one mixed practice, one holding a single sub_topic is served exactly as
+     * before. So the tutor's answer needs no column of its own and there is
+     * nothing that can drift out of sync with the delivery code.
+     *
+     * Ignored for INTERLEAVED, which always stays mixed (item 13) — an
+     * interleaved assignment split per sub_topic is just blocked practice.
+     *
+     * Defaults to merged (founder call): today's behaviour is the default, and
+     * the tutor opts INTO the split.
+     */
+    separate?: boolean;
   },
 ): Promise<AssignmentView[]> {
   if (args.questionIds.length === 0) return [];
@@ -231,20 +294,29 @@ export async function assignApprovedQuestions(
   const resolved = await resolveSubTopics(tx, subTopicIds);
   const byId = new Map(resolved.map((r) => [r.subTopicId, r]));
 
-  // Group sub_topics by the mode's scope anchor (chapter=blocked, subject=interleaved).
-  const groups = new Map<string, string[]>(); // anchorId → ordered sub_topic ids
+  // Slice MIXED item 13 — 'separate' is honoured for BLOCKED only; interleaved
+  // always stays mixed.
+  const separate = args.mode === "blocked" && args.separate === true;
+
+  // Group sub_topics by the mode's scope anchor (chapter=blocked, subject=
+  // interleaved) — or, when splitting, by the sub_topic itself, so each becomes
+  // its own single-sub_topic assignment. The anchor is still carried separately
+  // because createAssignment + the find-and-extend lookup key on it either way.
+  type Group = { anchorId: string; subTopicIds: string[] };
+  const groups = new Map<string, Group>();
   for (const stId of subTopicIds) {
     const r = byId.get(stId);
     if (!r) continue; // unresolved (deleted/cross-board) — skip
-    const anchor = args.mode === "blocked" ? r.chapterId : r.subjectId;
-    const list = groups.get(anchor) ?? [];
-    list.push(stId);
-    groups.set(anchor, list);
+    const anchorId = args.mode === "blocked" ? r.chapterId : r.subjectId;
+    const key = separate ? `${anchorId}:${stId}` : anchorId;
+    const g = groups.get(key) ?? { anchorId, subTopicIds: [] };
+    g.subTopicIds.push(stId);
+    groups.set(key, g);
   }
 
   const anchorCol = args.mode === "blocked" ? assignment.chapterId : assignment.subjectId;
   const views: AssignmentView[] = [];
-  for (const [anchorId, groupSubTopics] of groups) {
+  for (const { anchorId, subTopicIds: groupSubTopics } of groups.values()) {
     // Existing assignments for this exact scope, newest first.
     const candidates = await tx
       .select()
@@ -262,6 +334,16 @@ export async function assignApprovedQuestions(
     // Reuse the newest OPEN (not-derived-completed) one; skip finished assignments.
     let target: typeof assignment.$inferSelect | null = null;
     for (const row of candidates) {
+      // Slice MIXED — when splitting, ONLY a single-sub_topic assignment for
+      // THIS sub_topic is a valid extend target. Without this the find-and-extend
+      // would hand the sub_topic to whatever open chapter assignment exists and
+      // silently merge the split straight back into a mixed set.
+      if (
+        separate &&
+        !(row.subTopicIds.length === 1 && row.subTopicIds[0] === groupSubTopics[0])
+      ) {
+        continue;
+      }
       const [view] = await buildViews(tx, [row]);
       if (view && !view.completed) {
         target = row;
@@ -310,6 +392,22 @@ type SessionProgress = {
   questionIds: string[];
 };
 
+type SessionRollup = {
+  /** The REPRESENTATIVE session per sub_topic (see below). */
+  byStId: Map<string, SessionProgress>;
+  /** Sub_topics with a live session — Slice MIXED: these already have their
+   *  question count frozen, so they must NOT also be counted from the bank. */
+  activeStIds: Set<string>;
+  /** Σ frozen question_ids across EVERY session of this assignment — completed
+   *  ones included. A sub_topic can carry more than one (a finished session plus
+   *  a fresh one after the tutor authored more into it, which is NEWONLY working
+   *  as designed), and both really are work the student has to do. Same rule as
+   *  practice.pickStep, so the card and the in-run counter agree. */
+  questionTotal: number;
+  /** Σ currentIndex across every session — answered or skipped. */
+  questionDone: number;
+};
+
 /**
  * Per-sub_topic session status + progress for one assignment + one student.
  *
@@ -323,7 +421,7 @@ async function sessionStatusFor(
   tx: Tx,
   assignmentId: string,
   studentId: string,
-): Promise<Map<string, SessionProgress>> {
+): Promise<SessionRollup> {
   const sessions = await tx
     .select({
       id: practiceSession.id,
@@ -340,8 +438,14 @@ async function sessionStatusFor(
       ),
     );
   const m = new Map<string, SessionProgress>();
+  const activeStIds = new Set<string>();
+  let questionTotal = 0;
+  let questionDone = 0;
   for (const s of sessions) {
     const st = s.status as "active" | "completed";
+    questionTotal += s.questionIds.length;
+    questionDone += s.currentIndex;
+    if (st === "active") activeStIds.add(s.subTopicId);
     const prev = m.get(s.subTopicId);
     const row: SessionProgress = {
       sessionId: s.id,
@@ -361,7 +465,27 @@ async function sessionStatusFor(
       m.set(s.subTopicId, row);
     }
   }
-  return m;
+  return { byStId: m, activeStIds, questionTotal, questionDone };
+}
+
+/**
+ * Slice MIXED — the student-facing name of a mixed entry (item 7's wording).
+ *
+ * Interleaved spans chapters within a subject, so it is named by that scope;
+ * blocked sits inside one chapter and is named by it. Neither names the
+ * sub_topics: telling the student what is coming is exactly what a mixed set
+ * exists to prevent (craft §7 — a question that signals its method does the
+ * discriminating for the student).
+ *
+ * UI copy rule (S76): hyphen "-", never an em-dash.
+ */
+function mixedLabelFor(
+  mode: AssignmentMode,
+  meta: { subjectName: string | null; chapterName: string | null },
+): string {
+  if (mode === "interleaved") return "Mixed questions (all chapters)";
+  const scope = [meta.subjectName, meta.chapterName].filter(Boolean).join(" - ");
+  return scope ? `Mixed questions (${scope})` : "Mixed questions";
 }
 
 /** Assemble an AssignmentView from a row + its resolved sub_topics + sessions. */
@@ -371,20 +495,58 @@ async function buildView(
   ids: string[],
   byId: Map<string, Awaited<ReturnType<typeof resolveSubTopics>>[number]>,
 ): Promise<AssignmentView> {
-  const sessions = await sessionStatusFor(tx, row.id, row.studentId);
+  const rollup = await sessionStatusFor(tx, row.id, row.studentId);
+  const sessions = rollup.byStId;
+
+  // Slice MIXED — a sub_topic with NO ACTIVE session has frozen nothing, so its
+  // contribution is what a start would freeze RIGHT NOW: the available (visible
+  // AND unanswered) count, via the one shared predicate. Grouped PER SUB_TOPIC,
+  // not summed, because "how many sub_topics can actually serve this student"
+  // is what decides whether this is a mix at all.
+  //
+  // This also covers the finished-then-re-authored case correctly — the completed
+  // session's questions are already in rollup.questionTotal, and only the NEW
+  // ones are added here.
+  const pending = ids.filter((id) => !rollup.activeStIds.has(id));
+  const availByStId = new Map<string, number>();
+  if (pending.length > 0) {
+    const rows = await tx
+      .select({ subTopicId: question.subTopicId, n: sql<number>`count(*)::int` })
+      .from(question)
+      .where(
+        and(
+          availableQuestionWhere(row.studentId),
+          inArray(question.subTopicId, pending),
+        ),
+      )
+      .groupBy(question.subTopicId);
+    for (const r of rows) availByStId.set(r.subTopicId, r.n);
+  }
+
   const subTopics: SubTopicProgress[] = ids.map((id) => {
     const r = byId.get(id)!;
     const s = sessions.get(id);
+    // Frozen wins where a session exists (that IS this student's served set);
+    // otherwise the live availability count.
+    const questionCount = s ? s.questionIds.length : (availByStId.get(id) ?? 0);
     return {
       subTopicId: id,
       subTopicName: r.subTopicName,
       chapterName: r.chapterName,
       sessionStatus: s?.status ?? "not_started",
       currentIndex: s?.currentIndex ?? 0,
+      questionCount,
+      hasWork: questionCount > 0,
     };
   });
   const completedCount = subTopics.filter((s) => s.sessionStatus === "completed").length;
   const first = byId.get(ids[0]!)!;
+
+  // 🔴 The mix is decided by what can actually be SERVED, not by the composition.
+  const contributing = subTopics.filter((s) => s.hasWork).length;
+  const mixed = contributing > 1;
+  const pendingCount = pending.reduce((n, id) => n + (availByStId.get(id) ?? 0), 0);
+
   return {
     id: row.id,
     mode: row.mode as AssignmentMode,
@@ -396,6 +558,15 @@ async function buildView(
     total: ids.length,
     completedCount,
     completed: completedCount === ids.length,
+    mixed,
+    mixedLabel: mixed
+      ? mixedLabelFor(row.mode as AssignmentMode, {
+          subjectName: first.subjectName,
+          chapterName: first.chapterName,
+        })
+      : null,
+    questionTotal: rollup.questionTotal + pendingCount,
+    questionDone: rollup.questionDone,
   };
 }
 
@@ -537,7 +708,11 @@ export async function getAssignmentWorkForTutor(
   const resolved = await resolveSubTopics(tx, row.subTopicIds);
   const byId = new Map(resolved.map((r) => [r.subTopicId, r]));
   const ids = row.subTopicIds.filter((id) => byId.has(id));
-  const sessions = await sessionStatusFor(tx, row.id, row.studentId);
+  // Slice MIXED — sessionStatusFor now returns a rollup; this view still wants
+  // the per-sub_topic representative (the tutor reads the work sub_topic by
+  // sub_topic even when the STUDENT met it mixed — the evidence is still filed
+  // per sub_topic, which is what mastery keys on).
+  const sessions = (await sessionStatusFor(tx, row.id, row.studentId)).byStId;
 
   // One pass for every attempt across every session in this assignment.
   const sessionIds = ids
@@ -715,16 +890,37 @@ export async function assertAssignedSubTopic(
   tx: Tx,
   args: { assignmentId: string; appUserId: string; subTopicId: string },
 ): Promise<void> {
-  const [row] = await tx
-    .select({ studentId: assignment.studentId, subTopicIds: assignment.subTopicIds })
-    .from(assignment)
-    .where(eq(assignment.id, args.assignmentId))
-    .limit(1);
-  // RLS scopes the board; the student check stops cross-student access.
-  if (!row || row.studentId !== args.appUserId) {
-    throw new AssignmentNotFoundError(args.assignmentId);
-  }
+  const row = await loadAssignmentForStudent(tx, args);
   if (!row.subTopicIds.includes(args.subTopicId)) {
     throw new InvalidAssignmentError("sub_topic is not part of this assignment");
   }
+}
+
+/**
+ * Slice MIXED — load one assignment that must belong to the caller, or throw
+ * ASSIGNMENT_NOT_FOUND with no detail (a foreign id must not be distinguishable
+ * from a missing one). RLS scopes the board; the student check stops
+ * cross-student access.
+ *
+ * Extracted so `assertAssignedSubTopic` and practice's mixed-run entry points
+ * share ONE ownership rule rather than each spelling out their own.
+ */
+export async function loadAssignmentForStudent(
+  tx: Tx,
+  args: { assignmentId: string; appUserId: string },
+): Promise<{ id: string; mode: AssignmentMode; subTopicIds: string[] }> {
+  const [row] = await tx
+    .select({
+      id: assignment.id,
+      mode: assignment.mode,
+      studentId: assignment.studentId,
+      subTopicIds: assignment.subTopicIds,
+    })
+    .from(assignment)
+    .where(eq(assignment.id, args.assignmentId))
+    .limit(1);
+  if (!row || row.studentId !== args.appUserId) {
+    throw new AssignmentNotFoundError(args.assignmentId);
+  }
+  return { id: row.id, mode: row.mode as AssignmentMode, subTopicIds: row.subTopicIds };
 }

@@ -1483,6 +1483,28 @@
   cursor: pointer;
   margin: 0;
 }
+/* Slice MIXED item 13: together-or-separate, shown only for a BLOCKED batch that
+   spans several sub-topics. Sits between the assign toggle and Approve; wraps
+   with them rather than squeezing the button (savebar is a flex row). */
+.tut-auth-split {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  margin-right: auto;
+  font-size: 0.85rem;
+  color: var(--text-muted, #667);
+}
+.tut-auth-split-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.tut-auth-split-opt input {
+  cursor: pointer;
+  margin: 0;
+}
 
 /* ───────────── Slice AUTH v2 — student-grounded conversational authoring ─────────────
    TAITOR chat: AI bubbles (periwinkle, left) + tutor bubbles (lilac, right) on a

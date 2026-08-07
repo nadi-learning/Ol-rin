@@ -105,6 +105,20 @@ export function PracticePage({ pet }: { pet: string | null }) {
   const [pendingNext, setPendingNext] = useState<Session["question"]>(null);
   const [pendingCompleted, setPendingCompleted] = useState(false);
 
+  // Slice MIXED (item 7) — a multi-sub_topic assignment is worked as ONE mixed
+  // run: consecutive questions arrive from DIFFERENT sub_topics, so the next
+  // question does not belong to the session that just took the answer. Three
+  // pieces of state carry that:
+  //   mixedId          the assignment being run (null = ordinary single session)
+  //   pendingSessionId the session that owns the NEXT question, from the BE's
+  //                    round-robin — swapped into sessionId on "Next question"
+  //   stepLoading      the step read is in flight; the Next button waits on it
+  // The server is the only thing that decides the order (practice.pickStep) —
+  // the client never chooses, so it cannot drift from what the sessions hold.
+  const [mixedId, setMixedId] = useState<string | null>(null);
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [stepLoading, setStepLoading] = useState(false);
+
   const subTopics = useMemo<Picker[]>(() => {
     const out: Picker[] = [];
     for (const ch of nav ?? [])
@@ -181,11 +195,38 @@ export function PracticePage({ pet }: { pet: string | null }) {
   const pick = async (subTopicId: string, assignmentId?: string) => {
     setError(null);
     setBusy(true);
+    setMixedId(null); // a single sub_topic run — not mixed
     try {
       const s = await trpc.practice.startSession.mutate({
         subTopicId,
         ...(assignmentId ? { assignmentId } : {}),
       });
+      setSessionId(s.sessionId);
+      setTotal(s.total);
+      setIdx(s.currentIndex);
+      if (s.status === "completed" || !s.question) {
+        setPhase("completed");
+      } else {
+        beginQuestion(s.question);
+      }
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      setError(msg.includes("NO_QUESTIONS") ? "NO_QUESTIONS" : msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Slice MIXED — open a multi-sub_topic assignment as ONE run. The BE makes sure
+  // every sub_topic in the frozen composition has its session (skipping any with
+  // nothing left to serve) and hands back the first step; from then on the step
+  // after each answer comes from assignmentStep, not from the submit response.
+  const startMixed = async (assignmentId: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const s = await trpc.practice.startAssignment.mutate({ assignmentId });
+      setMixedId(assignmentId);
       setSessionId(s.sessionId);
       setTotal(s.total);
       setIdx(s.currentIndex);
@@ -221,14 +262,42 @@ export function PracticePage({ pet }: { pet: string | null }) {
     }
   };
 
-  const afterAttempt = (r: AttemptResult) => {
+  const afterAttempt = async (r: AttemptResult) => {
     setReveal(r.reveal);
     setAttemptId(r.attemptId);
     setLastPhotoImageIds(r.photoImageIds);
-    setPendingNext(r.next);
-    setPendingCompleted(r.completed);
-    setIdx(r.currentIndex);
-    setPhase("revealed");
+    setPhase("revealed"); // show the reveal FIRST — any step read runs behind it
+
+    if (!mixedId) {
+      setPendingNext(r.next);
+      setPendingCompleted(r.completed);
+      setIdx(r.currentIndex);
+      return;
+    }
+
+    // Slice MIXED — r.next / r.completed / r.currentIndex are SESSION-scoped and
+    // are all wrong here: the next question belongs to a different sub_topic's
+    // session, and "completed" means that one session finished, not the run. Ask
+    // the assignment instead. Failing that, end the run rather than serve the
+    // session's own next question — that would silently drop back into blocked
+    // practice, which is the exact thing this slice exists to stop.
+    setStepLoading(true);
+    try {
+      const step = await trpc.practice.assignmentStep.query({
+        assignmentId: mixedId,
+      });
+      setTotal(step.total);
+      setIdx(step.currentIndex);
+      setPendingNext(step.question);
+      setPendingSessionId(step.sessionId);
+      setPendingCompleted(step.status === "completed" || !step.question);
+    } catch {
+      setPendingNext(null);
+      setPendingSessionId(null);
+      setPendingCompleted(true);
+    } finally {
+      setStepLoading(false);
+    }
   };
 
   const submit = async () => {
@@ -244,7 +313,7 @@ export function PracticePage({ pet }: { pet: string | null }) {
         timeMs: Math.max(0, Date.now() - startedAt),
       });
       setLastWasPhoto(false);
-      afterAttempt(r);
+      await afterAttempt(r);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -271,7 +340,7 @@ export function PracticePage({ pet }: { pet: string | null }) {
         timeMs: Math.max(0, Date.now() - startedAt),
       });
       setLastWasPhoto(true);
-      afterAttempt(r);
+      await afterAttempt(r);
     } catch (e: any) {
       photoSubmittingRef.current = false; // allow a retry on failure
       setError(String(e?.message ?? e));
@@ -290,7 +359,7 @@ export function PracticePage({ pet }: { pet: string | null }) {
         questionId: question.id,
         reason: null,
       });
-      afterAttempt(r);
+      await afterAttempt(r);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -301,9 +370,13 @@ export function PracticePage({ pet }: { pet: string | null }) {
   const next = () => {
     if (pendingCompleted || !pendingNext) {
       setPhase("completed");
-    } else {
-      beginQuestion(pendingNext);
+      return;
     }
+    // Slice MIXED — the next question belongs to a DIFFERENT sub_topic's session,
+    // so the id the stepper submits against has to move with it. Ordinary runs
+    // leave pendingSessionId null and keep the session they started on.
+    if (mixedId && pendingSessionId) setSessionId(pendingSessionId);
+    beginQuestion(pendingNext);
   };
 
   const backToTopics = () => {
@@ -313,6 +386,8 @@ export function PracticePage({ pet }: { pet: string | null }) {
     setReveal(null);
     setReview(null);
     setError(null);
+    setMixedId(null);
+    setPendingSessionId(null);
     loadAssignments(); // refresh progress after working through a session
   };
 
@@ -334,6 +409,7 @@ export function PracticePage({ pet }: { pet: string | null }) {
             assignments={assignments}
             busy={busy}
             onPick={pick}
+            onPickMixed={startMixed}
             onReview={openReview}
           />
           <PickList
@@ -520,8 +596,20 @@ export function PracticePage({ pet }: { pet: string | null }) {
                         against the model — it isn't handed to them by default. */}
                     <ModelAnswer reveal={reveal} collapsible />
                     <div className="prac-actions">
-                      <button className="prac-btn prac-btn-primary" onClick={next}>
-                        {pendingCompleted ? "Finish" : "Next question"}
+                      {/* Slice MIXED — in a mixed run the next question is
+                          fetched from the assignment while the reveal is on
+                          screen; hold the button until that lands so a fast
+                          reader can't fall through to a premature "Finish". */}
+                      <button
+                        className="prac-btn prac-btn-primary"
+                        onClick={next}
+                        disabled={stepLoading}
+                      >
+                        {stepLoading
+                          ? "Loading…"
+                          : pendingCompleted
+                            ? "Finish"
+                            : "Next question"}
                       </button>
                     </div>
                   </div>
@@ -633,11 +721,14 @@ function AssignedList({
   assignments,
   busy,
   onPick,
+  onPickMixed,
   onReview,
 }: {
   assignments: Assignment[] | null;
   busy: boolean;
   onPick: (subTopicId: string, assignmentId: string) => void;
+  /** Slice MIXED — a multi-sub_topic assignment opens as ONE run, by id. */
+  onPickMixed: (assignmentId: string) => void;
   onReview: (subTopicId: string, assignmentId: string) => void;
 }) {
   if (!assignments || assignments.length === 0) return null;
@@ -666,7 +757,13 @@ function AssignedList({
         <span className="prac-assigned-count">{open.length}</span>
       </h2>
       <div className="prac-assigned-list">
-        {open.map((a) => (
+        {open.map((a) => {
+          // Slice MIXED — the rows that are real work for THIS student. An
+          // assignment can legitimately have none (every question in it targeted
+          // at someone else, or all answered), and an empty card must say so
+          // rather than render a heading over nothing.
+          const rows = a.subTopics.filter((st) => st.hasWork);
+          return (
           <div key={a.id} className="prac-assigned-card">
             <div className="prac-assigned-head">
               <span className={`prac-assigned-mode prac-assigned-mode--${a.mode}`}>
@@ -676,11 +773,51 @@ function AssignedList({
                 {a.subjectName ?? a.chapterName ?? ""}
               </span>
               <span className="prac-assigned-progress">
-                {a.completedCount} / {a.total} done
+                {/* Slice MIXED — sub_topic-grained progress means nothing once the
+                    sub_topics aren't shown separately; count questions instead. */}
+                {a.mixed
+                  ? `${a.questionDone} / ${a.questionTotal} questions`
+                  : `${a.completedCount} / ${a.total} done`}
               </span>
             </div>
+            {/* Slice MIXED (item 7) — an assignment carrying more than one
+                sub_topic is ONE entry, not a list to work through one at a time.
+                Working them in turn is blocked practice wearing a mixed label;
+                and naming them here would tell the student which question is
+                coming, which is the one thing a mixed set exists to test
+                (craft §7). The server round-robins across the sub_topics. */}
+            {a.mixed ? (
+              <ul className="prac-assigned-sts">
+                <li>
+                  <button
+                    className="prac-assigned-st"
+                    onClick={() => onPickMixed(a.id)}
+                    disabled={busy}
+                  >
+                    <span className="prac-assigned-st-name">
+                      {a.mixedLabel}
+                      <span className="prac-assigned-st-crumb">
+                        {a.questionTotal} question
+                        {a.questionTotal === 1 ? "" : "s"}, mixed order
+                      </span>
+                    </span>
+                    <span className="prac-assigned-st-status">
+                      {a.questionDone > 0 ? "continue →" : "start →"}
+                    </span>
+                  </button>
+                </li>
+              </ul>
+            ) : rows.length === 0 ? (
+              <p className="prac-assigned-caught">
+                Nothing to practise here right now - your tutor will add more.
+              </p>
+            ) : (
             <ul className="prac-assigned-sts">
-              {a.subTopics.map((st) => {
+              {/* Slice MIXED — hide sub_topics that hold nothing for THIS student
+                  (privately targeted at someone else, or all answered). They were
+                  clickable dead-ends into NO_QUESTIONS, and they are the same rows
+                  that used to make a single-sub_topic run read as "mixed". */}
+              {rows.map((st) => {
                 const done = st.sessionStatus === "completed";
                 // 'continue' ONLY for an active session with real progress
                 // (idx>0). An active-but-untouched session (opened then left,
@@ -710,8 +847,10 @@ function AssignedList({
                 );
               })}
             </ul>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

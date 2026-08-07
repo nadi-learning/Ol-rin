@@ -22,12 +22,17 @@
  * post-submit reveal · D-L-4 table named practice_session (Better Auth owns
  * `sessions`).
  */
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { attempt, attemptImage, practiceSession, question } from "@b2c/kernel/schema";
 import { enqueueStage1Scoring } from "../worker/queue";
-import { assertAssignedSubTopic } from "./assignment";
+import { assertAssignedSubTopic, loadAssignmentForStudent } from "./assignment";
+import {
+  availableQuestionWhere,
+  unansweredExpr,
+  visibleQuestionWhere,
+} from "./question_access";
 import { resolveDispatchReason } from "./scheduler";
 import { currentImageFor } from "./image_read";
 import { consumeUploadToken, type ConsumedPhotos } from "./upload";
@@ -187,73 +192,12 @@ function viewOf(s: typeof practiceSession.$inferSelect, q: PublicQuestion | null
  * assigned session for the same sub_topic stay DISTINCT (resume matches on the
  * assignment link), so they never cross-link.
  */
-/**
- * Slice AVAIL — the ONE availability predicate: "which questions can THIS caller
- * practise?" Private-aware delivery (AUTH-v2): the canonical bank
- * (target_student_id NULL) PLUS the caller's own targeted questions; drafts never
- * served (FIG-AUTH / M11 CHECK side).
- *
- * This exists as a shared function on purpose. `startSession` SELECTs with it and
- * `listAvailability` COUNTs with it, so the browse list's "Coming soon" chip and
- * what Practice will actually serve CANNOT drift. Two copies of this predicate
- * would be a lying UI the moment one changed: a chip promising questions that
- * startSession then refuses (or worse, "Coming soon" over a student's own
- * privately-authored set). One function, two callers — drift is structural, so
- * make it impossible rather than test for it.
- *
- * Board scoping is NOT here — every caller runs inside the board-scoped tx (RLS).
- */
-export function visibleQuestionWhere(appUserId: string, subTopicId?: string) {
-  return and(
-    subTopicId ? eq(question.subTopicId, subTopicId) : undefined,
-    eq(question.status, "approved"),
-    or(isNull(question.targetStudentId), eq(question.targetStudentId, appUserId)),
-  );
-}
-
-/**
- * Slice NEWONLY — "this caller has not already answered it."
- *
- * ANSWERED, NOT TOUCHED. The clause keys on `skip_reason IS NULL`, because a
- * skip and an answer are the SAME write: `skip()` and `submitAttempt()` both go
- * through recordAndAdvance and both insert an `attempt` row. Keying on the row's
- * existence alone would retire a question the student explicitly said "not now"
- * to — they would never see it again, which is the opposite of a skip's meaning.
- * (ai-build-miss, the "define the predicate from the WRITE the real action
- * performs" trap: the table name says `attempt`, the domain word is `answered`,
- * and they are not the same set.)
- *
- * A photo answer carries answer_text NULL with attempt_image rows, so it is NOT
- * detectable via answer_text — skip_reason is the only field that separates the
- * three cases in one predicate.
- *
- * RLS: `attempt` is tenant-scoped + FORCE RLS and this runs inside the caller's
- * board-scoped tx, so the subquery sees only this board's rows. That is wanted —
- * an attempt in another board must not retire a question here.
- */
-export function unansweredExpr(appUserId: string) {
-  return sql`NOT EXISTS (
-    SELECT 1 FROM ${attempt} a
-     WHERE a.question_id = ${question.id}
-       AND a.app_user_id = ${appUserId}
-       AND a.skip_reason IS NULL
-  )`;
-}
-
-/**
- * Slice NEWONLY — what Practice will actually SERVE: visible AND not yet
- * answered. Founder ruling 2026-08-05: re-authoring into a sub_topic the student
- * has already worked must surface only the NEW questions, never replay the
- * finished ones. Before this, `startSession` re-froze the whole approved set on
- * every new session, so Monday's two answered questions came back on Wednesday
- * at currentIndex 0.
- *
- * Still ONE predicate for the two callers (see above) — `listAvailability` now
- * composes the same two pieces rather than duplicating them.
- */
-export function availableQuestionWhere(appUserId: string, subTopicId?: string) {
-  return and(visibleQuestionWhere(appUserId, subTopicId), unansweredExpr(appUserId));
-}
+// Slice MIXED — the three availability predicates moved to question_access.ts so
+// assignment.ts can count a mixed assignment's questions BEFORE any session has
+// frozen them, without importing practice.ts (which would cycle: practice.ts
+// imports assertAssignedSubTopic from assignment.ts). Re-exported here so every
+// existing importer keeps working and there is still exactly ONE definition.
+export { availableQuestionWhere, unansweredExpr, visibleQuestionWhere };
 
 /**
  * Slice AVAIL — per-sub_topic count of questions this caller can actually
@@ -370,6 +314,184 @@ export async function startSession(
     .returning();
   const first = await loadPublicQuestion(tx, created!.questionIds[0]!);
   return viewOf(created!, first);
+}
+
+// ── Slice MIXED (item 7 / D-QAUTH-9 Shape B) — serve a multi-sub_topic ─────
+//    assignment as ONE mixed practice.
+//
+// The session model is UNCHANGED: one practice_session per sub_topic, each with
+// its own frozen question_ids[]. What changes is the SERVING — instead of the
+// student picking a sub_topic and working it to the end (blocked practice
+// wearing a mixed label), the assignment hands out the next question by
+// round-robin ACROSS its sessions. Shape A (a nullable practice_session
+// .sub_topic_id + one session per assignment) was rejected: it costs a migration
+// plus four consumers plus getAssignmentWorkForTutor, which renders off each
+// session's frozen array.
+//
+// Round-robin is not a shuffle and does not need to be — consecutive questions
+// arriving from DIFFERENT sub_topics is the interleaving contrast. A true
+// shuffle would need a stored order, which is Shape A at assignment grain.
+//
+// Mastery/certification were never at risk either way: Stage-1 attributes every
+// observation from `q.subTopicId` (assessment.ts:356/396/446), not from the
+// session's.
+
+/** One step of a mixed run: the assignment-wide counters + the question to serve
+ *  now, plus the session that owns it (the FE submits against THAT id). */
+export type AssignmentStepView = {
+  assignmentId: string;
+  /** The session serving `question`. null once the run is complete. */
+  sessionId: string | null;
+  /** Assignment-wide: Σ frozen question_ids across every session of this run. */
+  total: number;
+  /** Assignment-wide: Σ currentIndex — how many have been answered or skipped. */
+  currentIndex: number;
+  status: "active" | "completed";
+  question: PublicQuestion | null;
+};
+
+/**
+ * The round-robin selector, over sessions that already exist. Pure read.
+ *
+ * NEXT = the ACTIVE session that is furthest BEHIND (lowest currentIndex), ties
+ * broken by the sub_topic's position in the assignment's frozen composition.
+ * With sub_topics A(3 questions) and B(2) that yields A1 B1 A2 B2 A3 — each
+ * question arrives from a different sub_topic than the one before it, for as
+ * long as there is a different one left.
+ *
+ * The counters sum EVERY session of the run, completed ones included, because a
+ * sub_topic can carry more than one (a completed session plus a fresh one after
+ * the tutor authored more into it — NEWONLY's designed behaviour). Summing all
+ * of them is the honest total: the student really does have that many to do.
+ */
+async function pickStep(
+  tx: Tx,
+  args: { appUserId: string; assignmentId: string; subTopicIds: string[] },
+): Promise<AssignmentStepView> {
+  const sessions = await tx
+    .select({
+      id: practiceSession.id,
+      subTopicId: practiceSession.subTopicId,
+      status: practiceSession.status,
+      currentIndex: practiceSession.currentIndex,
+      questionIds: practiceSession.questionIds,
+      createdAt: practiceSession.createdAt,
+    })
+    .from(practiceSession)
+    .where(
+      and(
+        eq(practiceSession.assignmentId, args.assignmentId),
+        eq(practiceSession.appUserId, args.appUserId),
+      ),
+    );
+
+  const total = sessions.reduce((n, s) => n + s.questionIds.length, 0);
+  const currentIndex = sessions.reduce((n, s) => n + s.currentIndex, 0);
+
+  // Defensive: an active session whose index has run off the end can't serve
+  // (recordAndAdvance flips those to 'completed', so this should be empty).
+  const active = sessions.filter(
+    (s) => s.status === "active" && s.currentIndex < s.questionIds.length,
+  );
+  if (active.length === 0) {
+    return {
+      assignmentId: args.assignmentId,
+      sessionId: null,
+      total,
+      currentIndex,
+      status: "completed",
+      question: null,
+    };
+  }
+
+  // A sub_topic missing from the frozen composition sorts last rather than to
+  // the front (indexOf would return -1, which is the smallest possible key).
+  const orderOf = (stId: string) => {
+    const i = args.subTopicIds.indexOf(stId);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  active.sort(
+    (a, b) =>
+      a.currentIndex - b.currentIndex ||
+      orderOf(a.subTopicId) - orderOf(b.subTopicId) ||
+      a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+  const next = active[0]!;
+  const q = await loadPublicQuestion(tx, next.questionIds[next.currentIndex]!);
+  return {
+    assignmentId: args.assignmentId,
+    sessionId: next.id,
+    total,
+    currentIndex,
+    status: "active",
+    question: q,
+  };
+}
+
+/**
+ * Open (or resume) a mixed run: make sure every sub_topic in the assignment has
+ * its session, then hand back the first step.
+ *
+ * A sub_topic with nothing left to serve is SKIPPED, not fatal — startSession
+ * throws NO_QUESTIONS for it (everything approved there is already answered),
+ * and in a mixed run that just means this sub_topic contributes nothing. The
+ * error only propagates when NOTHING in the whole assignment can be served AND
+ * no session exists yet: a run whose sessions are all complete reports
+ * `completed`, it does not 404.
+ *
+ * This is the only entry point that CREATES sessions. `getAssignmentStep` below
+ * is pure read, so the per-question polling after each submit can never spawn a
+ * session as a side effect.
+ */
+export async function startAssignmentSession(
+  tx: Tx,
+  args: { boardId: string; appUserId: string; assignmentId: string },
+): Promise<AssignmentStepView> {
+  const row = await loadAssignmentForStudent(tx, {
+    assignmentId: args.assignmentId,
+    appUserId: args.appUserId,
+  });
+
+  for (const subTopicId of row.subTopicIds) {
+    try {
+      await startSession(tx, {
+        boardId: args.boardId,
+        appUserId: args.appUserId,
+        subTopicId,
+        assignmentId: args.assignmentId,
+      });
+    } catch (e) {
+      if (e instanceof NoQuestionsError) continue; // nothing left here — fine
+      throw e;
+    }
+  }
+
+  const step = await pickStep(tx, {
+    appUserId: args.appUserId,
+    assignmentId: args.assignmentId,
+    subTopicIds: row.subTopicIds,
+  });
+  // total 0 means not one session exists across the whole composition — there
+  // was genuinely nothing to serve, which IS the NO_QUESTIONS case.
+  if (step.total === 0) throw new NoQuestionsError(row.subTopicIds[0] ?? args.assignmentId);
+  return step;
+}
+
+/** Read-only: which question does this mixed run serve next? Called after every
+ *  submit/skip, so it must never write. */
+export async function getAssignmentStep(
+  tx: Tx,
+  args: { appUserId: string; assignmentId: string },
+): Promise<AssignmentStepView> {
+  const row = await loadAssignmentForStudent(tx, {
+    assignmentId: args.assignmentId,
+    appUserId: args.appUserId,
+  });
+  return pickStep(tx, {
+    appUserId: args.appUserId,
+    assignmentId: args.assignmentId,
+    subTopicIds: row.subTopicIds,
+  });
 }
 
 /** Read the current state of an owned session (projected question, no key). */

@@ -98,6 +98,7 @@ import {
   SlideNotFoundError,
 } from "../services/revision";
 import {
+  getAssignmentStep,
   getSession,
   listAvailability,
   NoCompletedSessionError,
@@ -107,6 +108,7 @@ import {
   reviewSession,
   SessionCompletedError,
   skip,
+  startAssignmentSession,
   startSession,
   submitAttempt,
   submitPhotoAttempt,
@@ -697,6 +699,46 @@ export const appRouter = router({
           }
           if (e instanceof InvalidAssignmentError) {
             throw new TRPCError({ code: "BAD_REQUEST", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    // ── Slice MIXED (item 7 / D-QAUTH-9) ────────────────────────────────────
+    // An assignment holding >1 sub_topic is served as ONE mixed practice: the
+    // student never picks a sub_topic, and consecutive questions come from
+    // different ones. Two procedures on purpose —
+    //   startAssignment  MUTATION, creates/resumes a session per sub_topic
+    //   assignmentStep   QUERY, pure read, called after every submit/skip
+    // so the per-question polling can never spawn a session as a side effect.
+    startAssignment: protectedProcedure
+      .input(z.object({ assignmentId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await startAssignmentSession(ctx.tx, {
+            boardId: ctx.board.id,
+            appUserId: ctx.membership.userId,
+            assignmentId: input.assignmentId,
+          });
+        } catch (e) {
+          if (e instanceof NoQuestionsError || e instanceof AssignmentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
+      }),
+
+    assignmentStep: protectedProcedure
+      .input(z.object({ assignmentId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getAssignmentStep(ctx.tx, {
+            appUserId: ctx.membership.userId,
+            assignmentId: input.assignmentId,
+          });
+        } catch (e) {
+          if (e instanceof AssignmentNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
           }
           throw e;
         }
@@ -2433,6 +2475,10 @@ export const appRouter = router({
           // authoring mode; without it the assign is skipped.
           assign: z.boolean().optional(),
           mode: z.enum(["blocked", "interleaved"]).optional(),
+          // Slice MIXED item 13: split a blocked batch into one assignment per
+          // sub_topic instead of merging into one mixed chapter assignment.
+          // Ignored for interleaved (always mixed). Default = merged.
+          separate: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -2448,6 +2494,7 @@ export const appRouter = router({
                   tutorUserId: ctx.membership.userId,
                   mode: input.mode,
                   questionIds: res.approvedIds,
+                  separate: input.separate ?? false,
                 })
               : [];
           return { ...res, assignments };

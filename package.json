@@ -78,6 +78,8 @@
     "spine:import": "bun scripts/copy_spine.ts --import",
     "probe:assignment": "bun scripts/probe_assignment.ts",
     "probe:assignonapprove": "bun scripts/probe_assign_on_approve.ts",
+    "probe:mixed": "bun scripts/probe_mixed_delivery.ts",
+    "probe:moveboard": "bun scripts/probe_move_student_board.ts",
     "probe:availability": "bun scripts/probe_practice_availability.ts",
     "probe:report": "bun scripts/probe_report_signoff.ts",
     "seed:asgdemo": "bun scripts/seed_assignment_demo.ts",

@@ -3917,6 +3917,11 @@ function AuthorChat({
   // ASG-AUTO: on approve, also push the questions to the student as an assignment
   // (find-and-extend, split per chapter/subject). Default ON — the founder's call.
   const [assignOnApprove, setAssignOnApprove] = useState(true);
+  // Slice MIXED, item 13 — false = merge this batch's sub_topics into ONE mixed
+  // assignment (today's behaviour, and the founder-chosen default); true = one
+  // assignment per sub_topic. Only offered for a BLOCKED batch spanning >1
+  // sub_topic; interleaved always stays mixed.
+  const [assignSeparate, setAssignSeparate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   // Bumped after every save so the "Saved questions" review panel re-queries.
@@ -4912,6 +4917,8 @@ function AuthorChat({
         questionIds: ids,
         assign,
         mode: chat?.mode,
+        // Item 13 — ignored by the BE unless mode is 'blocked'.
+        separate: assignSeparate,
       });
       const who = student.name ?? student.email;
       const assigned = assign && (res.assignments?.length ?? 0) > 0;
@@ -5209,6 +5216,37 @@ function AuthorChat({
                 />
                 Assign to {student.name ?? student.email}
               </label>
+              {/* Slice MIXED, item 13 — several sub_topics of ONE chapter authored
+                  together: do they go out as one mixed assignment or one each?
+                  Only asked for BLOCKED; interleaved is always mixed (splitting it
+                  per sub_topic is just blocked practice). The answer IS the
+                  composition — 'separate' creates N single-sub_topic assignments,
+                  and an assignment with >1 sub_topic is what the student meets as
+                  a mixed run. Nothing extra is stored. */}
+              {assignOnApprove && multi && chat.mode === "blocked" && (
+                <div className="tut-auth-split" role="radiogroup">
+                  <label className="tut-auth-split-opt">
+                    <input
+                      type="radio"
+                      name="assign-split"
+                      checked={!assignSeparate}
+                      onChange={() => setAssignSeparate(false)}
+                      disabled={saving}
+                    />
+                    One mixed assignment
+                  </label>
+                  <label className="tut-auth-split-opt">
+                    <input
+                      type="radio"
+                      name="assign-split"
+                      checked={assignSeparate}
+                      onChange={() => setAssignSeparate(true)}
+                      disabled={saving}
+                    />
+                    One per sub-topic
+                  </label>
+                </div>
+              )}
               <button
                 className="btn-solid"
                 onClick={approve}

@@ -14,7 +14,7 @@
  *
  * Run: bun scripts/fixture_open_assignment.ts
  */
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { appUser, board, question, student, subTopic, topic } from "@b2c/kernel/schema";
 import { db, queryClient } from "../src/db/client";
 import { withBoard } from "../src/db/with-board";
@@ -37,10 +37,15 @@ await withBoard(B.id, async (tx: any) => {
   // The tutor→student link is the single pointer `student.tutor_id` (ID-4), and
   // createAssignment refuses without it. Several demo accounts lost their student
   // row to a `reset:students`, so establish the link rather than assume it.
+  // Identity redesign: a profile is email × phone × user_type, so ONE email can
+  // own several app_user rows. Locally `tutor@example.com` has both a 'student'
+  // row (older) and a 'tutor' row — an unordered limit(1) picked the student one
+  // and every createAssignment then failed STUDENT_NOT_FOUND against a tutor_id
+  // that tutors nobody. Match on the TYPE, not just the address.
   const [tu] = await tx
     .select({ id: appUser.id })
     .from(appUser)
-    .where(eq(appUser.email, TUTOR_EMAIL))
+    .where(and(eq(appUser.email, TUTOR_EMAIL), eq(appUser.userType, "tutor")))
     .limit(1);
   if (!tu) throw new Error(`no tutor ${TUTOR_EMAIL}`);
 
