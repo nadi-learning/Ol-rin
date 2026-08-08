@@ -446,6 +446,27 @@ function paceWeeks(days: number): number {
   return Math.round(days / 7);
 }
 
+/**
+ * PROPOSAL-PERSIST: how old a RESTORED proposal is, for the consent card.
+ *
+ * A stored proposal never expires (founder, 2026-08-08) — it discloses its age
+ * instead. That is the whole point: the tutor decides whether an hour-old blueprint
+ * still reflects what they want, rather than finding it silently gone. Rendered only
+ * when the proposal came back from the server; one made in this tab is 0s old.
+ *
+ * Coarse on purpose — "4 days ago" is the decision-relevant fact, and a live-ticking
+ * "37 seconds" on a card that is not going anywhere is noise.
+ */
+function proposalAge(iso: string): string {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(mins) || mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 function TutorPacePanel({ student }: { student: Student }) {
   const [subjects, setSubjects] = useState<TutorPlanSubject[] | null>(null);
   const [subjectId, setSubjectId] = useState<string | null>(null);
@@ -3881,6 +3902,11 @@ function AuthorChat({
   // `setFailures` surfaces any sub-topic whose worker failed in the fan-out (loud,
   // never silently dropped). Interleaved mode only.
   const [proposalSet, setProposalSet] = useState<ProposeSetResult | null>(null);
+  // PROPOSAL-PERSIST: when the RESTORED proposal was made (ISO), or null for one
+  // this tab just produced. Only a restored proposal shows an age — a card handed
+  // back by the call that made it is zero seconds old and has nothing to disclose.
+  const [proposedAt, setProposedAt] = useState<string | null>(null);
+  const [dismissing, setDismissing] = useState(false);
   const [proposingSet, setProposingSet] = useState(false);
   const [authoringSet, setAuthoringSet] = useState(false);
   const [setFailures, setSetFailures] = useState<
@@ -4097,6 +4123,11 @@ function AuthorChat({
     setProposal(null);
     setProposing(false);
     setProposalSet(null);
+    // PROPOSAL-PERSIST: still cleared here — this is per-tab state for a chat we are
+    // leaving. What changed is that restoreDrafts can now put it BACK from the
+    // server, which is the whole fix; clearing on the way out stays correct.
+    setProposedAt(null);
+    setDismissing(false);
     setProposingSet(false);
     setSetFailures(null);
     setTarget(null);
@@ -4158,6 +4189,20 @@ function AuthorChat({
     // history picker, remount — restores the same card, and a gate that was already
     // answered cannot re-open.
     setPlan(c.pendingPlan ?? null);
+
+    // PROPOSAL-PERSIST: restore the pending PROPOSAL on the same principle as the
+    // gate above — it is carried on the chat payload, so every resume path restores
+    // the same card. This is the piece that was missing: `resetAll()` nulls both
+    // proposals on mount/student-change, and until the server started storing them
+    // there was nothing here to put them back. A tutor who switched student and
+    // came back, or whose backend restarted, lost the blueprint outright.
+    //
+    // `proposedAt` rides alongside so the card can disclose its age (founder,
+    // 2026-08-08: a proposal never expires, it just tells you how old it is).
+    setProposalSet(c.proposedSet ?? null);
+    setProposal(c.proposedTarget ?? null);
+    if (c.proposedTarget) setProposeCount(c.proposedTarget.count);
+    setProposedAt(c.proposedAt ?? null);
 
     // AUTHOR-ASYNC: resume the loader if authoring work is still running for this
     // chat (durable across a refresh / close-reopen). The output doesn't exist yet,
@@ -4516,6 +4561,7 @@ function AuthorChat({
       .then((p) => {
         setProposal(p);
         setProposeCount(p.count);
+        setProposedAt(null); // freshly made in this tab — no age to show
       })
       .catch((e) => {
         const msg = String(e?.message ?? e);
@@ -4572,6 +4618,7 @@ function AuthorChat({
       })
       .then((p) => {
         setProposalSet(p);
+        setProposedAt(null); // freshly made in this tab — no age to show
       })
       .catch((e) => {
         const msg = String(e?.message ?? e);
@@ -4580,6 +4627,34 @@ function AuthorChat({
         else setError(msg);
       })
       .finally(() => setProposingSet(false));
+  }
+
+  // PROPOSAL-PERSIST: the tutor dismissed the proposal card.
+  //
+  // 🔴 This used to be `setProposalSet(null)` — pure local state. Now that the
+  // proposal is stored server-side it must be cleared THERE too, or it returns on
+  // the next remount and, because the composer is disabled while a proposal is
+  // open, the chat is stuck. Local state is cleared optimistically so the card goes
+  // away at once; a failed call restores it rather than leaving the two out of sync.
+  function dismissProposal() {
+    if (!chat || dismissing) return;
+    const prevSet = proposalSet;
+    const prevTarget = proposal;
+    const prevAt = proposedAt;
+    setDismissing(true);
+    setProposalSet(null);
+    setProposal(null);
+    setProposedAt(null);
+    pinBoard(); // BOARD-PIN
+    trpc.tutor.dismissAuthoringProposal
+      .mutate({ chatId: chat.chatId })
+      .catch((e) => {
+        setError(String(e?.message ?? e));
+        setProposalSet(prevSet);
+        setProposal(prevTarget);
+        setProposedAt(prevAt);
+      })
+      .finally(() => setDismissing(false));
   }
 
   // The tutor accepted the set → fan out one worker PER sub-topic (parallel, server
@@ -4591,6 +4666,10 @@ function AuthorChat({
     setError(null);
     setSaved(null);
     setProposalSet(null);
+    // PROPOSAL-PERSIST: the server clears the stored proposal inside
+    // authorSetFromChat (approve is a one-way step); this just keeps the local age
+    // from outliving the card it belonged to.
+    setProposedAt(null);
     setSetFailures(null);
     setAuthoringSet(true);
     pinBoard(); // BOARD-PIN
@@ -5442,7 +5521,12 @@ function AuthorChat({
         {/* Consent card — the AI proposes ONE target; the tutor confirms (or not). */}
         {proposal && (
           <div className="tut-chat-consent">
-            <div className="tut-chat-consent-head">Suggested target</div>
+            <div className="tut-chat-consent-head">
+              Suggested target
+              {proposedAt && (
+                <span className="tut-chat-consent-age">{proposalAge(proposedAt)}</span>
+              )}
+            </div>
             <div className="tut-chat-consent-target">
               {proposal.topicName} › {proposal.subTopicName}
             </div>
@@ -5470,8 +5554,8 @@ function AuthorChat({
               </button>
               <button
                 className="tut-chat-consent-dismiss"
-                onClick={() => setProposal(null)}
-                disabled={authoring}
+                onClick={dismissProposal}
+                disabled={authoring || dismissing}
               >
                 Not yet
               </button>
@@ -5494,6 +5578,9 @@ function AuthorChat({
                 ? "Suggested interleaved set"
                 : "Suggested sub-topics to author"}{" "}
               ({proposalSet.picks.length} sub-topics)
+              {proposedAt && (
+                <span className="tut-chat-consent-age">{proposalAge(proposedAt)}</span>
+              )}
             </div>
             <p className="tut-chat-consent-why">{proposalSet.rationale}</p>
             <div className="tut-chat-set-picks">
@@ -5539,8 +5626,8 @@ function AuthorChat({
               </button>
               <button
                 className="tut-chat-consent-dismiss"
-                onClick={() => setProposalSet(null)}
-                disabled={authoringSet}
+                onClick={dismissProposal}
+                disabled={authoringSet || dismissing}
               >
                 Not yet
               </button>

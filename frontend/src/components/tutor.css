@@ -1910,6 +1910,16 @@
   text-transform: uppercase;
   color: var(--primary);
 }
+/* PROPOSAL-PERSIST: the age of a RESTORED proposal, inline in the card heading.
+   Deliberately quiet — it is disclosure, not a warning: a stored proposal never
+   expires, so this must not read as an error state on a card that is still valid. */
+.tut-chat-consent-age {
+  margin-left: 8px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--muted);
+}
 .tut-chat-consent-target {
   font-size: 16px;
   font-weight: 700;

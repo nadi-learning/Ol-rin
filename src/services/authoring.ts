@@ -175,14 +175,45 @@ export const geminiQuestionSchema = {
                 type: Type.STRING,
                 description: "one sentence describing the clean matplotlib figure to draw",
               },
+              // 🔴 maxItems IS LOAD-BEARING — these two arrays are where the
+              // authoring runaway actually happens. Measured S200 over
+              // `ai_call_log`: 14 of 207 Gemini authoring-worker calls (6.8%)
+              // blew past 59k output tokens and died unparseable, and EVERY
+              // sampled one died inside `shows` or `hides` — a decoder repetition
+              // loop that writes one legitimate element and then repeats it
+              // ~1,500 times ("An arrow pointing downwards from the 2 kg block
+              // labelled 'Gravity = 20 N'.." over and over, degrading as it goes)
+              // until the output ceiling truncates the JSON mid-string.
+              //
+              // Slice QAUTH-A bounded the `questions` array instead — see
+              // geminiSingleQuestionSchema, whose own comment opens "THIS EXISTS
+              // BECAUSE A PROSE GUARANTEE FAILED". It was the right lesson on the
+              // wrong array: `questions` was never the one running away, and the
+              // "3–6 elements" bound here lived only in `description` prose, which
+              // is exactly the kind of guarantee that had already failed once.
+              //
+              // maxItems ONLY, deliberately no minItems: the runaway is an
+              // upper-bound failure, and a lower bound would add a new generation
+              // constraint (and a new way to fail) on a prod authoring path
+              // without touching the defect. `hides` gets the same ceiling despite
+              // having no prose number — it runs away identically (`5331b80e`).
+              //
+              // ⚠️ Residual: the element STRINGS are still unbounded, so a loop
+              // could in principle move inside one element rather than across
+              // elements. Not observed in any of the 14; revisit with maxLength if
+              // it is.
+              //
+              // The SDK types these as strings (Schema.maxItems?: string).
               shows: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
+                maxItems: "6",
                 description: "3–6 elements the figure MUST show (labels, angles, arrows)",
               },
               hides: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
+                maxItems: "6",
                 description: "things the figure must NOT show",
               },
             },

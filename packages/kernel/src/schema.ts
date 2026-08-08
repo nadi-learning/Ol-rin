@@ -1535,6 +1535,34 @@ export const authoringChat = pgTable("authoring_chat", {
   subTopicId: uuid("sub_topic_id").references(() => subTopic.id), // resolved focus; set by proposeTarget
   vendor: text("vendor").notNull(), // per-thread lock: 'claude_cli' | 'gemini_api'
   messages: jsonb("messages").notNull().default([]), // ChatMessage[]
+  // Slice PROPOSAL-PERSIST: the proposal awaiting this tutor's approval — either a
+  // single target or a set blueprint (a discriminated union; see PendingProposal).
+  //
+  // 🔴 THIS EXISTS BECAUSE A PROPOSAL WAS PURE REACT STATE AND PROD LOST ONE.
+  // 2026-08-07, chat c68a747a (Avani Purwar / Arithmetic Progressions): the tutor's
+  // go-ahead spent 50s of Claude on a 16-question coverage blueprint at 16:42:20, a
+  // deploy restarted the backend at 16:46:13, and every remount after it ran
+  // `resetAll()` → `getChat`, which restored messages + drafts + the plan gate and
+  // had NO WAY to return the blueprint. The tutor asked "Show me the plan again? Got
+  // lost somewhere." 45 minutes later and re-ran it from scratch. Zero workers
+  // spawned, zero questions authored, the blueprint recoverable only from
+  // ai_call_log. The transcript was never at risk — only this.
+  //
+  // 🔑 What makes ONE nullable jsonb column safe rather than a fragile cache: both
+  // result types carry a resolved `subTopicId` UUID, never the model's 1-based
+  // `choice` index (M15 resolution happens before the result is built). A stored
+  // proposal is self-describing and cannot rot against a re-numbered allowlist.
+  //
+  // jsonb on the parent rather than its own table for the same reason `messages` is:
+  // read and written whole, always in the context of this chat, never queried across
+  // rows. Nullable — legacy rows and chats with nothing pending read null, which is
+  // exactly the pre-slice behaviour.
+  //
+  // NEVER EXPIRES (founder, 2026-08-08), matching pendingPlan. `createdAt` rides
+  // inside the payload so the card can show its age instead of vanishing on a TTL —
+  // adding a silent-disappearance class to fix a silent-disappearance bug is not a
+  // fix. Cleared on approve and on an explicit dismiss, never by elapsed time.
+  pendingProposal: jsonb("pending_proposal"), // PendingProposal | null
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

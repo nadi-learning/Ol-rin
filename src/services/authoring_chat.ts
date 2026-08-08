@@ -46,6 +46,7 @@ import {
 } from "@b2c/kernel/schema";
 import {
   ChatMessage,
+  WorkerPlanItem as WorkerPlanItemSchema,
   WorkerTurn,
   type VendorChoice,
   type WorkerPlan,
@@ -966,6 +967,16 @@ export type ChatView = {
   // spend N sub-topics' worth of AI without the tutor seeing the blueprint, which is
   // the same reason single-mode's planFirst defaults TRUE.
   proposedSet?: ProposeSetResult;
+  // PROPOSAL-PERSIST: the single-target twin of `proposedSet`, carried on getChat
+  // only. sendTurn never produces one (an in-chat go-ahead resolves its target and
+  // enqueues directly), so unlike proposedSet this field is a RESUME-only channel —
+  // it restores a proposal made earlier by the proposeAuthoringTarget button.
+  proposedTarget?: ProposeTargetResult;
+  // PROPOSAL-PERSIST: when the pending proposal above was made (ISO). Present only
+  // alongside one of the two proposal fields on a getChat, so the card can show its
+  // age. Absent on the mutation responses — a proposal handed back by the call that
+  // just made it is zero seconds old and has nothing to disclose.
+  proposedAt?: string;
 };
 
 /** Load a chat the caller owns, or throw NOT_FOUND (no existence leak). RLS
@@ -985,6 +996,105 @@ async function ownedChat(tx: Tx, tutorUserId: string, chatId: string) {
 function parseMessages(raw: unknown): ChatMessage[] {
   const arr = Array.isArray(raw) ? raw : [];
   return arr.map((m) => ChatMessage.parse(m));
+}
+
+// ───────────────────────── PROPOSAL-PERSIST (the pending proposal) ─────────────────────────
+//
+// A proposal is the thing the tutor APPROVES: either one target (proposeTarget) or
+// a set blueprint (proposeTargetSet). Until this slice both existed ONLY as the
+// return value of the mutation that made them — so `getChat` could not restore
+// either, and a remount, a student switch or a backend restart threw the proposal
+// away. See the `pending_proposal` comment in schema.ts for the prod incident.
+//
+// Stored as a discriminated union so ONE column serves both. Both payloads already
+// carry resolved sub_topic UUIDs (never the model's 1-based index), so what is
+// stored stays valid on its own terms.
+
+const pendingTargetSchema = z.object({
+  kind: z.literal("target"),
+  createdAt: z.string(),
+  target: z.object({
+    chatId: z.string(),
+    studentId: z.string(),
+    subTopicId: z.string(),
+    subTopicName: z.string(),
+    topicName: z.string(),
+    chapterName: z.string(),
+    count: z.number(),
+    rationale: z.string(),
+  }),
+});
+
+const pendingSetSchema = z.object({
+  kind: z.literal("set"),
+  createdAt: z.string(),
+  set: z.object({
+    chatId: z.string(),
+    studentId: z.string(),
+    rationale: z.string(),
+    picks: z.array(
+      z.object({
+        subTopicId: z.string(),
+        subTopicName: z.string(),
+        topicName: z.string(),
+        chapterName: z.string(),
+        count: z.number(),
+        items: z.array(WorkerPlanItemSchema),
+      }),
+    ),
+  }),
+});
+
+const pendingProposalSchema = z.discriminatedUnion("kind", [
+  pendingTargetSchema,
+  pendingSetSchema,
+]);
+
+export type PendingProposal = z.infer<typeof pendingProposalSchema>;
+
+/** Drop-don't-throw, the same tolerance parseWorkerTurns applies: a malformed
+ *  payload must never make a chat permanently unopenable. A chat that cannot be
+ *  opened is strictly worse than one that lost a proposal it can re-run. */
+function parsePendingProposal(raw: unknown): PendingProposal | null {
+  if (raw === null || raw === undefined) return null;
+  const parsed = pendingProposalSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Persist the proposal awaiting approval. Called from INSIDE proposeTarget /
+ *  proposeTargetSet rather than from their callers, so every entry point — the
+ *  menu button AND the in-chat go-ahead — gets the persistence for free and no
+ *  future caller can forget it. `createdAt` is stamped here: it is the age the
+ *  card shows, and it must be the moment the AI produced the proposal. */
+async function persistPendingProposal(
+  tx: Tx,
+  chatId: string,
+  proposal: PendingProposal,
+): Promise<void> {
+  await tx
+    .update(authoringChat)
+    .set({ pendingProposal: proposal, updatedAt: new Date() })
+    .where(eq(authoringChat.id, chatId));
+}
+
+/**
+ * Clear the pending proposal. Called on APPROVE (the proposal became work) and on
+ * an explicit DISMISS — never on elapsed time (founder, 2026-08-08: never expires).
+ *
+ * 🔴 The dismiss path is LOAD-BEARING, not polish. The FE disables the compose box
+ * while a proposal is open (`disabled={… || !!proposalSet}`). Before this slice a
+ * reload was the escape hatch; now that the proposal survives one, a proposal with
+ * no clear path would brick the chat permanently.
+ */
+export async function clearPendingProposal(
+  tx: Tx,
+  args: { tutorUserId: string; chatId: string },
+): Promise<void> {
+  const row = await ownedChat(tx, args.tutorUserId, args.chatId);
+  await tx
+    .update(authoringChat)
+    .set({ pendingProposal: null, updatedAt: new Date() })
+    .where(eq(authoringChat.id, row.id));
 }
 
 /**
@@ -1149,6 +1259,11 @@ export async function getChat(
   // Slice TWOWAY-1: the gate, if one is open. Read on the same call as the drafts so
   // a single getChat restores the whole in-progress state of the chat.
   const pendingPlan = await pendingPlanFor(tx, row.id);
+  // PROPOSAL-PERSIST: the third piece of in-progress state, and the one this
+  // function used to miss. The comment above says "a single getChat restores the
+  // whole in-progress state of the chat" — it restored drafts and the plan gate and
+  // silently did not restore the proposal, which is exactly how prod lost one.
+  const pendingProposal = parsePendingProposal(row.pendingProposal);
   return {
     chatId: row.id,
     studentId: row.studentId,
@@ -1162,6 +1277,15 @@ export async function getChat(
     messages: parseMessages(row.messages),
     pendingDrafts,
     pendingPlan,
+    // Surfaced under the SAME field names the FE already fills from the mutation
+    // responses, so the rehydrate path needs no new branch: `proposedSet` was
+    // already read on getChat at TutorPage.tsx:4486 and had simply never been set.
+    ...(pendingProposal?.kind === "set"
+      ? { proposedSet: pendingProposal.set, proposedAt: pendingProposal.createdAt }
+      : {}),
+    ...(pendingProposal?.kind === "target"
+      ? { proposedTarget: pendingProposal.target, proposedAt: pendingProposal.createdAt }
+      : {}),
   };
 }
 
@@ -2517,7 +2641,7 @@ Pick the ONE sub-topic to author questions for now and how many (1–8, default 
     .set({ subTopicId: chosen.subTopicId, updatedAt: new Date() })
     .where(eq(authoringChat.id, row.id));
 
-  return {
+  const result: ProposeTargetResult = {
     chatId: row.id,
     studentId: row.studentId,
     subTopicId: chosen.subTopicId,
@@ -2527,6 +2651,14 @@ Pick the ONE sub-topic to author questions for now and how many (1–8, default 
     count,
     rationale: parsed.rationale,
   };
+  // PROPOSAL-PERSIST: store what the tutor is being asked to approve, so a remount
+  // restores the card instead of discarding a resolved target.
+  await persistPendingProposal(tx, row.id, {
+    kind: "target",
+    createdAt: new Date().toISOString(),
+    target: result,
+  });
+  return result;
 }
 
 // ───────────────────────── proposeTargetSet (interleaved fan-out, QA3-e-2) ─────────────────────────
@@ -2910,12 +3042,22 @@ Assemble the ${cover ? "coverage" : "interleaved"} set now. Return {picks:[{choi
     });
   }
 
-  return {
+  const result: ProposeSetResult = {
     chatId: row.id,
     studentId: row.studentId,
     rationale: parsed.rationale,
     picks,
   };
+  // PROPOSAL-PERSIST: the blueprint is the expensive artifact on this path — S200
+  // measured one at 8,672 chars / 50s of Claude — and it was the one prod threw
+  // away. Persisted here so BOTH callers (the menu button and runSetGoAhead's
+  // in-chat go-ahead) are covered by one write.
+  await persistPendingProposal(tx, row.id, {
+    kind: "set",
+    createdAt: new Date().toISOString(),
+    set: result,
+  });
+  return result;
 }
 
 // ───────────────────────── authorSetFromChat (parallel fan-out, QA3-e-2) ─────────────────────────

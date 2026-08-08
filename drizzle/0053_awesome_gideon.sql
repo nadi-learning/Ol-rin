@@ -1,0 +1,1 @@
+ALTER TABLE "authoring_chat" ADD COLUMN "pending_proposal" jsonb;

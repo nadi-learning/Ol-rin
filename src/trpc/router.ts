@@ -255,6 +255,8 @@ import {
   // Slice TWOWAY-FIX — the server-side gate guard.
   assertNoOpenGate,
   AuthoringGateOpenError,
+  // Slice PROPOSAL-PERSIST — clearing the stored proposal (approve + dismiss).
+  clearPendingProposal,
 } from "../services/authoring_chat";
 import {
   enqueueAuthoring,
@@ -2188,6 +2190,15 @@ export const appRouter = router({
           }
           throw e;
         }
+        // PROPOSAL-PERSIST: the proposal became work — clear it so a remount does
+        // not re-open a card the tutor has already approved. Deliberately AFTER the
+        // ownership guards above and BEFORE the enqueue: a rejected approve must
+        // leave the proposal standing, and clearing it is what makes this the
+        // one-way step it reads as.
+        await clearPendingProposal(ctx.tx, {
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+        });
         const jobId = await enqueueAuthoring({
           boardId: ctx.board.id,
           tutorUserId: ctx.membership.userId,
@@ -2292,6 +2303,12 @@ export const appRouter = router({
           }
           throw e;
         }
+        // PROPOSAL-PERSIST: same one-way step as the set path — the single-target
+        // proposal became work, so it must not survive to re-open on a remount.
+        await clearPendingProposal(ctx.tx, {
+          tutorUserId: ctx.membership.userId,
+          chatId: input.chatId,
+        });
         const phase = input.planFirst === false ? "draft" : "plan";
         const jobId = await enqueueAuthoring({
           boardId: ctx.board.id,
@@ -2388,6 +2405,33 @@ export const appRouter = router({
           workerId: input.workerId,
         });
         return { jobId, phase: "plan" as const };
+      }),
+
+    // PROPOSAL-PERSIST: the tutor dismissed the proposal card without approving it.
+    //
+    // 🔴 LOAD-BEARING, not polish. The FE disables the compose box while a proposal
+    // is open. Before this slice "dismiss" was `setProposalSet(null)` — pure client
+    // state — and a reload was the escape hatch. Now that the proposal survives a
+    // reload, this mutation IS the only escape hatch: without it an un-approved
+    // proposal would brick the chat permanently.
+    //
+    // Idempotent by construction (clearing an already-null column is a no-op), so a
+    // double-click or a retry can't fail. No job is enqueued.
+    dismissAuthoringProposal: tutorProcedure
+      .input(z.object({ chatId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await clearPendingProposal(ctx.tx, {
+            tutorUserId: ctx.membership.userId,
+            chatId: input.chatId,
+          });
+          return { ok: true as const };
+        } catch (e) {
+          if (e instanceof AuthoringChatNotFoundError) {
+            throw new TRPCError({ code: "NOT_FOUND", message: e.code });
+          }
+          throw e;
+        }
       }),
 
     // The tutor dismissed the plan without drafting — the episode is closed so it

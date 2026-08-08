@@ -362,6 +362,30 @@ async function main() {
     geminiSingleQuestionSchema.properties.questions.items ===
       geminiQuestionSchema.properties.questions.items,
   );
+  // S200 — the bound that actually stops the runaway. The pair of legs above
+  // bounds `questions`, which was NEVER the array that ran away: measured over
+  // `ai_call_log`, 14 of 207 Gemini authoring-worker calls (6.8%) died unparseable
+  // past 59k output tokens, and every sampled one died inside `image.shows` or
+  // `image.hides` — a decoder repetition loop across ELEMENTS. Those two arrays
+  // held only a prose bound ("3–6 elements") in `description`, i.e. exactly the
+  // guarantee whose failure the legs above exist to answer.
+  //
+  // Asserted on the BATCH schema on purpose: the worker's single-question schema
+  // inherits `items` by reference (the leg directly above pins that), so bounding
+  // it here provably covers BOTH the worker draft loop and `reviseDraft`, which
+  // passes `geminiQuestionSchema` straight through.
+  const imageProps = geminiQuestionSchema.properties.questions.items.properties.image.properties;
+  check(
+    "S200: image.shows and image.hides are BOUNDED in the schema, not just in prose",
+    imageProps.shows.maxItems === "6" && imageProps.hides.maxItems === "6",
+  );
+  // No minItems, deliberately — the runaway is an upper-bound failure and a lower
+  // bound would add a new way for a prod authoring call to fail without touching
+  // the defect. This leg pins that choice so it is not "tidied" into a range later.
+  check(
+    "S200: neither image array carries a minItems (upper bound only, by decision)",
+    !("minItems" in imageProps.shows) && !("minItems" in imageProps.hides),
+  );
 
   // ════════════════ TIER 2 — REAL DB, real buildScopedWorld ════════════════
 

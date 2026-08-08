@@ -372,6 +372,13 @@
       "when": 1786102355853,
       "tag": "0052_steady_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1786156888568,
+      "tag": "0053_awesome_gideon",
+      "breakpoints": true
     }
   ]
 }
